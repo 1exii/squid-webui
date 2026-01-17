@@ -1,0 +1,89 @@
+#
+# Recommended minimum configuration:
+#
+
+# -- 1. NETWORK AND ACCESS CONFIGURATION --
+
+# Define the port for standard HTTP proxy requests.
+http_port 3128
+
+# Define the port for transparent HTTPS interception (SSL Bumping).
+# - 'intercept': Enables transparent proxying.
+# - 'ssl-bump': Enables HTTPS decryption and inspection.
+# - 'generate-host-certificates': Dynamically creates certificates for intercepted sites.
+# - 'cert': Path to your CA certificate and private key.
+https_port 3130 intercept ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
+
+# Define an Access Control List (ACL) for your local network.
+# Adjust this to match your home network's IP range.
+acl localnet src 192.168.0.0/16
+
+# Define standard ports for SSL/TLS and other safe protocols.
+acl SSL_ports port 443
+acl Safe_ports port 80          # http
+acl Safe_ports port 21          # ftp
+acl Safe_ports port 443         # https
+acl Safe_ports port 70          # gopher
+acl Safe_ports port 210         # wais
+acl Safe_ports port 1025-65535  # unregistered ports
+acl Safe_ports port 280         # http-mgmt
+acl Safe_ports port 488         # gss-http
+acl Safe_ports port 591         # filemaker
+acl Safe_ports port 777         # multiling http
+acl CONNECT method CONNECT
+
+# -- 2. BLOCKLIST CONFIGURATION --
+
+# Define an ACL that reads the domain list to be blocked.
+# The 'squid-mgmt.sh' script will create and sync this file.
+acl blocked_domains dstdomain "/etc/squid/block-lists/domains.txt"
+
+# -- 3. HTTP ACCESS RULES --
+
+# Rules are checked in order. The first match wins.
+
+# 1. Block access to domains in the blocklist.
+http_access deny blocked_domains
+
+# 2. Deny requests to non-safe ports.
+http_access deny !Safe_ports
+
+# 3. Deny CONNECT requests to non-SSL ports.
+http_access deny CONNECT !SSL_ports
+
+# 4. Allow access from your local network.
+http_access allow localnet
+
+# 5. Deny all other access to this proxy.
+http_access deny all
+
+# -- 4. SSL BUMPING (INTERCEPTION) RULES --
+
+# This helper is used to generate certificates for SSL Bumping.
+# Ensure the directory '/var/lib/squid' is a persistent volume.
+sslcrtd_program /usr/lib/squid/security_file_certgen -s /var/lib/squid/ssl_db -M 16MB
+
+# Define the SSL Bumping workflow.
+# Step 1: At the 'SslBump1' step, check the server name. This happens after the client sends a CONNECT request.
+acl step1 at_step SslBump1
+
+# Step 2: Splice (pass-through without decrypting) connections to sites that might break if inspected.
+# You can add sensitive domains here (e.g., banking, government).
+# acl sensitive_sites dstdomain .example.com
+# ssl_bump splice sensitive_sites
+
+# Step 3: Bump (decrypt and inspect) all other connections.
+ssl_bump bump all
+
+# -- 5. CACHE AND LOGGING --
+
+# Define the location for Squid's cache.
+# 'ufs' is the standard storage format.
+# '100' is the cache size in MB. '16' and '256' are directory levels.
+cache_dir ufs /var/cache/squid 100 16 256
+
+# Leave coredumps in the first cache dir
+coredump_dir /var/cache/squid
+
+# Add a header to requests to show they went through the proxy.
+via on
