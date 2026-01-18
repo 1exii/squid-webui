@@ -1,0 +1,53 @@
+#!/bin/sh
+set -e
+
+# 1. Ensure system writable directories exist with correct proxy:proxy ownership
+mkdir -p /var/cache/squid /var/lib/squid /var/log/squid
+chown -R proxy:proxy /var/cache/squid /var/lib/squid /var/log/squid
+
+# 3. Locate SSL certgen helper binary
+SSL_DB="/var/lib/squid/ssl_db/db"
+CERTGEN=""
+if [ -x "/usr/lib/squid/security_file_certgen" ]; then
+    CERTGEN="/usr/lib/squid/security_file_certgen"
+elif [ -x "/usr/lib/squid/ssl_crtd" ]; then
+    CERTGEN="/usr/lib/squid/ssl_crtd"
+fi
+
+# 4. Initialize SSL DB if not present
+if [ ! -d "${SSL_DB}" ]; then
+    echo "[entrypoint] Initializing SSL certificate database..."
+    chown -R proxy:proxy /var/lib/squid/ssl_db
+    if [ -n "$CERTGEN" ]; then
+        "$CERTGEN" -c -s "${SSL_DB}" -M 16MB
+    else
+        echo "[entrypoint] ERROR: Neither security_file_certgen nor ssl_crtd found!"
+        exit 1
+    fi
+    chown -R proxy:proxy /var/lib/squid/ssl_db
+    echo "[entrypoint] SSL DB initialized."
+fi
+
+# Clean any stale PID files from previous abnormal shutdowns
+rm -f /run/squid.pid /var/run/squid.pid
+
+# 5. Initialize Squid swap cache directories if running for first time
+if [ ! -d "/var/cache/squid/0F/FF" ]; then
+    echo "[entrypoint] Initializing cache directories (squid -z)..."
+    chown -R proxy:proxy /var/cache/squid
+    squid -z -N -F -f /etc/squid/squid.conf
+    rm -f /run/squid.pid /var/run/squid.pid
+    chown -R proxy:proxy /var/cache/squid
+    echo "[entrypoint] Cache directories initialized."
+fi
+
+# Set up container-level iptables REDIRECT rules so SO_ORIGINAL_DST is preserved
+echo "[entrypoint] Setting up container iptables REDIRECT rules..."
+update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true
+iptables -t nat -F PREROUTING 2>/dev/null || true
+iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 3129
+iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 3130
+
+echo "[entrypoint] Starting Squid..."
+rm -f /run/squid.pid /var/run/squid.pid
+exec squid -NYCd 1 -f /etc/squid/squid.conf

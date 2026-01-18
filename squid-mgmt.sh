@@ -17,13 +17,30 @@ BINDIR="/share/CACHEDEV1_DATA/.qpkg/container-station/bin"
 DOCKER="${BINDIR}/docker"
 
 # Remote paths on QNAP for Squid
-SQUID_BASE_DIR="/share/CACHEDEV1_DATA/Container/container-station-data/application/squid"
+SQUID_INSTANCE_NAME="squid-proxy"
+SQUID_BASE_DIR="/share/Container/${SQUID_INSTANCE_NAME}"
 SQUID_CERT_DIR_REMOTE="${SQUID_BASE_DIR}/certs"
 SQUID_BLOCKLIST_DIR_REMOTE="${SQUID_BASE_DIR}/block-lists"
-SQUID_CONF_REMOTE="${SQUID_BASE_DIR}/squid.conf"
+SQUID_CONF_REMOTE="${SQUID_BASE_DIR}/configs/squid.conf"
 
 # Path for clients to download the certificate
 CERT_DOWNLOAD_DIR="/share/CACHEDEV1_DATA/Web/certs"
+
+# ASUS Router Settings (Merlin firmware)
+ROUTER_IP="192.168.0.1"
+ROUTER_SERVER="admin@${ROUTER_IP}"
+ROUTER_SSH_OPTS="-o PubkeyAcceptedKeyTypes=+ssh-rsa"
+ROUTER_SCP_OPTS="-O -o PubkeyAcceptedKeyTypes=+ssh-rsa"  # -O forces legacy SCP (Dropbear has no sftp-server)
+ROUTER_FIREWALL_SCRIPT="/jffs/scripts/firewall-start"
+
+# Squid Proxy Settings (used in generated router rules)
+SQUID_PROXY_IP="192.168.1.90"
+SQUID_HTTP_PORT="3129"
+SQUID_HTTPS_PORT="3130"
+
+# Local router config sources
+ROUTER_DIR="${SQUID_DIR}/router"
+PROXY_HOSTS_CONF="${ROUTER_DIR}/proxy-hosts.conf"
 
 mkdir -p "${CERT_DIR}" "${BLOCKLIST_DIR}"
 
@@ -86,27 +103,389 @@ apply_config() {
         exit 1
     fi
 
-    echo "  [*] Syncing squid.conf to QNAP..."
+    echo "  [*] Syncing squid.conf to QNAP (${SQUID_CONF_REMOTE})..."
     scp "${SQUID_CONF_TEMPLATE}" "${QNAP_SERVER}:${SQUID_CONF_REMOTE}"
     
-    echo "  [*] Restarting Squid container to apply changes..."
+    echo "  [*] Restarting Squid container '${SQUID_INSTANCE_NAME}' on QNAP..."
     ssh -T "${QNAP_SERVER}" "${DOCKER} restart ${SQUID_INSTANCE_NAME}"
     
-    echo "  [+] Squid configuration applied and service restarted."
+    echo "  [+] Squid configuration applied and container restarted."
+}
+
+analyze_logs() {
+    echo "-----------------------------------------------"
+    echo ">>> Analyzing Squid Access Logs with GoAccess..."
+
+    # Check that goaccess is available locally
+    if ! command -v goaccess &> /dev/null; then
+        echo "  [!] ERROR: 'goaccess' is not installed. Install it with: sudo apt install goaccess"
+        exit 1
+    fi
+
+    local LOCAL_LOG_DIR="${SQUID_DIR}/logs"
+    local LOCAL_LOG="${LOCAL_LOG_DIR}/access.log"
+    local REPORT="${LOCAL_LOG_DIR}/squid-report.html"
+    local REMOTE_LOG="/var/log/squid/access.log"
+
+    mkdir -p "${LOCAL_LOG_DIR}"
+
+    echo "  [*] Copying access log from container '${SQUID_INSTANCE_NAME}' on QNAP..."
+    # Use 'docker cp' via SSH and pipe the tar stream locally to avoid tmp files on QNAP
+    ssh -T "${QNAP_SERVER}" "${DOCKER} cp ${SQUID_INSTANCE_NAME}:${REMOTE_LOG} -" \
+        | tar -xO > "${LOCAL_LOG}"
+
+    if [ ! -s "${LOCAL_LOG}" ]; then
+        echo "  [!] ERROR: Log file is empty or could not be retrieved."
+        exit 1
+    fi
+
+    local TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    local SNAPSHOT_LOG="${LOCAL_LOG_DIR}/access_${TIMESTAMP}.log"
+    cp "${LOCAL_LOG}" "${SNAPSHOT_LOG}"
+    echo "  [+] Saved local log snapshot: ${SNAPSHOT_LOG}"
+
+    echo "  [*] Running GoAccess to generate HTML report..."
+    awk '{
+        ts = $1; sub(/\.[0-9]+/, "", ts);
+        elapsed = $2;
+        ip = $3;
+        code = $4;
+        size = $5;
+        method = $6;
+        url = $7;
+        domain = url;
+        sub(/^https?:\/\//, "", domain);
+        sub(/\/.*$/, "", domain);
+        sub(/:.*$/, "", domain);
+        if (domain == "") domain = "-";
+        print domain, ts, elapsed, ip, code, size, method, url
+    }' "${LOCAL_LOG}" \
+        | goaccess - \
+            --log-format='%v %x %L %h %^/%s %b %m %U' \
+            --date-format='%s' \
+            --time-format='%s' \
+            --output="${REPORT}" \
+            --ignore-crawlers \
+            --real-os
+
+    local HOST_REPORT="${LOCAL_LOG_DIR}/host-domains-report.html"
+    local HOSTS_CONF="${SQUID_DIR}/router/proxy-hosts.conf"
+
+    echo "  [*] Running Standalone Log Analyzer (analyze-squid-logs.py)..."
+    python3 "${SQUID_DIR}/analyze-squid-logs.py" \
+        --log "${LOCAL_LOG}" \
+        --hosts-conf "${HOSTS_CONF}" \
+        --out-host-report "${HOST_REPORT}" \
+        --out-goaccess-report "${REPORT}"
+
+    echo "  [+] Reports generated:"
+    echo "      - Per-Host Activity: ${HOST_REPORT}"
+    echo "      - GoAccess Dashboard: ${REPORT}"
+
+    # Open the report in a web browser if a graphical environment is available
+    if [ -f "${REPORT}" ] && [ -n "${DISPLAY}" ]; then
+        local browser_cmd=""
+        if [ -n "${BROWSER}" ] && command -v "${BROWSER}" &> /dev/null; then
+            browser_cmd="${BROWSER}"
+        elif command -v google-chrome &> /dev/null; then
+            browser_cmd="google-chrome"
+        elif command -v firefox &> /dev/null; then
+            browser_cmd="firefox"
+        elif command -v chromium &> /dev/null; then
+            browser_cmd="chromium"
+        elif command -v x-www-browser &> /dev/null; then
+            browser_cmd="x-www-browser"
+        elif command -v xdg-open &> /dev/null; then
+            browser_cmd="xdg-open"
+        fi
+
+        if [ -n "${browser_cmd}" ]; then
+            echo "  [*] Opening report in browser (${browser_cmd})..."
+            "${browser_cmd}" "${REPORT}" &> /dev/null &
+        fi
+    fi
+}
+
+cat_logs() {
+    echo "-----------------------------------------------"
+    echo ">>> Displaying Squid Access Logs..."
+
+    local LOCAL_LOG_DIR="${SQUID_DIR}/logs"
+    local LOCAL_LOG="${LOCAL_LOG_DIR}/access.log"
+    local REMOTE_LOG="/var/log/squid/access.log"
+
+    mkdir -p "${LOCAL_LOG_DIR}"
+
+    echo "  [*] Copying access log from container '${SQUID_INSTANCE_NAME}' on QNAP..."
+    ssh -T "${QNAP_SERVER}" "${DOCKER} cp ${SQUID_INSTANCE_NAME}:${REMOTE_LOG} -" \
+        | tar -xO > "${LOCAL_LOG}"
+
+    if [ ! -f "${LOCAL_LOG}" ]; then
+        echo "  [!] ERROR: Log file could not be retrieved from container."
+        exit 1
+    fi
+
+    local TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    local SNAPSHOT_LOG="${LOCAL_LOG_DIR}/access_${TIMESTAMP}.log"
+    cp "${LOCAL_LOG}" "${SNAPSHOT_LOG}"
+    echo "  [+] Saved local log snapshot: ${SNAPSHOT_LOG}"
+    echo "-----------------------------------------------"
+    if [ ! -s "${LOCAL_LOG}" ]; then
+        echo "  [i] Access log is currently empty (0 bytes)."
+    else
+        cat "${LOCAL_LOG}"
+    fi
+}
+
+deploy_router_proxy() {
+    echo "-----------------------------------------------"
+    echo ">>> Deploying Transparent Proxy Rules to Router..."
+
+    if [ ! -f "${PROXY_HOSTS_CONF}" ]; then
+        echo "  [!] ERROR: Host config not found: ${PROXY_HOSTS_CONF}"
+        exit 1
+    fi
+
+    local PROXY_SCRIPT="/jffs/scripts/squid-proxy-rules.sh"
+    local TEMP_SCRIPT="/tmp/squid-proxy-rules.sh"
+    local MARKER="MANAGED-BY-SQUID-MGMT"
+
+    # ---- Step 1: Build the sidecar proxy-rules script locally ----
+    # Written to a temp file using printf to avoid heredoc interpolation issues.
+    printf '%s\n' '#!/bin/sh' \
+        "# ${PROXY_SCRIPT}" \
+        "# ${MARKER} — regenerate with: squid-mgmt.sh router-deploy" \
+        '' \
+        "SQUID_IP=\"${SQUID_PROXY_IP}\"" \
+        "SQUID_HTTP_PORT=\"${SQUID_HTTP_PORT}\"" \
+        "SQUID_HTTPS_PORT=\"${SQUID_HTTPS_PORT}\"" \
+        'CHAIN="SQUID_REDIRECT"' \
+        '' \
+        '# Flush/recreate only our chain; all other chains are untouched' \
+        'iptables -t nat -N "$CHAIN" 2>/dev/null' \
+        'iptables -t nat -F "$CHAIN"' \
+        'iptables -t nat -D PREROUTING -j "$CHAIN" 2>/dev/null' \
+        'iptables -t nat -I PREROUTING 1 -j "$CHAIN"' \
+        '' \
+        '# Exempt Squid proxy and QNAP server from redirection to prevent forwarding loops' \
+        'iptables -t nat -A "$CHAIN" -s "$SQUID_IP" -j RETURN' \
+        'iptables -t nat -A "$CHAIN" -s 192.168.1.2 -j RETURN' \
+        '' \
+        '# Always MASQUERADE LAN traffic redirected to Squid proxy' \
+        'iptables -t nat -D POSTROUTING -d "$SQUID_IP" -p tcp -m multiport --dports 80,443 -j MASQUERADE 2>/dev/null' \
+        'iptables -t nat -I POSTROUTING 1 -d "$SQUID_IP" -p tcp -m multiport --dports 80,443 -j MASQUERADE' \
+        '' \
+        'add_host() {' \
+        '    # $1 = source host IP' \
+        '    # Block QUIC (UDP 443) so browsers fall back to TCP 443 for transparent proxy interception' \
+        '    iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null' \
+        '    iptables -I FORWARD 1 -s "$1" -p udp --dport 443 -j REJECT' \
+        '    iptables -t nat -A "$CHAIN" -s "$1" -d "$SQUID_IP" -j RETURN' \
+        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 80  -j DNAT --to-destination "$SQUID_IP:80"' \
+        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 443 -j DNAT --to-destination "$SQUID_IP:443"' \
+        '}' \
+        '' \
+        '# --- Per-host rules ---' \
+        > "${TEMP_SCRIPT}"
+
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        local host_ip host_name
+        read -r host_ip host_name <<< "$line"
+        [ -z "$host_ip" ] && continue
+        echo "add_host \"${host_ip}\"   # ${host_name}" >> "${TEMP_SCRIPT}"
+    done < "${PROXY_HOSTS_CONF}"
+
+    chmod +x "${TEMP_SCRIPT}"
+
+    # ---- Step 2: Upload the sidecar script to the router ----
+    echo "  [*] Uploading ${PROXY_SCRIPT} to router (${ROUTER_IP})..."
+    scp ${ROUTER_SCP_OPTS} "${TEMP_SCRIPT}" "${ROUTER_SERVER}:${PROXY_SCRIPT}"
+    rm -f "${TEMP_SCRIPT}"
+
+    # ---- Step 3: Safely update firewall-start to call our sidecar ----
+    # firewall-start is NEVER overwritten. We only append a call if not present.
+    echo "  [*] Checking firewall-start on router..."
+    ssh ${ROUTER_SSH_OPTS} -T "${ROUTER_SERVER}" \
+        "chmod +x \"${PROXY_SCRIPT}\";
+         FW=\"${ROUTER_FIREWALL_SCRIPT}\";
+         SIDECAR=\"${PROXY_SCRIPT}\";
+         if [ ! -f \"\$FW\" ]; then
+             printf '#!/bin/sh\nsh %s\n' \"\$SIDECAR\" > \"\$FW\";
+             chmod +x \"\$FW\";
+             echo '  [i] Created new firewall-start.';
+         elif grep -q \"\$SIDECAR\" \"\$FW\"; then
+             echo '  [i] firewall-start already calls our sidecar — no change needed.';
+         else
+             cp \"\$FW\" \"\$FW.pre-squid.bak\";
+             printf '\n# Added by squid-mgmt.sh — transparent proxy rules\nsh %s\n' \"\$SIDECAR\" >> \"\$FW\";
+             echo '  [!] Existing firewall-start preserved (backup: .pre-squid.bak).';
+             echo '  [i] Proxy rules appended at the end.';
+         fi;
+         sh \"\$SIDECAR\""
+
+    echo ""
+    echo "  [+] Proxy rules deployed and active immediately."
+    echo "  [i] Sidecar: ${PROXY_SCRIPT} (called from firewall-start on every reboot)."
+    echo ""
+    echo "  Intercepted hosts:"
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        local host_ip host_name
+        read -r host_ip host_name <<< "$line"
+        [ -z "$host_ip" ] && continue
+        echo "    ${host_ip}  (${host_name})  -> ${SQUID_PROXY_IP}:${SQUID_HTTP_PORT}/${SQUID_HTTPS_PORT}"
+    done < "${PROXY_HOSTS_CONF}"
+}
+
+deploy_linux_cert() {
+    echo "-----------------------------------------------"
+    echo ">>> Installing Squid CA Certificate on Linux Hosts..."
+
+    local CERT_PEM="${CERT_DIR}/squid-ca.pem"
+    local REMOTE_CERT_NAME="squid-proxy-ca.crt"
+    local REMOTE_INSTALL_SCRIPT="/tmp/squid-install-cert.sh"
+    local LOCAL_INSTALL_SCRIPT="/tmp/squid-install-cert.sh"
+
+    if [ ! -f "${CERT_PEM}" ]; then
+        echo "  [!] ERROR: CA cert not found at ${CERT_PEM}"
+        echo "  [i] Run: $0 cert   to generate it first."
+        exit 1
+    fi
+
+    if [ ! -f "${PROXY_HOSTS_CONF}" ]; then
+        echo "  [!] ERROR: Host config not found: ${PROXY_HOSTS_CONF}"
+        exit 1
+    fi
+
+    # Build the install script once locally; it will be scp'd to each host.
+    # It runs as root (via 'sudo sh'), so no sudo calls needed inside it.
+    cat > "${LOCAL_INSTALL_SCRIPT}" << 'INSTALL_SCRIPT'
+#!/bin/sh
+# Must be run as root (called via: sudo sh /tmp/squid-install-cert.sh)
+set -e
+CERT_SRC="/tmp/squid-proxy-ca.crt"
+REMOTE_CERT_NAME="squid-proxy-ca.crt"
+PROXY_URL="http://192.168.1.90:3128"
+
+if command -v update-ca-certificates > /dev/null 2>&1; then
+    # Debian / Ubuntu
+    cp "$CERT_SRC" "/usr/local/share/ca-certificates/$REMOTE_CERT_NAME"
+    update-ca-certificates
+    echo "  [+] Installed via update-ca-certificates (Debian/Ubuntu)."
+elif command -v update-ca-trust > /dev/null 2>&1; then
+    # RHEL / CentOS / Fedora
+    cp "$CERT_SRC" "/etc/pki/ca-trust/source/anchors/$REMOTE_CERT_NAME"
+    update-ca-trust extract
+    echo "  [+] Installed via update-ca-trust (RHEL/Fedora)."
+else
+    echo "  [!] ERROR: No known CA trust tool found (tried update-ca-certificates, update-ca-trust)."
+    rm -f "$CERT_SRC"
+    exit 1
+fi
+
+# Also update Chrome/NSS certificate databases if present
+if ! command -v certutil >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq && apt-get install -y -qq libnss3-tools >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y nss-tools >/dev/null 2>&1 || true
+    fi
+fi
+
+if command -v certutil >/dev/null 2>&1; then
+    for user_home in /root /home/*; do
+        if [ -d "$user_home/.pki/nssdb" ]; then
+            certutil -d "sql:$user_home/.pki/nssdb" -A -t "C,," -n "squid.local" -i "$CERT_SRC" 2>/dev/null || true
+            user_owner=$(stat -c '%U:%G' "$user_home" 2>/dev/null || echo "")
+            [ -n "$user_owner" ] && chown -R "$user_owner" "$user_home/.pki/nssdb" 2>/dev/null || true
+        fi
+    done
+    echo "  [+] Imported Root CA into Chrome/NSS certificate databases."
+fi
+
+cat > /etc/profile.d/squid-proxy.sh << PROXY_EOF
+export http_proxy="${PROXY_URL}"
+export https_proxy="${PROXY_URL}"
+export HTTP_PROXY="${PROXY_URL}"
+export HTTPS_PROXY="${PROXY_URL}"
+export no_proxy="localhost,127.0.0.1,192.168.0.0/16,local,.local"
+export NO_PROXY="localhost,127.0.0.1,192.168.0.0/16,local,.local"
+PROXY_EOF
+chmod 755 /etc/profile.d/squid-proxy.sh
+echo "  [+] System-wide proxy profile installed at /etc/profile.d/squid-proxy.sh."
+
+rm -f "$CERT_SRC" "/tmp/squid-install-cert.sh"
+INSTALL_SCRIPT
+
+    local any_host=false
+
+    # Collect sudo password once locally — read -s suppresses echo so it's never visible.
+    # The password is piped to 'sudo -S' on the remote (reads from stdin, no PTY needed).
+    local SUDO_PASS
+    read -r -s -p "  [?] sudo password for remote hosts (input hidden): " SUDO_PASS
+    echo ""  # newline after silent input
+
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        local host_ip host_name
+        read -r host_ip host_name <<< "$line"
+        [ -z "$host_ip" ] && continue
+        any_host=true
+
+        echo "-----------------------------------------------"
+        echo "  [*] Deploying cert to ${host_name} (${host_ip})..."
+
+        # Upload cert and install script
+        scp -q "${CERT_PEM}" "${host_ip}:/tmp/${REMOTE_CERT_NAME}"
+        if [ $? -ne 0 ]; then
+            echo "  [!] ERROR: scp of cert failed for ${host_name}. Skipping."
+            continue
+        fi
+        scp -q "${LOCAL_INSTALL_SCRIPT}" "${host_ip}:${REMOTE_INSTALL_SCRIPT}"
+        if [ $? -ne 0 ]; then
+            echo "  [!] ERROR: scp of install script failed for ${host_name}. Skipping."
+            continue
+        fi
+
+        # Pipe the password to sudo -S (reads from stdin) — no PTY, no echo, no hang.
+        echo "  [*] Running install script on ${host_name} (using sudo -S)..."
+        printf '%s\n' "${SUDO_PASS}" | ssh "${host_ip}" "sudo -S sh ${REMOTE_INSTALL_SCRIPT}"
+
+        if [ $? -eq 0 ]; then
+            echo "  [+] ${host_name} (${host_ip}): cert installed successfully."
+            echo "  [*] Verifying HTTPS trust on ${host_name}..."
+            ssh "${host_ip}" ". /etc/profile.d/squid-proxy.sh && curl -s --max-time 5 https://google.com > /dev/null \
+                && echo '  [+] HTTPS via Squid proxy verified & trusted successfully.' \
+                || echo '  [i] Setup complete. Verify manually: curl -v https://google.com'"
+        else
+            echo "  [!] ${host_name} (${host_ip}): installation encountered errors (see above)."
+        fi
+    done < "${PROXY_HOSTS_CONF}"
+
+    rm -f "${LOCAL_INSTALL_SCRIPT}"
+
+    if [ "$any_host" = false ]; then
+        echo "  [!] No hosts found in ${PROXY_HOSTS_CONF}."
+    fi
 }
 
 # --- 3. EXECUTION ---
 
 if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 [cert|blocklist|config|all]"
+    echo "Usage: $0 [cert|blocklist|config|logs|catlogs|router-deploy|linux-deploy|all]"
     exit 1
 fi
 
 while [ $# -gt 0 ] ; do
     case "$1" in
-        cert)       generate_cert ;;
-        blocklist)  sync_blocklists ;;
-        config)     apply_config ;;
+        cert)           generate_cert ;;
+        blocklist)      sync_blocklists ;;
+        config)         apply_config ;;
+        logs)           analyze_logs ;;
+        catlogs)        cat_logs ;;
+        router-deploy)  deploy_router_proxy ;;
+        linux-deploy)   deploy_linux_cert ;;
         all)
             generate_cert
             sync_blocklists
@@ -114,7 +493,7 @@ while [ $# -gt 0 ] ; do
             ;;
         *)
             echo "Unknown command: $1"
-            echo "Usage: $0 [cert|blocklist|config|all]"
+            echo "Usage: $0 [cert|blocklist|config|logs|catlogs|router-deploy|linux-deploy|all]"
             ;;
     esac
     shift
