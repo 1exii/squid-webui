@@ -89,6 +89,9 @@ sync_blocklists() {
         scp "${combined_list_path}" "${QNAP_SERVER}:${SQUID_BLOCKLIST_DIR_REMOTE}/domains.txt"
         rm "${combined_list_path}"
         echo "  [+] Blocklist synced."
+        echo "  [*] Reloading Squid configuration on QNAP..."
+        ssh -T "${QNAP_SERVER}" "${DOCKER} exec ${SQUID_INSTANCE_NAME} squid -k reconfigure 2>/dev/null || ${DOCKER} restart ${SQUID_INSTANCE_NAME}"
+        echo "  [+] Squid reloaded with new blocklist."
     else
         echo "  [!] No blocklist files (*.txt) found in ${BLOCKLIST_DIR}. Skipping sync."
     fi
