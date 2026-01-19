@@ -14,7 +14,7 @@ HOMENET_DIR="${GITDIR}/personal/home-network"
 SQUID_DIR="${HOMENET_DIR}/squid"
 LOCAL_CONF_TEMPLATE="${SQUID_DIR}/configs/squid.conf.template"
 LOCAL_CERT_DIR="${SQUID_DIR}/certs"
-DOCKERFILE_DIR="${SQUID_DIR}"  # contains Dockerfile + docker-entrypoint.sh
+DOCKERFILE_DIR="${SQUID_DIR}/docker"  # contains Dockerfile + docker-entrypoint.sh
 
 QNAP_IP="192.168.1.2"
 QNAP_USER="admin"

@@ -175,7 +175,7 @@ analyze_logs() {
     local HOSTS_CONF="${SQUID_DIR}/router/proxy-hosts.conf"
 
     echo "  [*] Running Standalone Log Analyzer (analyze-squid-logs.py)..."
-    python3 "${SQUID_DIR}/analyze-squid-logs.py" \
+    python3 "${SQUID_DIR}/logs/analyze-squid-logs.py" \
         --log "${LOCAL_LOG}" \
         --hosts-conf "${HOSTS_CONF}" \
         --out-host-report "${HOST_REPORT}" \
@@ -477,13 +477,15 @@ deploy_webui() {
     echo "-----------------------------------------------"
     echo ">>> Deploying Squid Web UI to QNAP..."
 
-    if [ ! -f "${SQUID_DIR}/deploy-squid-docker.sh" ]; then
-        echo "  [!] ERROR: Deploy script not found: ${SQUID_DIR}/deploy-squid-docker.sh"
+    local DEPLOY_SCRIPT="${SQUID_DIR}/docker/deploy-squid-docker.sh"
+
+    if [ ! -f "${DEPLOY_SCRIPT}" ]; then
+        echo "  [!] ERROR: Deploy script not found: ${DEPLOY_SCRIPT}"
         exit 1
     fi
 
     echo "  [*] Building and running squid-webui container on QNAP..."
-    "${SQUID_DIR}/deploy-squid-docker.sh" create squid-webui
+    "${DEPLOY_SCRIPT}" create squid-webui
 
     echo "  [+] Squid Web UI deployed!"
     echo "  [i] Access Web UI at: http://192.168.1.91:3131 (or http://${QNAP_IP}:3131)"
