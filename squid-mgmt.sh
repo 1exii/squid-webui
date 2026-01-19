@@ -473,10 +473,26 @@ INSTALL_SCRIPT
     fi
 }
 
+deploy_webui() {
+    echo "-----------------------------------------------"
+    echo ">>> Deploying Squid Web UI to QNAP..."
+
+    if [ ! -f "${SQUID_DIR}/deploy-squid-docker.sh" ]; then
+        echo "  [!] ERROR: Deploy script not found: ${SQUID_DIR}/deploy-squid-docker.sh"
+        exit 1
+    fi
+
+    echo "  [*] Building and running squid-webui container on QNAP..."
+    "${SQUID_DIR}/deploy-squid-docker.sh" create squid-webui
+
+    echo "  [+] Squid Web UI deployed!"
+    echo "  [i] Access Web UI at: http://192.168.1.91:3131 (or http://${QNAP_IP}:3131)"
+}
+
 # --- 3. EXECUTION ---
 
 if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 [cert|blocklist|config|logs|catlogs|router-deploy|linux-deploy|all]"
+    echo "Usage: $0 [cert|blocklist|config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
     exit 1
 fi
 
@@ -489,14 +505,16 @@ while [ $# -gt 0 ] ; do
         catlogs)        cat_logs ;;
         router-deploy)  deploy_router_proxy ;;
         linux-deploy)   deploy_linux_cert ;;
+        webui-deploy)   deploy_webui ;;
         all)
             generate_cert
             sync_blocklists
             apply_config
+            deploy_webui
             ;;
         *)
             echo "Unknown command: $1"
-            echo "Usage: $0 [cert|blocklist|config|logs|catlogs|router-deploy|linux-deploy|all]"
+            echo "Usage: $0 [cert|blocklist|config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
             ;;
     esac
     shift

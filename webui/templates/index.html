@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Squid Proxy Access Control Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app-container">
+        <!-- Auth Screen -->
+        <div id="auth-screen" class="auth-wrapper">
+            <div class="auth-card glass-panel">
+                <div class="brand-header">
+                    <div class="logo-badge">🦑</div>
+                    <h2>Squid Management</h2>
+                    <p class="subtitle">Enter QNAP NAS Administrator Credentials</p>
+                </div>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="username">NAS Username</label>
+                        <input type="text" id="username" placeholder="e.g. admin" required autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">NAS Password</label>
+                        <input type="password" id="password" placeholder="••••••••" required autocomplete="current-password">
+                    </div>
+                    <div id="login-error" class="error-banner hidden"></div>
+                    <button type="submit" id="login-btn" class="btn btn-primary btn-block">
+                        <span>Authenticate</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Dashboard Screen -->
+        <div id="dashboard-screen" class="dashboard-wrapper hidden">
+            <!-- Header Bar -->
+            <header class="top-nav glass-panel">
+                <div class="nav-brand">
+                    <span class="logo-icon">🦑</span>
+                    <h1>Squid Access Manager</h1>
+                </div>
+                <div class="nav-right">
+                    <span id="user-badge" class="user-tag">👤 <span id="current-user"></span></span>
+                    <button id="logout-btn" class="btn btn-secondary btn-sm">Logout</button>
+                </div>
+            </header>
+
+            <!-- Main Content Container -->
+            <main class="main-content">
+                <!-- Action Bar -->
+                <div class="dashboard-toolbar">
+                    <div class="toolbar-title">
+                        <h2>Conditional Access Rules</h2>
+                        <p>Configure device-specific time windows and domain restrictions</p>
+                    </div>
+                    <button id="add-rule-btn" class="btn btn-accent">
+                        <span>+ Add Access Rule</span>
+                    </button>
+                </div>
+
+                <!-- Rules Table Card -->
+                <div class="card glass-panel">
+                    <div class="table-responsive">
+                        <table class="rules-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Rule Name</th>
+                                    <th>Target Device</th>
+                                    <th>Target Blocklist</th>
+                                    <th>Allowed Schedule</th>
+                                    <th>Policy</th>
+                                    <th class="text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rules-list">
+                                <!-- Dynamic Rules populated by JS -->
+                            </tbody>
+                        </table>
+                        <div id="empty-state" class="empty-state hidden">
+                            <div class="empty-icon">🛡️</div>
+                            <h3>No Conditional Rules Configured</h3>
+                            <p>Click "Add Access Rule" above to create your first conditional blocklist policy.</p>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Rule Modal -->
+        <div id="rule-modal" class="modal-overlay hidden">
+            <div class="modal-card glass-panel">
+                <div class="modal-header">
+                    <h3 id="modal-title">Configure Access Rule</h3>
+                    <button id="modal-close" class="close-btn">&times;</button>
+                </div>
+                <form id="rule-form">
+                    <input type="hidden" id="rule-id">
+                    
+                    <div class="form-group">
+                        <label for="rule-name">Rule Name / Description</label>
+                        <input type="text" id="rule-name" placeholder="e.g. Kid iPad YouTube Weekend Access" required>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group col-6">
+                            <label for="device-select">Target Computer / Device</label>
+                            <select id="device-select">
+                                <!-- Populated from proxy-hosts.conf -->
+                            </select>
+                        </div>
+                        <div class="form-group col-6">
+                            <label for="custom-ip">Or Custom IP Address</label>
+                            <input type="text" id="custom-ip" placeholder="192.168.1.50">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="blocklist-select">Domain List to Apply</label>
+                        <select id="blocklist-select" required>
+                            <!-- Populated from block-lists dir -->
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Active Days</label>
+                        <div class="days-picker">
+                            <label class="day-chip"><input type="checkbox" name="days" value="Monday" checked> Mon</label>
+                            <label class="day-chip"><input type="checkbox" name="days" value="Tuesday" checked> Tue</label>
+                            <label class="day-chip"><input type="checkbox" name="days" value="Wednesday" checked> Wed</label>
+                            <label class="day-chip"><input type="checkbox" name="days" value="Thursday" checked> Thu</label>
+                            <label class="day-chip"><input type="checkbox" name="days" value="Friday" checked> Fri</label>
+                            <label class="day-chip"><input type="checkbox" name="days" value="Saturday" checked> Sat</label>
+                            <label class="day-chip"><input type="checkbox" name="days" value="Sunday" checked> Sun</label>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group col-6">
+                            <label for="time-start">Start Time</label>
+                            <input type="time" id="time-start" value="08:00" required>
+                        </div>
+                        <div class="form-group col-6">
+                            <label for="time-end">End Time</label>
+                            <input type="time" id="time-end" value="20:00" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="rule-policy">Access Policy</label>
+                        <select id="rule-policy">
+                            <option value="allow_during_slot">Allow access ONLY during scheduled time slot (Block otherwise)</option>
+                            <option value="block_during_slot">Block access ONLY during scheduled time slot (Allow otherwise)</option>
+                        </select>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" id="cancel-rule-btn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save & Apply to Squid</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

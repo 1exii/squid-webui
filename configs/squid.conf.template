@@ -46,7 +46,10 @@ acl blocked_domains dstdomain "/etc/squid/block-lists/domains.txt"
 # 1. Allow localhost and internal helper requests (AIA cert downloads)
 http_access allow localhost
 
-# 2. Block access to domains in the blocklist.
+# 2. Dynamic Conditional Access Rules (Managed by Web UI)
+include /etc/squid/configs/rules.acl
+
+# 3. Block access to domains in the blocklist.
 http_access deny blocked_domains
 
 # 3. Deny requests to non-safe ports.

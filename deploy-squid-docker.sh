@@ -3,6 +3,7 @@
 # --- 1. CONFIGURATION TABLE ---
 DOCKER_INSTANCES=(
     "192.168.1.90 squid-proxy squid-ssl:latest"
+    "192.168.1.91 squid-webui squid-webui:latest"
 )
 
 # --- 2. GLOBAL SETTINGS ---
@@ -89,7 +90,7 @@ function create_squid() {
 
     # Sync config and certs before starting the container
     echo "  [*] Syncing squid.conf to QNAP..."
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/block-lists/domains.txt"
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/block-lists/domains.txt ${REMOTE_BASE}/configs/rules.acl"
     scp "$LOCAL_CONF_TEMPLATE" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
 
     if [ -f "${LOCAL_CERT_DIR}/squid-ca.pem" ] && [ -f "${LOCAL_CERT_DIR}/squid-ca.key" ]; then
@@ -107,10 +108,58 @@ function create_squid() {
             --restart=unless-stopped \
             -e TZ="$TIMEZONE" \
             -v "${REMOTE_BASE}/configs/squid.conf:/etc/squid/squid.conf:ro" \
+            -v "${REMOTE_BASE}/configs:/etc/squid/configs" \
             -v "${REMOTE_BASE}/certs:/etc/squid/certs:ro" \
             -v "${REMOTE_BASE}/block-lists:/etc/squid/block-lists:ro" \
             -v "${REMOTE_BASE}/cache:/var/cache/squid" \
             -v "${REMOTE_BASE}/ssl_db:/var/lib/squid/ssl_db" \
+            $IMAGE > /dev/null
+EOF
+}
+
+function create_webui() {
+    local IP=$1
+    local NAME=$2
+    local IMAGE=$3
+
+    echo "Launching $NAME ($IP)..."
+    REMOTE_SQUID_BASE="/share/Container/squid-proxy"
+    REMOTE_BUILD_DIR="/tmp/squid-webui-build"
+    HOMES_DIR="/share/CACHEDEV1_DATA/.qpkg/container-station/homes/${QNAP_USER}"
+
+    echo ">>> Syncing webui source and building $IMAGE on QNAP..."
+    ssh "$QNAP_SERVER" "rm -rf ${REMOTE_BUILD_DIR} && mkdir -p ${HOMES_DIR} ${REMOTE_BUILD_DIR}"
+    scp -r "${SQUID_DIR}/webui/"* "$QNAP_SERVER:${REMOTE_BUILD_DIR}/"
+    ssh -T "$QNAP_SERVER" \
+        "cd ${REMOTE_BUILD_DIR} && $DOCKER build -t ${IMAGE} . && rm -rf ${REMOTE_BUILD_DIR}"
+    if [ $? -ne 0 ]; then
+        echo "ERROR: docker build for webui failed on QNAP."
+        exit 1
+    fi
+
+    # Sync proxy-hosts.conf to squid-proxy directory if present
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router && touch ${REMOTE_SQUID_BASE}/configs/rules.acl"
+    if [ -f "${SQUID_DIR}/router/proxy-hosts.conf" ]; then
+        scp "${SQUID_DIR}/router/proxy-hosts.conf" "$QNAP_SERVER:${REMOTE_SQUID_BASE}/router/"
+    fi
+
+    # Stop and remove existing container if running
+    ssh -T "$QNAP_SERVER" "$DOCKER stop $NAME > /dev/null 2>&1; $DOCKER rm $NAME > /dev/null 2>&1"
+
+    ssh -T "$QNAP_SERVER" << EOF
+        $DOCKER run -d \
+            --name "$NAME" --hostname "$NAME" \
+            --net "$DOCKER_NET" --ip "$IP" \
+            --restart=unless-stopped \
+            -p 3131:3131 \
+            -e TZ="$TIMEZONE" \
+            -e RUNNING_ON_NAS="true" \
+            -v "${REMOTE_SQUID_BASE}/configs:/etc/squid/configs" \
+            -v "${REMOTE_SQUID_BASE}/block-lists:/etc/squid/block-lists" \
+            -v "${REMOTE_SQUID_BASE}/router:/etc/squid/router" \
+            -v "/etc/config/shadow:/host_etc/config/shadow:ro" \
+            -v "/etc/shadow:/host_etc/shadow:ro" \
+            -v "/var/run/docker.sock:/var/run/docker.sock" \
             $IMAGE > /dev/null
 EOF
 }
@@ -130,6 +179,8 @@ function create_instances() {
 
         if [ "$NAME" == "squid-proxy" ]; then
             create_squid "$IP" "$NAME" "$IMAGE"
+        elif [ "$NAME" == "squid-webui" ]; then
+            create_webui "$IP" "$NAME" "$IMAGE"
         else
             echo "ERROR: Unknown container name '$NAME'"
         fi

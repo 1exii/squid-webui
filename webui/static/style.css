@@ -1,0 +1,422 @@
+:root {
+    --bg-dark: #0b0f19;
+    --bg-card: rgba(23, 31, 48, 0.75);
+    --border-card: rgba(255, 255, 255, 0.08);
+    --primary: #6366f1;
+    --primary-hover: #4f46e5;
+    --accent: #06b6d4;
+    --accent-hover: #0891b2;
+    --success: #10b981;
+    --danger: #ef4444;
+    --text-main: #f3f4f6;
+    --text-muted: #9ca3af;
+    --radius-lg: 16px;
+    --radius-md: 10px;
+    --radius-sm: 6px;
+    --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: var(--bg-dark);
+    background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.12) 0px, transparent 50%);
+    background-attachment: fixed;
+    color: var(--text-main);
+    font-family: var(--font-family);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Glassmorphism Panel */
+.glass-panel {
+    background: var(--bg-card);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border-card);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* Authentication Screen */
+.auth-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 420px;
+    padding: 40px;
+    border-radius: var(--radius-lg);
+}
+
+.brand-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.logo-badge {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+
+.brand-header h2 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.subtitle {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+/* Form Controls */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="time"],
+select {
+    width: 100%;
+    padding: 12px 16px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md);
+    color: #ffffff;
+    font-size: 15px;
+    font-family: inherit;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+input:focus, select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
+.form-row {
+    display: flex;
+    gap: 16px;
+}
+
+.col-6 {
+    flex: 1;
+}
+
+/* Buttons */
+.btn {
+    padding: 12px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+    transition: transform 0.15s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.btn:active {
+    transform: scale(0.98);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+}
+
+.btn-primary:hover {
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+}
+
+.btn-accent {
+    background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(6, 182, 212, 0.4);
+}
+
+.btn-accent:hover {
+    box-shadow: 0 6px 20px rgba(6, 182, 212, 0.6);
+}
+
+.btn-secondary {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-main);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.btn-block {
+    width: 100%;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.error-banner {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+/* Dashboard Navigation */
+.top-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 32px;
+    border-bottom: 1px solid var(--border-card);
+}
+
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.nav-brand h1 {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.user-tag {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-right: 16px;
+}
+
+/* Main Content */
+.main-content {
+    max-width: 1200px;
+    margin: 32px auto;
+    padding: 0 24px;
+    width: 100%;
+}
+
+.dashboard-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.toolbar-title h2 {
+    font-size: 22px;
+    font-weight: 700;
+}
+
+.toolbar-title p {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+/* Card & Table */
+.card {
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.rules-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+}
+
+.rules-table th {
+    padding: 16px 20px;
+    background: rgba(15, 23, 42, 0.6);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-card);
+}
+
+.rules-table td {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-size: 14px;
+}
+
+.rules-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.text-right {
+    text-align: right;
+}
+
+/* Status Pill */
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-pill.active {
+    background: rgba(16, 185, 129, 0.15);
+    color: #6ee7b7;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.status-pill.inactive {
+    background: rgba(156, 163, 175, 0.15);
+    color: #9ca3af;
+    border: 1px solid rgba(156, 163, 175, 0.3);
+}
+
+/* Days Picker Chips */
+.days-picker {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+
+.day-chip {
+    padding: 6px 12px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 20px;
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.day-chip:has(input:checked) {
+    background: rgba(99, 102, 241, 0.25);
+    border-color: var(--primary);
+    color: #ffffff;
+}
+
+.day-chip input {
+    margin-right: 4px;
+}
+
+/* Empty State */
+.empty-state {
+    padding: 60px 20px;
+    text-align: center;
+}
+
+.empty-icon {
+    font-size: 48px;
+    margin-bottom: 16px;
+}
+
+.empty-state h3 {
+    font-size: 18px;
+    margin-bottom: 8px;
+}
+
+.empty-state p {
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    padding: 20px;
+}
+
+.modal-card {
+    width: 100%;
+    max-width: 580px;
+    padding: 32px;
+    border-radius: var(--radius-lg);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.modal-header h3 {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 24px;
+    cursor: pointer;
+}
+
+.close-btn:hover {
+    color: #ffffff;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 28px;
+}
