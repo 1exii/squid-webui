@@ -1,16 +1,32 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // DOM Elements
-    const authScreen = document.getElementById('auth-screen');
-    const dashboardScreen = document.getElementById('dashboard-screen');
+    // Nav Elements
+    const navTabOnboarding = document.getElementById('nav-tab-onboarding');
+    const navTabAdmin = document.getElementById('nav-tab-admin');
+    const onboardingScreen = document.getElementById('onboarding-screen');
+    const adminScreen = document.getElementById('admin-screen');
+    
+    const userBadge = document.getElementById('user-badge');
+    const currentUserSpan = document.getElementById('current-user');
+    const authActionBtn = document.getElementById('auth-action-btn');
+
+    // Guide Platform Tab Elements
+    const guideTabWindows = document.getElementById('guide-tab-windows');
+    const guideTabUbuntu = document.getElementById('guide-tab-ubuntu');
+    const guideContentWindows = document.getElementById('guide-content-windows');
+    const guideContentUbuntu = document.getElementById('guide-content-ubuntu');
+
+    // Auth Modal Elements
+    const authModal = document.getElementById('auth-modal');
+    const authModalClose = document.getElementById('auth-modal-close');
     const loginForm = document.getElementById('login-form');
     const loginError = document.getElementById('login-error');
-    const logoutBtn = document.getElementById('logout-btn');
-    const currentUserSpan = document.getElementById('current-user');
-    
+
+    // Admin Dashboard Elements
     const addRuleBtn = document.getElementById('add-rule-btn');
     const rulesList = document.getElementById('rules-list');
     const emptyState = document.getElementById('empty-state');
     
+    // Rule Modal Elements
     const ruleModal = document.getElementById('rule-modal');
     const ruleForm = document.getElementById('rule-form');
     const modalTitle = document.getElementById('modal-title');
@@ -21,28 +37,94 @@ document.addEventListener('DOMContentLoaded', () => {
     const customIp = document.getElementById('custom-ip');
     const blocklistSelect = document.getElementById('blocklist-select');
 
-    // App State
+    // State
+    let isAuthenticated = false;
+    let currentUser = '';
     let hostsData = [];
     let blocklistsData = [];
     let rulesData = [];
 
-    // Initialize Auth Status
+    // Check Auth Status on Load
     checkAuthStatus();
 
     async function checkAuthStatus() {
         try {
             const res = await fetch('/api/auth/status');
             const data = await res.json();
-            if (data.authenticated) {
-                showDashboard(data.user);
-            } else {
-                showAuth();
-            }
+            isAuthenticated = data.authenticated;
+            currentUser = data.user || '';
+            updateAuthUI();
         } catch (e) {
             console.error('Auth check error:', e);
-            showAuth();
+            isAuthenticated = false;
+            updateAuthUI();
         }
     }
+
+    function updateAuthUI() {
+        if (isAuthenticated) {
+            userBadge.classList.remove('hidden');
+            currentUserSpan.textContent = currentUser;
+            authActionBtn.textContent = 'Logout';
+        } else {
+            userBadge.classList.add('hidden');
+            authActionBtn.textContent = 'Admin Login';
+        }
+    }
+
+    // Top Nav Tabs
+    navTabOnboarding.addEventListener('click', () => {
+        navTabOnboarding.classList.add('active');
+        navTabAdmin.classList.remove('active');
+        onboardingScreen.classList.remove('hidden');
+        adminScreen.classList.add('hidden');
+    });
+
+    navTabAdmin.addEventListener('click', () => {
+        if (!isAuthenticated) {
+            authModal.classList.remove('hidden');
+        } else {
+            switchToAdmin();
+        }
+    });
+
+    function switchToAdmin() {
+        navTabAdmin.classList.add('active');
+        navTabOnboarding.classList.remove('active');
+        adminScreen.classList.remove('hidden');
+        onboardingScreen.classList.add('hidden');
+        loadAdminData();
+    }
+
+    // Guide Platform Tabs
+    guideTabWindows.addEventListener('click', () => {
+        guideTabWindows.classList.add('active');
+        guideTabUbuntu.classList.remove('active');
+        guideContentWindows.classList.remove('hidden');
+        guideContentUbuntu.classList.add('hidden');
+    });
+
+    guideTabUbuntu.addEventListener('click', () => {
+        guideTabUbuntu.classList.add('active');
+        guideTabWindows.classList.remove('active');
+        guideContentUbuntu.classList.remove('hidden');
+        guideContentWindows.classList.add('hidden');
+    });
+
+    // Auth Action Button (Login / Logout)
+    authActionBtn.addEventListener('click', async () => {
+        if (isAuthenticated) {
+            await fetch('/api/logout', { method: 'POST' });
+            isAuthenticated = false;
+            currentUser = '';
+            updateAuthUI();
+            navTabOnboarding.click();
+        } else {
+            authModal.classList.remove('hidden');
+        }
+    });
+
+    authModalClose.addEventListener('click', () => authModal.classList.add('hidden'));
 
     // Login Form Submit
     loginForm.addEventListener('submit', async (e) => {
@@ -65,7 +147,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
 
             if (res.ok && data.success) {
-                showDashboard(username);
+                isAuthenticated = true;
+                currentUser = username;
+                updateAuthUI();
+                authModal.classList.add('hidden');
+                switchToAdmin();
             } else {
                 loginError.textContent = data.error || 'Authentication failed.';
                 loginError.classList.remove('hidden');
@@ -79,25 +165,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Logout
-    logoutBtn.addEventListener('click', async () => {
-        await fetch('/api/logout', { method: 'POST' });
-        showAuth();
-    });
-
-    function showAuth() {
-        authScreen.classList.remove('hidden');
-        dashboardScreen.classList.add('hidden');
-    }
-
-    function showDashboard(username) {
-        currentUserSpan.textContent = username;
-        authScreen.classList.add('hidden');
-        dashboardScreen.classList.remove('hidden');
-        loadDashboardData();
-    }
-
-    async function loadDashboardData() {
+    // Admin Dashboard Data
+    async function loadAdminData() {
         await Promise.all([fetchHosts(), fetchBlocklists(), fetchRules()]);
     }
 
@@ -195,7 +264,6 @@ document.addEventListener('DOMContentLoaded', () => {
             rulesList.appendChild(tr);
         });
 
-        // Add event listeners for dynamic buttons
         document.querySelectorAll('.toggle-btn').forEach(btn => {
             btn.addEventListener('click', () => toggleRule(btn.dataset.id));
         });
@@ -207,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Modal Control
+    // Modal Controls
     addRuleBtn.addEventListener('click', () => {
         resetForm();
         modalTitle.textContent = 'Add Access Rule';
@@ -218,17 +286,13 @@ document.addEventListener('DOMContentLoaded', () => {
     cancelRuleBtn.addEventListener('click', () => ruleModal.classList.add('hidden'));
 
     deviceSelect.addEventListener('change', () => {
-        if (deviceSelect.value) {
-            customIp.value = '';
-        }
+        if (deviceSelect.value) customIp.value = '';
     });
     customIp.addEventListener('input', () => {
-        if (customIp.value) {
-            deviceSelect.value = '';
-        }
+        if (customIp.value) deviceSelect.value = '';
     });
 
-    // Form Submit
+    // Save Rule
     ruleForm.addEventListener('submit', async (e) => {
         e.preventDefault();
 

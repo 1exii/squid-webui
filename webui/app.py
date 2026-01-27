@@ -4,7 +4,7 @@ import secrets
 import subprocess
 import paramiko
 from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, render_template, request, jsonify, session, send_file
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(24))
@@ -12,6 +12,7 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(24))
 # Configuration paths (inside container / host)
 SQUID_CONFIG_DIR = os.environ.get("SQUID_CONFIG_DIR", "/etc/squid/configs")
 SQUID_BLOCKLIST_DIR = os.environ.get("SQUID_BLOCKLIST_DIR", "/etc/squid/block-lists")
+SQUID_CERT_DIR = os.environ.get("SQUID_CERT_DIR", "/etc/squid/certs")
 ROUTER_HOSTS_CONF = os.environ.get("ROUTER_HOSTS_CONF", "/etc/squid/router/proxy-hosts.conf")
 
 RULES_JSON_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.json")
@@ -324,6 +325,74 @@ def toggle_rule(rule_id):
             break
     save_rules(rules)
     return jsonify({"success": True})
+
+
+@app.route("/download/cert.crt")
+def download_cert_crt():
+    """Public endpoint to download Root CA certificate in DER format (.crt) for Windows/iOS/macOS."""
+    cert_path = os.path.join(SQUID_CERT_DIR, "squid-ca.crt")
+    pem_path = os.path.join(SQUID_CERT_DIR, "squid-ca.pem")
+
+    if os.path.exists(cert_path):
+        return send_file(cert_path, as_attachment=True, download_name="squid-ca.crt", mimetype="application/x-x509-ca-cert")
+    elif os.path.exists(pem_path):
+        return send_file(pem_path, as_attachment=True, download_name="squid-ca.crt", mimetype="application/x-x509-ca-cert")
+    return jsonify({"error": "Certificate not found on proxy server"}), 404
+
+
+@app.route("/download/cert.pem")
+def download_cert_pem():
+    """Public endpoint to download Root CA certificate in PEM format (.pem) for Linux."""
+    pem_path = os.path.join(SQUID_CERT_DIR, "squid-ca.pem")
+    if os.path.exists(pem_path):
+        return send_file(pem_path, as_attachment=True, download_name="squid-ca.pem", mimetype="application/x-pem-file")
+    return jsonify({"error": "Certificate not found on proxy server"}), 404
+
+
+@app.route("/download/install-ubuntu.sh")
+def download_ubuntu_script():
+    """Public automated installation script for Ubuntu Linux clients."""
+    host = request.host
+    script = f"""#!/bin/bash
+set -e
+echo "========================================================="
+echo "   Squid Proxy CA Certificate & System Installer (Ubuntu)"
+echo "========================================================="
+
+CERT_URL="http://{host}/download/cert.pem"
+PROXY_URL="http://192.168.1.90:3128"
+
+echo "[*] Downloading Root CA Certificate..."
+sudo wget -q -O /usr/local/share/ca-certificates/squid-proxy-ca.crt "$CERT_URL"
+
+echo "[*] Updating System Trust Store..."
+sudo update-ca-certificates
+
+if command -v certutil > /dev/null 2>&1; then
+    echo "[*] Importing into Chrome/NSS Certificate Database..."
+    for user_home in /root /home/*; do
+        if [ -d "$user_home/.pki/nssdb" ]; then
+            sudo certutil -d "sql:$user_home/.pki/nssdb" -A -t "C,," -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt 2>/dev/null || true
+        fi
+    done
+fi
+
+echo "[*] Setting System Proxy Profile (/etc/profile.d/squid-proxy.sh)..."
+cat << 'EOF' | sudo tee /etc/profile.d/squid-proxy.sh > /dev/null
+export http_proxy="http://192.168.1.90:3128"
+export https_proxy="http://192.168.1.90:3128"
+export HTTP_PROXY="http://192.168.1.90:3128"
+export HTTPS_PROXY="http://192.168.1.90:3128"
+export no_proxy="localhost,127.0.0.1,192.168.0.0/16,local,.local"
+export NO_PROXY="localhost,127.0.0.1,192.168.0.0/16,local,.local"
+EOF
+sudo chmod 755 /etc/profile.d/squid-proxy.sh
+
+echo "========================================================="
+echo "   [+] Installation Complete! HTTPS traffic is now trusted."
+echo "========================================================="
+"""
+    return script, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 
 if __name__ == "__main__":

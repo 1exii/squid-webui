@@ -155,6 +155,7 @@ function create_webui() {
             -e TZ="$TIMEZONE" \
             -e RUNNING_ON_NAS="true" \
             -v "${REMOTE_SQUID_BASE}/configs:/etc/squid/configs" \
+            -v "${REMOTE_SQUID_BASE}/certs:/etc/squid/certs:ro" \
             -v "${REMOTE_SQUID_BASE}/block-lists:/etc/squid/block-lists" \
             -v "${REMOTE_SQUID_BASE}/router:/etc/squid/router" \
             -v "/etc/config/shadow:/host_etc/config/shadow:ro" \

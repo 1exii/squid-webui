@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Squid Proxy Access Control Center</title>
+    <title>Squid Proxy - Onboarding Guides & Management</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -11,13 +11,198 @@
 </head>
 <body>
     <div id="app-container">
-        <!-- Auth Screen -->
-        <div id="auth-screen" class="auth-wrapper">
-            <div class="auth-card glass-panel">
-                <div class="brand-header">
-                    <div class="logo-badge">🦑</div>
-                    <h2>Squid Management</h2>
-                    <p class="subtitle">Enter QNAP NAS Administrator Credentials</p>
+        <!-- Top Navigation -->
+        <header class="top-nav glass-panel">
+            <div class="nav-brand">
+                <span class="logo-icon">🦑</span>
+                <h1>Squid Proxy Center</h1>
+            </div>
+            <div class="nav-tabs">
+                <button id="nav-tab-onboarding" class="nav-tab-btn active">📖 Client Onboarding & Certs</button>
+                <button id="nav-tab-admin" class="nav-tab-btn">⚙️ Access Control Admin</button>
+            </div>
+            <div class="nav-right">
+                <span id="user-badge" class="user-tag hidden">👤 <span id="current-user"></span></span>
+                <button id="auth-action-btn" class="btn btn-secondary btn-sm">Admin Login</button>
+            </div>
+        </header>
+
+        <!-- Public View: Client Onboarding & Certificate Downloads -->
+        <main id="onboarding-screen" class="main-content">
+            <!-- Hero Download Card -->
+            <div class="hero-banner glass-panel">
+                <div class="hero-content">
+                    <h2>Root CA Certificate Downloads</h2>
+                    <p>To avoid SSL/TLS certificate warnings and HSTS blocking, download and install the internal Root CA certificate onto your client devices.</p>
+                    <div class="download-actions">
+                        <a href="/download/cert.crt" class="btn btn-primary" download="squid-ca.crt">
+                            <span>⬇️ Download CA Cert (.crt) for Windows / macOS / iOS</span>
+                        </a>
+                        <a href="/download/cert.pem" class="btn btn-accent" download="squid-ca.pem">
+                            <span>⬇️ Download CA Cert (.pem) for Linux</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Platform Selector -->
+            <div class="platform-nav">
+                <button id="guide-tab-windows" class="platform-tab active">🪟 Windows Setup Guide</button>
+                <button id="guide-tab-ubuntu" class="platform-tab">🐧 Ubuntu Linux Setup Guide</button>
+            </div>
+
+            <!-- Windows Guide Content -->
+            <div id="guide-content-windows" class="guide-card glass-panel">
+                <div class="guide-header">
+                    <h3>Windows 10 / 11 / Server Client Onboarding Manual</h3>
+                    <span class="badge">Target Platform: Windows 10/11</span>
+                </div>
+
+                <section class="guide-section">
+                    <h4>1. Architecture & HSTS Prevention</h4>
+                    <p>This environment uses <strong>Transparent Network Interception</strong>. Windows clients do <em>NOT</em> require manual proxy configurations in System Settings or Internet Options.</p>
+                    <ul>
+                        <li><strong>Router Redirection:</strong> The ASUS Router detects HTTP (80) & HTTPS (443) traffic from registered client IPs and redirects it to the Squid proxy.</li>
+                        <li><strong>SSL Bumping:</strong> Squid inspects TLS traffic and dynamically generates site-specific certificates signed by the internal Root CA (<code>squid.local</code>).</li>
+                        <li><strong>HSTS Prevention:</strong> Popular domains like Google, GitHub, and Twitter enforce HSTS. Installing the Root CA into the <strong>Local Machine Trusted Root Store</strong> ensures Edge, Chrome, and system services recognize <code>squid.local</code> as a valid Root Authority, eliminating HSTS errors.</li>
+                    </ul>
+                </section>
+
+                <section class="guide-section">
+                    <h4>2. Router Registration (Administrator Step)</h4>
+                    <p>Before a Windows client can be proxied, its IP must be registered in <code>proxy-hosts.conf</code> and deployed via router firewall script.</p>
+                </section>
+
+                <section class="guide-section">
+                    <h4>3. Install Root CA Certificate on Windows Client</h4>
+                    <p>To prevent <code>NET::ERR_CERT_AUTHORITY_INVALID</code> and HSTS hard-blocks, install the Root CA into the system-wide Local Machine store:</p>
+                    
+                    <div class="method-box">
+                        <h5>Method A: Automated PowerShell Installation (Recommended)</h5>
+                        <p>Open <strong>PowerShell as Administrator</strong> on the Windows machine and run:</p>
+                        <pre><code>Import-Certificate -FilePath "$HOME\Downloads\squid-ca.crt" -CertStoreLocation "Cert:\LocalMachine\Root"</code></pre>
+                    </div>
+
+                    <div class="method-box">
+                        <h5>Method B: Graphical Interface (GUI) Installation</h5>
+                        <ol>
+                            <li>Press <kbd>Win</kbd> + <kbd>R</kbd>, type <code>certlm.msc</code> (Local Computer Certificate Manager), and press Enter.</li>
+                            <li>In the left pane, expand <strong>Trusted Root Certification Authorities</strong> &rarr; <strong>Certificates</strong>.</li>
+                            <li>Right-click Certificates &rarr; <strong>All Tasks</strong> &rarr; <strong>Import...</strong></li>
+                            <li>Click Next, browse to <code>squid-ca.crt</code>, and select <em>Place all certificates in the following store: Trusted Root Certification Authorities</em>.</li>
+                            <li>Click Next &rarr; Finish and confirm the security prompt.</li>
+                        </ol>
+                    </div>
+                </section>
+
+                <section class="guide-section">
+                    <h4>4. Browser-Specific Setup & HSTS Clearing</h4>
+                    <ul>
+                        <li><strong>Microsoft Edge & Google Chrome:</strong> Automatically trust the certificate once imported into <code>Cert:\LocalMachine\Root</code>. If HSTS is cached, visit <code>chrome://net-internals/#hsts</code>, enter the domain under <em>Delete domain security policies</em>, and click Delete.</li>
+                        <li><strong>Mozilla Firefox:</strong> Type <code>about:config</code> in Firefox address bar, search for <code>security.enterprise_roots.enabled</code>, set it to <code>true</code>, and restart Firefox.</li>
+                    </ul>
+                </section>
+            </div>
+
+            <!-- Ubuntu Linux Guide Content -->
+            <div id="guide-content-ubuntu" class="guide-card glass-panel hidden">
+                <div class="guide-header">
+                    <h3>Ubuntu Linux Client Onboarding Manual</h3>
+                    <span class="badge badge-ubuntu">Target Platform: Ubuntu / Debian</span>
+                </div>
+
+                <section class="guide-section">
+                    <h4>1. Automated One-Liner Installation (Fastest)</h4>
+                    <p>Open a terminal on your Ubuntu machine and run the following command to download the CA certificate, update system trust stores, and set proxy environment profiles automatically:</p>
+                    <div class="code-banner">
+                        <pre><code>curl -sSL http://192.168.1.91:3131/download/install-ubuntu.sh | sudo bash</code></pre>
+                    </div>
+                </section>
+
+                <section class="guide-section">
+                    <h4>2. Manual Installation Steps</h4>
+                    <div class="method-box">
+                        <h5>Step 1: Download & Install System Root CA</h5>
+                        <pre><code>sudo wget -O /usr/local/share/ca-certificates/squid-proxy-ca.crt http://192.168.1.91:3131/download/cert.pem
+sudo update-ca-certificates</code></pre>
+                    </div>
+
+                    <div class="method-box">
+                        <h5>Step 2: Import into Chrome / NSS Certificate Database</h5>
+                        <pre><code>sudo apt-get install -y libnss3-tools
+certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt</code></pre>
+                    </div>
+
+                    <div class="method-box">
+                        <h5>Step 3: System-Wide Environment Proxy Settings</h5>
+                        <pre><code>cat << 'EOF' | sudo tee /etc/profile.d/squid-proxy.sh
+export http_proxy="http://192.168.1.90:3128"
+export https_proxy="http://192.168.1.90:3128"
+export HTTP_PROXY="http://192.168.1.90:3128"
+export HTTPS_PROXY="http://192.168.1.90:3128"
+export no_proxy="localhost,127.0.0.1,192.168.0.0/16,local,.local"
+export NO_PROXY="localhost,127.0.0.1,192.168.0.0/16,local,.local"
+EOF
+sudo chmod 755 /etc/profile.d/squid-proxy.sh</code></pre>
+                    </div>
+                </section>
+
+                <section class="guide-section">
+                    <h4>3. Verification & Testing</h4>
+                    <pre><code># Test HTTPS request through proxy profile
+. /etc/profile.d/squid-proxy.sh
+curl -v https://google.com</code></pre>
+                </section>
+            </div>
+        </main>
+
+        <!-- Admin View: Access Control Rules (Protected) -->
+        <main id="admin-screen" class="main-content hidden">
+            <!-- Action Bar -->
+            <div class="dashboard-toolbar">
+                <div class="toolbar-title">
+                    <h2>Conditional Access Rules</h2>
+                    <p>Configure device-specific time windows and domain restrictions</p>
+                </div>
+                <button id="add-rule-btn" class="btn btn-accent">
+                    <span>+ Add Access Rule</span>
+                </button>
+            </div>
+
+            <!-- Rules Table Card -->
+            <div class="card glass-panel">
+                <div class="table-responsive">
+                    <table class="rules-table">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Rule Name</th>
+                                <th>Target Device</th>
+                                <th>Target Blocklist</th>
+                                <th>Allowed Schedule</th>
+                                <th>Policy</th>
+                                <th class="text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rules-list">
+                            <!-- Dynamic Rules populated by JS -->
+                        </tbody>
+                    </table>
+                    <div id="empty-state" class="empty-state hidden">
+                        <div class="empty-icon">🛡️</div>
+                        <h3>No Conditional Rules Configured</h3>
+                        <p>Click "Add Access Rule" above to create your first conditional blocklist policy.</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Auth Modal -->
+        <div id="auth-modal" class="modal-overlay hidden">
+            <div class="modal-card glass-panel auth-card">
+                <div class="modal-header">
+                    <h3>NAS Administrator Login</h3>
+                    <button id="auth-modal-close" class="close-btn">&times;</button>
                 </div>
                 <form id="login-form">
                     <div class="form-group">
@@ -34,62 +219,6 @@
                     </button>
                 </form>
             </div>
-        </div>
-
-        <!-- Dashboard Screen -->
-        <div id="dashboard-screen" class="dashboard-wrapper hidden">
-            <!-- Header Bar -->
-            <header class="top-nav glass-panel">
-                <div class="nav-brand">
-                    <span class="logo-icon">🦑</span>
-                    <h1>Squid Access Manager</h1>
-                </div>
-                <div class="nav-right">
-                    <span id="user-badge" class="user-tag">👤 <span id="current-user"></span></span>
-                    <button id="logout-btn" class="btn btn-secondary btn-sm">Logout</button>
-                </div>
-            </header>
-
-            <!-- Main Content Container -->
-            <main class="main-content">
-                <!-- Action Bar -->
-                <div class="dashboard-toolbar">
-                    <div class="toolbar-title">
-                        <h2>Conditional Access Rules</h2>
-                        <p>Configure device-specific time windows and domain restrictions</p>
-                    </div>
-                    <button id="add-rule-btn" class="btn btn-accent">
-                        <span>+ Add Access Rule</span>
-                    </button>
-                </div>
-
-                <!-- Rules Table Card -->
-                <div class="card glass-panel">
-                    <div class="table-responsive">
-                        <table class="rules-table">
-                            <thead>
-                                <tr>
-                                    <th>Status</th>
-                                    <th>Rule Name</th>
-                                    <th>Target Device</th>
-                                    <th>Target Blocklist</th>
-                                    <th>Allowed Schedule</th>
-                                    <th>Policy</th>
-                                    <th class="text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="rules-list">
-                                <!-- Dynamic Rules populated by JS -->
-                            </tbody>
-                        </table>
-                        <div id="empty-state" class="empty-state hidden">
-                            <div class="empty-icon">🛡️</div>
-                            <h3>No Conditional Rules Configured</h3>
-                            <p>Click "Add Access Rule" above to create your first conditional blocklist policy.</p>
-                        </div>
-                    </div>
-                </div>
-            </main>
         </div>
 
         <!-- Rule Modal -->
