@@ -522,5 +522,12 @@ while [ $# -gt 0 ] ; do
     shift
 done
 
+cleanup_pycache() {
+    find "${SQUID_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    find "${SQUID_DIR}" -type f -name "*.pyc" -delete 2>/dev/null || true
+}
+
+cleanup_pycache
+
 echo "-----------------------------------------------"
 echo "Operation Complete."
