@@ -1,0 +1,28 @@
+# Online Shopping & In-Game Microtransactions Blocklist for Squid Proxy
+
+amazon.com
+.amazon.com
+ebay.com
+.ebay.com
+shein.com
+.shein.com
+temu.com
+.temu.com
+aliexpress.com
+.aliexpress.com
+alibaba.com
+.alibaba.com
+walmart.com
+.walmart.com
+target.com
+.target.com
+etsy.com
+.etsy.com
+wish.com
+.wish.com
+
+# In-Game Stores & Trading Markets
+steamcommunity.com/market
+store.steampowered.com
+roblox.com/upgrades/robux
+store.epicgames.com
