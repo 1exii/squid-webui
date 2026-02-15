@@ -31,9 +31,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const deviceSearchInput   = document.getElementById('device-search-input');
     const proxyHostsWarning   = document.getElementById('proxy-hosts-warning');
     const warningDeviceMsg    = document.getElementById('warning-device-msg');
-    const activeDeviceIcon    = document.getElementById('active-device-icon');
-    const activeDeviceName    = document.getElementById('active-device-name');
-    const activeDeviceIp      = document.getElementById('active-device-ip');
     const saveStatusText      = document.getElementById('save-status-text');
     const applyPolicyBtn      = document.getElementById('apply-policy-btn');
     const copyRulesBtn        = document.getElementById('copy-rules-btn');
@@ -362,9 +359,6 @@ document.addEventListener('DOMContentLoaded', () => {
         renderDropdown();
 
         const dev = devicesData.find(d => d.ip === ip) || { ip, hostname: ip, name: ip };
-        if (activeDeviceIcon) activeDeviceIcon.textContent = getIcon(dev.name);
-        if (activeDeviceName) activeDeviceName.textContent = `${dev.name}  (${dev.hostname})`;
-        if (activeDeviceIp)   activeDeviceIp.textContent   = `IP: ${dev.ip}`;
 
         if (dev.in_proxy_hosts === false) {
             if (warningDeviceMsg) warningDeviceMsg.textContent =

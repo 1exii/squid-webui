@@ -736,34 +736,7 @@ input:focus, select:focus {
     border-radius: 4px;
 }
 
-/* Device Status Bar */
-.device-status-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 20px;
-    border-radius: var(--radius-lg);
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-    gap: 12px;
-}
-.device-status-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.device-icon-sm {
-    font-size: 22px;
-}
-.ip-badge {
-    display: inline-block;
-    font-size: 12px;
-    color: var(--accent);
-    background: rgba(6, 182, 212, 0.12);
-    padding: 2px 8px;
-    border-radius: 4px;
-    margin-top: 4px;
-}
+
 .preset-actions-bar {
     display: flex;
     align-items: center;
