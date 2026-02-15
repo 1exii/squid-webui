@@ -764,11 +764,14 @@ input:focus, select:focus {
     border-radius: 4px;
     margin-top: 4px;
 }
-.preset-actions {
+.preset-actions-bar {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 .preset-label {
     font-size: 12px;

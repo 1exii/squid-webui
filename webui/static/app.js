@@ -67,10 +67,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const todayColHeader         = document.getElementById('today-col-header');
 
     // Presets
-    const presetAllowAllDay  = document.getElementById('preset-allow-all-day');
-    const presetBlockAllDay  = document.getElementById('preset-block-all-day');
-    const presetAfterSchool  = document.getElementById('preset-after-school');
-    const presetWeekends     = document.getElementById('preset-weekends');
+    const presetAllowAll  = document.getElementById('preset-allow-all');
+    const presetBlockAll  = document.getElementById('preset-block-all');
+    const presetNext30m   = document.getElementById('preset-next-30m');
+    const presetNext1h    = document.getElementById('preset-next-1h');
+    const presetNext2h    = document.getElementById('preset-next-2h');
 
     // ─────────────────────────────────────────────────────────────
     // STATE
@@ -302,6 +303,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (devicesData.length > 0) selectDevice(devicesData[0].ip);
             else if (saveStatusText) saveStatusText.textContent = '⚠️ No active devices found.';
+
+            // Auto-scroll the matrix to the current time
+            setTimeout(scrollToCurrentTime, 100);
         } catch (err) {
             console.error('loadAdminData error:', err);
             if (saveStatusText) saveStatusText.textContent = '❌ Failed to load data from server.';
@@ -567,6 +571,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (matrixTitle) matrixTitle.textContent = '⏰ Weekly Unblock Schedule';
         if (matrixSubtitle) matrixSubtitle.innerHTML = 'Drag to mark <strong class="allow-text">green = allowed</strong> windows. Empty = blocked by default.';
         syncMatrixToActiveEntries();
+        scrollToCurrentTime();
     });
 
     modeTodayBtn && modeTodayBtn.addEventListener('click', () => {
@@ -580,6 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (matrixSubtitle) matrixSubtitle.innerHTML = 'Drag to allow for <strong>today only</strong>. Resets at midnight.';
         if (todayColHeader) todayColHeader.textContent = `Today (${todayDisplayName()})`;
         syncMatrixToActiveEntries();
+        scrollToCurrentTime();
     });
 
     // ─────────────────────────────────────────────────────────────
@@ -772,32 +778,64 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // AUTO-SCROLL
+    // ─────────────────────────────────────────────────────────────
+    function scrollToCurrentTime() {
+        const now = new Date();
+        const startSlot = Math.floor((now.getHours() * 60 + now.getMinutes()) / 30);
+        const containerId = scheduleMode === 'weekly' ? 'weekly-table-wrap' : 'today-table-wrap';
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        const firstCell = container.querySelector(`td[data-slot="${startSlot}"]`);
+        if (firstCell) {
+            const tr = firstCell.parentElement;
+            container.scrollTo({
+                top: tr.offsetTop - 40,
+                behavior: 'smooth'
+            });
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // PRESETS
     // ─────────────────────────────────────────────────────────────
-    presetAllowAllDay && presetAllowAllDay.addEventListener('click', () => {
+    presetAllowAll && presetAllowAll.addEventListener('click', () => {
         if (!currentDeviceIp || !editingLists().length) return;
         if (scheduleMode === 'weekly') { for (let d=0;d<7;d++) for (let s=0;s<48;s++) applyWeeklyCell(d,s,true); }
         else { for (let s=0;s<48;s++) applyTodayCell(s,true); }
         updateRulesPreview(); scheduleAutoSave();
     });
-    presetBlockAllDay && presetBlockAllDay.addEventListener('click', () => {
+    presetBlockAll && presetBlockAll.addEventListener('click', () => {
         if (!currentDeviceIp || !editingLists().length) return;
         if (scheduleMode === 'weekly') { for (let d=0;d<7;d++) for (let s=0;s<48;s++) applyWeeklyCell(d,s,false); }
         else { for (let s=0;s<48;s++) applyTodayCell(s,false); }
         updateRulesPreview(); scheduleAutoSave();
     });
-    // After-school: allow 3pm–9pm (slots 30–35) weekdays Mon–Fri
-    presetAfterSchool && presetAfterSchool.addEventListener('click', () => {
+    
+    function applyNextDuration(durationMins) {
         if (!currentDeviceIp || !editingLists().length) return;
-        for (let d=1; d<=5; d++) for (let s=0;s<48;s++) applyWeeklyCell(d, s, s>=30 && s<=35);
+        const now = new Date();
+        const currentMins = now.getHours() * 60 + now.getMinutes();
+        const startSlot = Math.floor(currentMins / 30);
+        const endSlot = Math.ceil((currentMins + durationMins) / 30) - 1;
+        
+        // Ensure bounds
+        const sStart = Math.max(0, Math.min(47, startSlot));
+        const sEnd = Math.max(0, Math.min(47, endSlot));
+        
+        if (scheduleMode === 'weekly') {
+            const todayDay = now.getDay();
+            for (let s = sStart; s <= sEnd; s++) applyWeeklyCell(todayDay, s, true);
+        } else {
+            for (let s = sStart; s <= sEnd; s++) applyTodayCell(s, true);
+        }
         updateRulesPreview(); scheduleAutoSave();
-    });
-    // Weekends: allow all day Sat(6) and Sun(0)
-    presetWeekends && presetWeekends.addEventListener('click', () => {
-        if (!currentDeviceIp || !editingLists().length) return;
-        [0,6].forEach(d => { for (let s=0;s<48;s++) applyWeeklyCell(d,s,true); });
-        updateRulesPreview(); scheduleAutoSave();
-    });
+    }
+
+    presetNext30m && presetNext30m.addEventListener('click', () => applyNextDuration(30));
+    presetNext1h && presetNext1h.addEventListener('click', () => applyNextDuration(60));
+    presetNext2h && presetNext2h.addEventListener('click', () => applyNextDuration(120));
 
     // ─────────────────────────────────────────────────────────────
     // AUTO-SAVE

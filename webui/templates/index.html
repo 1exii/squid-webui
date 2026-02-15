@@ -168,13 +168,6 @@ curl -v https://google.com</code></pre>
                     <strong id="active-device-name">No device selected</strong>
                     <span id="active-device-ip" class="ip-badge">—</span>
                 </div>
-                <div class="preset-actions">
-                    <span class="preset-label">Presets:</span>
-                    <button type="button" class="btn btn-secondary btn-sm" id="preset-allow-all-day">✅ Allow All Day</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="preset-block-all-day">🚫 Block All Day</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="preset-after-school">📚 After School</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="preset-weekends">🎮 Weekends</button>
-                </div>
             </div>
 
             <!-- Device Config Workspace -->
@@ -261,6 +254,15 @@ curl -v https://google.com</code></pre>
 
                         <!-- Schedule Matrix -->
                         <div class="card glass-panel matrix-card">
+                            <div class="preset-actions-bar">
+                                <span class="preset-label">Quick Actions:</span>
+                                <button type="button" class="btn btn-secondary btn-sm" id="preset-allow-all">✅ Allow All</button>
+                                <button type="button" class="btn btn-secondary btn-sm" id="preset-block-all">🚫 Block All</button>
+                                <button type="button" class="btn btn-secondary btn-sm" id="preset-next-30m">⏱️ Next 30 min</button>
+                                <button type="button" class="btn btn-secondary btn-sm" id="preset-next-1h">⏱️ Next 1 hour</button>
+                                <button type="button" class="btn btn-secondary btn-sm" id="preset-next-2h">⏱️ Next 2 hours</button>
+                            </div>
+                            
                             <div class="matrix-header">
                                 <div>
                                     <h4 id="matrix-title">⏰ Weekly Unblock Schedule</h4>
