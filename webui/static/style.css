@@ -860,6 +860,260 @@ input:focus, select:focus {
     box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
+/* ── Schedule Edit Mode Row (Basic / Advanced) ── */
+.sched-edit-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 0 16px;
+    margin-top: 4px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    flex-wrap: wrap;
+}
+.sched-edit-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+.sched-edit-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+.advanced-note {
+    color: var(--accent);
+}
+.basic-mode-note {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--text-muted);
+    padding: 6px 14px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: monospace;
+    color: var(--text-main);
+}
+
+
+.legend-box.allowed {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.75), rgba(5, 150, 105, 0.6));
+    border: 1px solid rgba(16, 185, 129, 0.8);
+}
+.legend-box.default-blocked {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* ── Matrix cell — allowed (green) ── */
+.schedule-matrix-table td.matrix-cell.allowed {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.65), rgba(5, 150, 105, 0.45));
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.3), 0 0 8px rgba(16,185,129,0.2);
+    color: #d1fae5;
+    font-weight: 700;
+    font-size: 12px;
+}
+.schedule-matrix-table td.matrix-cell.allowed:hover {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.85), rgba(5, 150, 105, 0.65));
+    box-shadow: inset 0 0 0 1px rgba(16,185,129,0.6), 0 0 12px rgba(16,185,129,0.3);
+}
+
+/* ── Today-only column header highlight ── */
+.today-col {
+    background: rgba(99, 102, 241, 0.2) !important;
+    color: var(--accent) !important;
+}
+
+/* ── 3-Category Policy Sections ── */
+.policy-section {
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    margin-bottom: 24px;
+}
+
+.section-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-card);
+}
+.section-title-group {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    flex: 1;
+}
+.section-icon {
+    font-size: 24px;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.section-title {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+.section-title-sub {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: 15px;
+}
+.section-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+.allow-text {
+    color: #34d399;
+}
+
+/* Always Block card — red tint */
+.always-block-card {
+    background: rgba(239, 68, 68, 0.07) !important;
+    border: 1px solid rgba(239, 68, 68, 0.25) !important;
+}
+.always-block-card .section-title {
+    color: #fca5a5;
+}
+.always-block-grid .blocklist-chip:has(input:checked) {
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
+}
+
+/* Default Block card — amber tint */
+.default-block-card {
+    background: rgba(245, 158, 11, 0.06) !important;
+    border: 1px solid rgba(245, 158, 11, 0.22) !important;
+}
+.default-block-card .section-title {
+    color: #fcd34d;
+}
+.default-block-grid .blocklist-chip:has(input:checked) {
+    background: rgba(245, 158, 11, 0.18);
+    border-color: rgba(245, 158, 11, 0.5);
+    color: #fcd34d;
+}
+
+/* ── Default Block: List Tabs & Mode Pill ── */
+.db-tabs-container {
+    margin-top: 4px;
+}
+.db-list-tabs-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+.db-tabs-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+.db-list-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.db-tab-btn {
+    padding: 6px 16px;
+    border-radius: 20px;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+.db-tab-btn:hover {
+    background: rgba(245, 158, 11, 0.2);
+    border-color: rgba(245, 158, 11, 0.5);
+    color: #fcd34d;
+}
+.db-tab-btn.active {
+    background: linear-gradient(135deg, rgba(245,158,11,0.35), rgba(217,119,6,0.25));
+    border-color: rgba(245, 158, 11, 0.6);
+    color: #fde68a;
+    box-shadow: 0 2px 10px rgba(245,158,11,0.25);
+}
+
+/* ── Weekly / Today Mode Pill Toggle ── */
+.timetable-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.mode-pill {
+    display: flex;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 30px;
+    padding: 3px;
+    gap: 2px;
+}
+.mode-btn {
+    padding: 7px 18px;
+    border-radius: 24px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.mode-btn.active {
+    background: var(--primary);
+    color: #ffffff;
+    box-shadow: 0 2px 10px rgba(99, 102, 241, 0.4);
+}
+.mode-btn:not(.active):hover {
+    color: var(--text-main);
+    background: rgba(255,255,255,0.06);
+}
+.today-hint {
+    font-size: 12px;
+    color: var(--accent);
+    font-style: italic;
+}
+
+/* ── Default Block empty state ── */
+.db-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 32px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+.db-empty-icon {
+    font-size: 36px;
+    opacity: 0.5;
+}
+
 /* Matrix Table Styling & Drag Selection */
 .matrix-card {
     border-radius: var(--radius-lg);
@@ -961,8 +1215,8 @@ input:focus, select:focus {
     -webkit-user-select: none;
 }
 .schedule-matrix-table td.matrix-cell:hover {
-    background: rgba(99, 102, 241, 0.25);
-    box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.5);
+    background: rgba(16, 185, 129, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.4);
 }
 .schedule-matrix-table td.matrix-cell.blocked {
     background: linear-gradient(135deg, rgba(239, 68, 68, 0.7), rgba(220, 38, 38, 0.5));
@@ -991,4 +1245,3 @@ input:focus, select:focus {
     padding: 14px 28px;
     font-size: 16px;
 }
-

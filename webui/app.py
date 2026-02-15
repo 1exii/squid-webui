@@ -2,6 +2,7 @@ import os
 import json
 import secrets
 import subprocess
+from datetime import date
 import paramiko
 from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
 from flask import Flask, render_template, request, jsonify, session, send_file
@@ -20,6 +21,11 @@ RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
 
 QNAP_IP = os.environ.get("QNAP_IP", "192.168.1.2")
 SQUID_CONTAINER_NAME = os.environ.get("SQUID_CONTAINER_NAME", "squid-proxy")
+
+# IPs that get the Admin page as the default landing page
+ADMIN_CLIENT_IPS = {
+    "192.168.8.8",   # pc-admin
+}
 
 DAY_MAP = {
     "Sunday": "S",
@@ -99,6 +105,66 @@ DEVICE_POLICIES_PATH = os.path.join(SQUID_CONFIG_DIR, "device_policies.json")
 DAY_LETTERS = ["S", "M", "T", "W", "H", "F", "A"]
 
 
+def make_empty_weekly():
+    """Return a fresh 7×48 all-False matrix."""
+    return [[False] * 48 for _ in range(7)]
+
+
+def make_empty_today():
+    """Return a fresh 48-slot all-False list."""
+    return [False] * 48
+
+
+def today_str():
+    return date.today().isoformat()
+
+
+def migrate_legacy_policy(legacy):
+    """
+    Migrate an old-format policy (blocklists + matrix) to the new schema.
+    Old blocklists are promoted to always_block; old matrix is discarded.
+    """
+    return {
+        "ip": legacy.get("ip", ""),
+        "hostname": legacy.get("hostname", legacy.get("ip", "")),
+        "always_block": legacy.get("blocklists", []),
+        "default_block": []
+    }
+
+
+def ensure_policy_schema(policy):
+    """Ensure a policy dict has the current schema fields, migrating if necessary."""
+    # Detect legacy flat format (has 'blocklists' key but not 'always_block')
+    if "blocklists" in policy and "always_block" not in policy:
+        policy = migrate_legacy_policy(policy)
+
+    policy.setdefault("always_block", [])
+    policy.setdefault("default_block", [])
+
+    repaired = []
+    for entry in policy["default_block"]:
+        if not isinstance(entry, dict) or "list" not in entry:
+            continue
+        entry.setdefault("unblock_weekly", make_empty_weekly())
+        entry.setdefault("unblock_today", make_empty_today())
+        entry.setdefault("today_date", "")
+        # Auto-clear today overrides if date has changed
+        if entry["today_date"] != today_str():
+            entry["unblock_today"] = make_empty_today()
+            entry["today_date"] = today_str()
+        # Ensure correct dimensions
+        if len(entry["unblock_weekly"]) != 7:
+            entry["unblock_weekly"] = make_empty_weekly()
+        for d in range(7):
+            if len(entry["unblock_weekly"][d]) != 48:
+                entry["unblock_weekly"][d] = [False] * 48
+        if len(entry["unblock_today"]) != 48:
+            entry["unblock_today"] = make_empty_today()
+        repaired.append(entry)
+    policy["default_block"] = repaired
+    return policy
+
+
 def load_proxy_hosts_ips():
     """Load redirected IP addresses from proxy-hosts.conf."""
     ips = set()
@@ -166,7 +232,11 @@ def load_device_policies():
     if os.path.exists(DEVICE_POLICIES_PATH):
         try:
             with open(DEVICE_POLICIES_PATH, "r") as f:
-                return json.load(f)
+                raw = json.load(f)
+            migrated = {}
+            for ip, pol in raw.items():
+                migrated[ip] = ensure_policy_schema(pol)
+            return migrated
         except Exception as e:
             print(f"Error loading device_policies.json: {e}")
     return {}
@@ -174,6 +244,8 @@ def load_device_policies():
 
 def save_device_policies(policies):
     os.makedirs(os.path.dirname(DEVICE_POLICIES_PATH), exist_ok=True)
+    for ip in policies:
+        policies[ip] = ensure_policy_schema(policies[ip])
     with open(DEVICE_POLICIES_PATH, "w") as f:
         json.dump(policies, f, indent=2)
     compile_device_policies_acls(policies)
@@ -196,7 +268,52 @@ def slot_to_end_time(slot_idx):
     return f"{hours:02d}:{mins:02d}"
 
 
+def extract_allow_ranges(slots_7x48):
+    """
+    Given a 7×48 matrix where True = unblocked window,
+    return a dict mapping (start_time, end_time) -> [day_letters].
+    """
+    range_to_days = {}
+    for day_idx in range(7):
+        day_letter = DAY_LETTERS[day_idx]
+        day_slots = slots_7x48[day_idx] if len(slots_7x48) > day_idx else [False] * 48
+        in_range = False
+        start_slot = 0
+        for slot_idx in range(48):
+            if day_slots[slot_idx] and not in_range:
+                in_range = True
+                start_slot = slot_idx
+            elif not day_slots[slot_idx] and in_range:
+                in_range = False
+                t_key = (slot_to_time(start_slot), slot_to_end_time(slot_idx - 1))
+                range_to_days.setdefault(t_key, []).append(day_letter)
+        if in_range:
+            t_key = (slot_to_time(start_slot), slot_to_end_time(47))
+            range_to_days.setdefault(t_key, []).append(day_letter)
+    return range_to_days
+
+
+def merge_today_into_weekly(unblock_weekly, unblock_today):
+    """
+    Overlay today's unblock slots onto the weekly matrix for the current day.
+    Returns a new merged 7×48 matrix.
+    """
+    # Convert Python weekday (Mon=0..Sun=6) to our index (S=0,M=1,T=2,W=3,H=4,F=5,A=6)
+    python_to_our = {6: 0, 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
+    our_day = python_to_our.get(date.today().weekday(), 0)
+    merged = [list(row) for row in unblock_weekly]
+    for slot_idx in range(48):
+        if unblock_today[slot_idx]:
+            merged[our_day][slot_idx] = True
+    return merged
+
+
 def compile_device_policies_acls(policies):
+    """
+    Compile device policies into Squid ACL rules.
+    - always_block lists  → unconditional http_access deny
+    - default_block lists → allow windows + fallback deny
+    """
     acl_lines = [
         "# ===========================================================",
         "# AUTO-GENERATED BY SQUID WEB UI - DEVICE POLICIES",
@@ -207,66 +324,61 @@ def compile_device_policies_acls(policies):
     declared_blocklists = set()
 
     for ip, policy in policies.items():
+        policy = ensure_policy_schema(policy)
         hostname = policy.get("hostname", ip)
-        blocklists = policy.get("blocklists", [])
-        matrix = policy.get("matrix", [])
+        always_block = policy.get("always_block", [])
+        default_block = policy.get("default_block", [])
 
-        if not blocklists or not matrix or len(matrix) != 7:
+        if not always_block and not default_block:
             continue
 
         clean_ip_id = ip.replace(".", "_")
         src_acl_name = f"src_dev_{clean_ip_id}"
 
-        range_to_days = {}
-
-        for day_idx in range(7):
-            day_letter = DAY_LETTERS[day_idx]
-            day_slots = matrix[day_idx] if len(matrix[day_idx]) == 48 else [False]*48
-
-            in_range = False
-            start_slot = 0
-            for slot_idx in range(48):
-                if day_slots[slot_idx] and not in_range:
-                    in_range = True
-                    start_slot = slot_idx
-                elif not day_slots[slot_idx] and in_range:
-                    in_range = False
-                    end_slot = slot_idx - 1
-                    t_start = slot_to_time(start_slot)
-                    t_end = slot_to_end_time(end_slot)
-                    t_key = (t_start, t_end)
-                    range_to_days.setdefault(t_key, []).append(day_letter)
-
-            if in_range:
-                end_slot = 47
-                t_start = slot_to_time(start_slot)
-                t_end = slot_to_end_time(end_slot)
-                t_key = (t_start, t_end)
-                range_to_days.setdefault(t_key, []).append(day_letter)
-
-        if not range_to_days:
-            continue
-
-        acl_lines.append(f"# Device Policy: {hostname} ({ip})")
+        acl_lines.append(f"# ── Device: {hostname} ({ip}) ──")
         acl_lines.append(f"acl {src_acl_name} src {ip}")
+        acl_lines.append("")
 
-        for bl in blocklists:
+        # Declare all blocklist ACLs once
+        all_lists = list(always_block) + [e["list"] for e in default_block if "list" in e]
+        for bl in all_lists:
             bl_acl_name = f"list_{bl.replace('.', '_').replace('-', '_')}"
             if bl_acl_name not in declared_blocklists:
                 bl_path = f"/etc/squid/block-lists/{bl}"
                 acl_lines.append(f"acl {bl_acl_name} dstdomain \"{bl_path}\"")
                 declared_blocklists.add(bl_acl_name)
+        acl_lines.append("")
 
-        time_acl_idx = 0
-        for (t_start, t_end), day_list in range_to_days.items():
-            days_code = "".join(day_list)
-            time_acl_name = f"time_dev_{clean_ip_id}_{time_acl_idx}"
-            acl_lines.append(f"acl {time_acl_name} time {days_code} {t_start}-{t_end}")
-            time_acl_idx += 1
-
-            for bl in blocklists:
+        # Section A: Always Block
+        if always_block:
+            acl_lines.append(f"  # Always Block — {hostname}")
+            for bl in always_block:
                 bl_acl_name = f"list_{bl.replace('.', '_').replace('-', '_')}"
-                acl_lines.append(f"http_access deny {src_acl_name} {bl_acl_name} {time_acl_name}")
+                acl_lines.append(f"http_access deny {src_acl_name} {bl_acl_name}")
+            acl_lines.append("")
+
+        # Section B: Default Block with unblock windows
+        time_acl_idx = 0
+        for entry in default_block:
+            bl = entry.get("list", "")
+            if not bl:
+                continue
+            bl_acl_name = f"list_{bl.replace('.', '_').replace('-', '_')}"
+            unblock_weekly = entry.get("unblock_weekly", make_empty_weekly())
+            unblock_today = entry.get("unblock_today", make_empty_today())
+            merged = merge_today_into_weekly(unblock_weekly, unblock_today)
+            allow_ranges = extract_allow_ranges(merged)
+
+            acl_lines.append(f"  # Default Block (unblock windows): {bl} — {hostname}")
+            for (t_start, t_end), day_list in allow_ranges.items():
+                days_code = "".join(day_list)
+                time_acl_name = f"time_allow_{clean_ip_id}_{time_acl_idx}"
+                acl_lines.append(f"acl {time_acl_name} time {days_code} {t_start}-{t_end}")
+                acl_lines.append(f"http_access allow {src_acl_name} {bl_acl_name} {time_acl_name}")
+                time_acl_idx += 1
+            # Fallback: deny all other times
+            acl_lines.append(f"http_access deny {src_acl_name} {bl_acl_name}")
+            acl_lines.append("")
 
         acl_lines.append("")
 
@@ -369,7 +481,13 @@ def index():
 
 @app.route("/api/auth/status", methods=["GET"])
 def auth_status():
-    return jsonify({"authenticated": is_authenticated(), "user": session.get("username", "")})
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+    return jsonify({
+        "authenticated": is_authenticated(),
+        "user": session.get("username", ""),
+        "client_ip": client_ip,
+        "is_admin_client": client_ip in ADMIN_CLIENT_IPS
+    })
 
 
 @app.route("/api/login", methods=["POST"])
@@ -424,17 +542,15 @@ def get_blocklists():
     files = []
     if os.path.exists(SQUID_BLOCKLIST_DIR):
         try:
-            for f in os.listdir(SQUID_BLOCKLIST_DIR):
-                if f.endswith(".txt") and f != "domains.txt":
-                    files.append(f)
-            files.sort()
-            # Ensure domains.txt or main blocklists are present
-            if os.path.exists(os.path.join(SQUID_BLOCKLIST_DIR, "domains.txt")):
-                files.insert(0, "domains.txt")
+            files = sorted(
+                f for f in os.listdir(SQUID_BLOCKLIST_DIR)
+                if f.endswith(".txt")
+            )
         except Exception as e:
             print(f"Error listing blocklists: {e}")
 
     return jsonify({"blocklists": files})
+
 
 
 @app.route("/api/devices", methods=["GET"])
@@ -459,17 +575,21 @@ def update_policies():
     data = request.json or {}
     policies = load_device_policies()
 
-    # Can accept single device policy update or full dictionary
     if "ip" in data:
         ip = data["ip"]
-        policies[ip] = {
+        new_pol = {
             "ip": ip,
             "hostname": data.get("hostname", ip),
-            "blocklists": data.get("blocklists", []),
-            "matrix": data.get("matrix", [])
+            "always_block": data.get("always_block", []),
+            "default_block": data.get("default_block", [])
         }
+        policies[ip] = ensure_policy_schema(new_pol)
     elif "policies" in data:
-        policies = data["policies"]
+        raw = data["policies"]
+        policies = {}
+        for ip, pol in raw.items():
+            pol["ip"] = ip
+            policies[ip] = ensure_policy_schema(pol)
 
     save_device_policies(policies)
     return jsonify({"success": True, "policies": policies})

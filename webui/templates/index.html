@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Squid Proxy - Onboarding Guides & Management</title>
+    <title>Squid Proxy - Onboarding Guides &amp; Management</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -18,7 +18,7 @@
                 <h1>Squid Proxy Center</h1>
             </div>
             <div class="nav-tabs">
-                <button id="nav-tab-onboarding" class="nav-tab-btn active">📖 Client Onboarding & Certs</button>
+                <button id="nav-tab-onboarding" class="nav-tab-btn active">📖 Client Onboarding &amp; Certs</button>
                 <button id="nav-tab-admin" class="nav-tab-btn">⚙️ Access Control Admin</button>
             </div>
             <div class="nav-right">
@@ -29,7 +29,6 @@
 
         <!-- Public View: Client Onboarding & Certificate Downloads -->
         <main id="onboarding-screen" class="main-content">
-            <!-- Hero Download Card -->
             <div class="hero-banner glass-panel">
                 <div class="hero-content">
                     <h2>Root CA Certificate Downloads</h2>
@@ -45,97 +44,80 @@
                 </div>
             </div>
 
-            <!-- Platform Selector -->
             <div class="platform-nav">
                 <button id="guide-tab-windows" class="platform-tab active">🪟 Windows Setup Guide</button>
                 <button id="guide-tab-ubuntu" class="platform-tab">🐧 Ubuntu Linux Setup Guide</button>
             </div>
 
-            <!-- Windows Guide Content -->
             <div id="guide-content-windows" class="guide-card glass-panel">
                 <div class="guide-header">
                     <h3>Windows 10 / 11 / Server Client Onboarding Manual</h3>
                     <span class="badge">Target Platform: Windows 10/11</span>
                 </div>
-
                 <section class="guide-section">
-                    <h4>1. Architecture & HSTS Prevention</h4>
-                    <p>This environment uses <strong>Transparent Network Interception</strong>. Windows clients do <em>NOT</em> require manual proxy configurations in System Settings or Internet Options.</p>
+                    <h4>1. Architecture &amp; HSTS Prevention</h4>
+                    <p>This environment uses <strong>Transparent Network Interception</strong>. Windows clients do <em>NOT</em> require manual proxy configurations.</p>
                     <ul>
-                        <li><strong>Router Redirection:</strong> The ASUS Router detects HTTP (80) & HTTPS (443) traffic from registered client IPs and redirects it to the Squid proxy.</li>
+                        <li><strong>Router Redirection:</strong> The ASUS Router detects HTTP (80) &amp; HTTPS (443) traffic from registered client IPs and redirects it to the Squid proxy.</li>
                         <li><strong>SSL Bumping:</strong> Squid inspects TLS traffic and dynamically generates site-specific certificates signed by the internal Root CA (<code>squid.local</code>).</li>
-                        <li><strong>HSTS Prevention:</strong> Popular domains like Google, GitHub, and Twitter enforce HSTS. Installing the Root CA into the <strong>Local Machine Trusted Root Store</strong> ensures Edge, Chrome, and system services recognize <code>squid.local</code> as a valid Root Authority, eliminating HSTS errors.</li>
+                        <li><strong>HSTS Prevention:</strong> Installing the Root CA into the <strong>Local Machine Trusted Root Store</strong> ensures Edge, Chrome, and system services recognize <code>squid.local</code>.</li>
                     </ul>
                 </section>
-
                 <section class="guide-section">
                     <h4>2. Router Registration (Administrator Step)</h4>
                     <p>Before a Windows client can be proxied, its IP must be registered in <code>proxy-hosts.conf</code> and deployed via router firewall script.</p>
                 </section>
-
                 <section class="guide-section">
                     <h4>3. Install Root CA Certificate on Windows Client</h4>
-                    <p>To prevent <code>NET::ERR_CERT_AUTHORITY_INVALID</code> and HSTS hard-blocks, install the Root CA into the system-wide Local Machine store:</p>
-                    
                     <div class="method-box">
                         <h5>Method A: Automated PowerShell Installation (Recommended)</h5>
-                        <p>Open <strong>PowerShell as Administrator</strong> on the Windows machine and run:</p>
                         <pre><code>Import-Certificate -FilePath "$HOME\Downloads\squid-ca.crt" -CertStoreLocation "Cert:\LocalMachine\Root"</code></pre>
                     </div>
-
                     <div class="method-box">
                         <h5>Method B: Graphical Interface (GUI) Installation</h5>
                         <ol>
-                            <li>Press <kbd>Win</kbd> + <kbd>R</kbd>, type <code>certlm.msc</code> (Local Computer Certificate Manager), and press Enter.</li>
-                            <li>In the left pane, expand <strong>Trusted Root Certification Authorities</strong> &rarr; <strong>Certificates</strong>.</li>
-                            <li>Right-click Certificates &rarr; <strong>All Tasks</strong> &rarr; <strong>Import...</strong></li>
-                            <li>Click Next, browse to <code>squid-ca.crt</code>, and select <em>Place all certificates in the following store: Trusted Root Certification Authorities</em>.</li>
-                            <li>Click Next &rarr; Finish and confirm the security prompt.</li>
+                            <li>Press <kbd>Win</kbd> + <kbd>R</kbd>, type <code>certlm.msc</code>, press Enter.</li>
+                            <li>Expand <strong>Trusted Root Certification Authorities</strong> &rarr; <strong>Certificates</strong>.</li>
+                            <li>Right-click &rarr; <strong>All Tasks</strong> &rarr; <strong>Import...</strong></li>
+                            <li>Browse to <code>squid-ca.crt</code> and place in Trusted Root store.</li>
                         </ol>
                     </div>
                 </section>
-
                 <section class="guide-section">
-                    <h4>4. Browser-Specific Setup & HSTS Clearing</h4>
+                    <h4>4. Browser-Specific Setup &amp; HSTS Clearing</h4>
                     <ul>
-                        <li><strong>Microsoft Edge & Google Chrome:</strong> Automatically trust the certificate once imported into <code>Cert:\LocalMachine\Root</code>. If HSTS is cached, visit <code>chrome://net-internals/#hsts</code>, enter the domain under <em>Delete domain security policies</em>, and click Delete.</li>
-                        <li><strong>Mozilla Firefox:</strong> Type <code>about:config</code> in Firefox address bar, search for <code>security.enterprise_roots.enabled</code>, set it to <code>true</code>, and restart Firefox.</li>
+                        <li><strong>Edge &amp; Chrome:</strong> If HSTS is cached, visit <code>chrome://net-internals/#hsts</code> and delete domain security policy.</li>
+                        <li><strong>Firefox:</strong> In <code>about:config</code>, set <code>security.enterprise_roots.enabled</code> to <code>true</code>.</li>
                     </ul>
                 </section>
             </div>
 
-            <!-- Ubuntu Linux Guide Content -->
             <div id="guide-content-ubuntu" class="guide-card glass-panel hidden">
                 <div class="guide-header">
                     <h3>Ubuntu Linux Client Onboarding Manual</h3>
                     <span class="badge badge-ubuntu">Target Platform: Ubuntu / Debian</span>
                 </div>
-
                 <section class="guide-section">
                     <h4>1. Automated One-Liner Installation (Fastest)</h4>
-                    <p>Open a terminal on your Ubuntu machine and run the following command to download the CA certificate, update system trust stores, and set proxy environment profiles automatically:</p>
                     <div class="code-banner">
                         <pre><code>curl -sSL http://192.168.1.91:3131/download/install-ubuntu.sh | sudo bash</code></pre>
                     </div>
                 </section>
-
                 <section class="guide-section">
                     <h4>2. Manual Installation Steps</h4>
                     <div class="method-box">
-                        <h5>Step 1: Download & Install System Root CA</h5>
+                        <h5>Step 1: Download &amp; Install System Root CA</h5>
                         <pre><code>sudo wget -O /usr/local/share/ca-certificates/squid-proxy-ca.crt http://192.168.1.91:3131/download/cert.pem
 sudo update-ca-certificates</code></pre>
                     </div>
-
                     <div class="method-box">
                         <h5>Step 2: Import into Chrome / NSS Certificate Database</h5>
                         <pre><code>sudo apt-get install -y libnss3-tools
 certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt</code></pre>
                     </div>
-
                     <div class="method-box">
-                        <h5>Step 3: System-Wide Environment Proxy Settings</h5>
-                        <pre><code>cat << 'EOF' | sudo tee /etc/profile.d/squid-proxy.sh
+                        <h5>Step 3: System-Wide Proxy Environment</h5>
+                        <pre><code>cat &lt;&lt; 'EOF' | sudo tee /etc/profile.d/squid-proxy.sh
 export http_proxy="http://192.168.1.90:3128"
 export https_proxy="http://192.168.1.90:3128"
 export HTTP_PROXY="http://192.168.1.90:3128"
@@ -146,23 +128,22 @@ EOF
 sudo chmod 755 /etc/profile.d/squid-proxy.sh</code></pre>
                     </div>
                 </section>
-
                 <section class="guide-section">
-                    <h4>3. Verification & Testing</h4>
-                    <pre><code># Test HTTPS request through proxy profile
-. /etc/profile.d/squid-proxy.sh
+                    <h4>3. Verification &amp; Testing</h4>
+                    <pre><code>. /etc/profile.d/squid-proxy.sh
 curl -v https://google.com</code></pre>
                 </section>
             </div>
         </main>
 
-        <!-- Admin View: Device Access Control Matrix (Protected) -->
+        <!-- Admin View: Device Access Control (Protected) -->
         <main id="admin-screen" class="main-content hidden">
+
             <!-- Toolbar & Device Selector -->
             <div class="dashboard-toolbar glass-panel">
                 <div class="toolbar-title">
                     <h2>Device Policy Manager</h2>
-                    <p>Select a device below to configure domain blocker-lists and 30-minute weekly schedules.</p>
+                    <p>Select a device to configure its block categories and access schedules.</p>
                 </div>
                 <div class="toolbar-controls">
                     <select id="all-devices-dropdown" class="device-dropdown-select">
@@ -176,10 +157,8 @@ curl -v https://google.com</code></pre>
 
             <!-- Top 5 Quick Selection Bar -->
             <div class="top5-devices-card glass-panel">
-                <span class="top5-label">⭐ Quick Select (Top Devices):</span>
-                <div id="top5-devices-buttons" class="top5-buttons-group">
-                    <!-- Populated dynamically with top 5 devices from devices.list -->
-                </div>
+                <span class="top5-label">⭐ Quick Select:</span>
+                <div id="top5-devices-buttons" class="top5-buttons-group"></div>
             </div>
 
             <!-- Active Device Status Bar -->
@@ -190,85 +169,169 @@ curl -v https://google.com</code></pre>
                     <span id="active-device-ip" class="ip-badge">—</span>
                 </div>
                 <div class="preset-actions">
-                    <span class="preset-label">Quick Fill:</span>
-                    <button type="button" class="btn btn-secondary btn-sm" id="preset-block-all">🚫 Block All</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="preset-allow-all">✅ Allow All</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="preset-night">🌙 Nights</button>
-                    <button type="button" class="btn btn-secondary btn-sm" id="preset-school">📚 School Hrs</button>
+                    <span class="preset-label">Presets:</span>
+                    <button type="button" class="btn btn-secondary btn-sm" id="preset-allow-all-day">✅ Allow All Day</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="preset-block-all-day">🚫 Block All Day</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="preset-after-school">📚 After School</button>
                     <button type="button" class="btn btn-secondary btn-sm" id="preset-weekends">🎮 Weekends</button>
                 </div>
             </div>
 
-
-            <!-- Active Device Policy Configuration Workspace -->
+            <!-- Device Config Workspace -->
             <div id="device-config-workspace" class="config-workspace">
-                <!-- Router Redirection Warning Banner (Shown if IP not in proxy-hosts.conf) -->
+
+                <!-- Router Warning -->
                 <div id="proxy-hosts-warning" class="warning-banner glass-panel hidden">
                     <span class="warning-icon">⚠️</span>
                     <div class="warning-content">
                         <strong>Router Redirection Warning:</strong>
-                        <span id="warning-device-msg">This device is not listed in router/proxy-hosts.conf. Access blocking rules will NOT take effect on the router until added to proxy-hosts.conf!</span>
+                        <span id="warning-device-msg">This device is not listed in router/proxy-hosts.conf — blocking rules won't work until it is added.</span>
                     </div>
                 </div>
 
-                <!-- Blocker-Lists Checkboxes Card (BEFORE THE TABLE) -->
-                <div class="card glass-panel blocker-lists-card">
-                    <div class="card-header">
-                        <h4>🛡️ Blocker-Lists to Apply</h4>
-                        <span class="subtext">Check the domain lists to block during the selected matrix time slots</span>
-                    </div>
-                    <div id="blocklist-checkboxes" class="blocklist-checkbox-grid">
-                        <!-- Dynamically populated checkboxes -->
-                    </div>
-                </div>
-
-                <!-- 30-Minute Schedule Matrix Table -->
-                <div class="card glass-panel matrix-card">
-                    <div class="matrix-header">
-                        <div>
-                            <h4>⏰ 30-Minute Weekly Schedule</h4>
-                            <p class="subtext">Click or drag mouse over cells to toggle blocked slots (Red = Blocked, Translucent = Allowed)</p>
-                        </div>
-                        <div class="matrix-legend">
-                            <span class="legend-item"><span class="legend-box allowed"></span> Allowed</span>
-                            <span class="legend-item"><span class="legend-box blocked"></span> 🚫 Blocked</span>
+                <!-- ══════════════════════════════════════════════
+                     SECTION 1: ALWAYS BLOCK
+                ══════════════════════════════════════════════ -->
+                <div class="policy-section always-block-card glass-panel">
+                    <div class="section-header">
+                        <div class="section-title-group">
+                            <span class="section-icon section-icon-red">🔴</span>
+                            <div>
+                                <h3 class="section-title">Always Block</h3>
+                                <p class="section-desc">These lists are <strong>unconditionally blocked</strong> — no schedule or whitelist can override them.</p>
+                            </div>
                         </div>
                     </div>
-                    
-                    <div class="table-responsive schedule-table-container">
-                        <table class="schedule-matrix-table" id="schedule-matrix-table">
-                            <thead>
-                                <tr>
-                                    <th class="time-col">Time Slot</th>
-                                    <th class="day-col" data-day="0">Sun</th>
-                                    <th class="day-col" data-day="1">Mon</th>
-                                    <th class="day-col" data-day="2">Tue</th>
-                                    <th class="day-col" data-day="3">Wed</th>
-                                    <th class="day-col" data-day="4">Thu</th>
-                                    <th class="day-col" data-day="5">Fri</th>
-                                    <th class="day-col" data-day="6">Sat</th>
-                                </tr>
-                            </thead>
-                            <tbody id="matrix-table-body">
-                                <!-- 48 half-hour rows generated by JS -->
-                            </tbody>
-                        </table>
+                    <div id="always-block-checkboxes" class="blocklist-checkbox-grid always-block-grid">
+                        <!-- Populated dynamically -->
                     </div>
                 </div>
 
-                <!-- Real-Time Generated Rules Preview Textbox -->
+                <!-- ══════════════════════════════════════════════
+                     SECTION 2: DEFAULT BLOCK with Unblock Windows
+                ══════════════════════════════════════════════ -->
+                <div class="policy-section default-block-card glass-panel">
+                    <div class="section-header">
+                        <div class="section-title-group">
+                            <span class="section-icon section-icon-amber">🟠</span>
+                            <div>
+                                <h3 class="section-title">Default Block <span class="section-title-sub">— with Unblock Windows</span></h3>
+                                <p class="section-desc">These lists are blocked by default. Use the schedule to mark <strong class="allow-text">✅ green allow windows</strong> when access should be permitted.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Checklist of lists in default_block -->
+                    <div id="default-block-checkboxes" class="blocklist-checkbox-grid default-block-grid">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <!-- Basic / Advanced schedule edit mode toggle -->
+                    <div class="sched-edit-mode-row">
+                        <span class="sched-edit-label">Schedule edit mode:</span>
+                        <div class="mode-pill" id="sched-edit-pill">
+                            <button id="sched-mode-basic-btn" class="mode-btn active">✏️ Basic</button>
+                            <button id="sched-mode-advanced-btn" class="mode-btn">🔬 Advanced</button>
+                        </div>
+                        <span class="sched-edit-hint">Basic: one schedule applies to all checked lists</span>
+                        <span id="advanced-multi-note" class="sched-edit-hint advanced-note hidden">Advanced: click a list tab to select it; <kbd>Ctrl+click</kbd> to multi-select</span>
+                    </div>
+
+                    <!-- List Selector Tabs + Schedule (shown when ≥1 list checked) -->
+                    <div id="db-list-tabs-container" class="db-tabs-container hidden">
+
+                        <!-- Per-list tab strip -->
+                        <div class="db-list-tabs-row">
+                            <span class="db-tabs-label">Edit schedule for:</span>
+                            <div id="db-list-tabs" class="db-list-tabs">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Weekly / Today mode toggle -->
+                        <div class="timetable-mode-row">
+                            <div class="mode-pill" id="mode-pill">
+                                <button id="mode-weekly-btn" class="mode-btn active">📅 Weekly</button>
+                                <button id="mode-today-btn" class="mode-btn">📆 Today Only</button>
+                            </div>
+                            <span id="today-mode-hint" class="today-hint hidden">
+                                Today-only slots override the weekly schedule and reset at midnight.
+                            </span>
+                        </div>
+
+                        <!-- Schedule Matrix -->
+                        <div class="card glass-panel matrix-card">
+                            <div class="matrix-header">
+                                <div>
+                                    <h4 id="matrix-title">⏰ Weekly Unblock Schedule</h4>
+                                    <p class="subtext" id="matrix-subtitle">
+                                        Drag to mark <strong class="allow-text">green = allowed</strong> windows. Empty slots remain blocked by default.
+                                    </p>
+                                </div>
+                                <div class="matrix-legend">
+                                    <span class="legend-item"><span class="legend-box allowed"></span> Allowed (unblocked)</span>
+                                    <span class="legend-item"><span class="legend-box default-blocked"></span> Blocked (default)</span>
+                                </div>
+                            </div>
+
+                            <!-- Weekly 7-day grid -->
+                            <div id="weekly-table-wrap" class="table-responsive schedule-table-container">
+                                <table class="schedule-matrix-table" id="schedule-matrix-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="time-col">Time Slot</th>
+                                            <th class="day-col" data-day="0">Sun</th>
+                                            <th class="day-col" data-day="1">Mon</th>
+                                            <th class="day-col" data-day="2">Tue</th>
+                                            <th class="day-col" data-day="3">Wed</th>
+                                            <th class="day-col" data-day="4">Thu</th>
+                                            <th class="day-col" data-day="5">Fri</th>
+                                            <th class="day-col" data-day="6">Sat</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="matrix-table-body">
+                                        <!-- 48 rows generated by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <!-- Today-only single-day grid -->
+                            <div id="today-table-wrap" class="table-responsive schedule-table-container hidden">
+                                <table class="schedule-matrix-table" id="today-matrix-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="time-col">Time Slot</th>
+                                            <th class="day-col today-col" id="today-col-header">Today</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="today-table-body">
+                                        <!-- 48 rows generated by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Empty state when no lists checked -->
+                    <div id="db-empty-state" class="db-empty-state">
+                        <span class="db-empty-icon">📋</span>
+                        <p>Check a list above to add it to Default Block and configure its unblock schedule.</p>
+                    </div>
+                </div>
+
+                <!-- Real-Time Generated Rules Preview -->
                 <div class="card glass-panel rules-preview-card">
                     <div class="card-header preview-header">
                         <div>
                             <h4>📋 Real-Time Generated Squid Rules Preview</h4>
-                            <span class="subtext">Live view of Squid ACL syntax compiled from your selections</span>
+                            <span class="subtext">Live view of compiled Squid ACL syntax</span>
                         </div>
                         <button type="button" id="copy-rules-btn" class="btn btn-secondary btn-sm">📋 Copy Rules</button>
                     </div>
-                    <textarea id="rules-preview-textbox" class="rules-textarea" readonly placeholder="# Real-time compiled Squid ACL rules will appear here as you select blocklists and matrix cells..."></textarea>
+                    <textarea id="rules-preview-textbox" class="rules-textarea" readonly placeholder="# Select a device to see generated Squid ACL rules..."></textarea>
                 </div>
 
-                <!-- Apply Action Section (AFTER THE TABLE & PREVIEW) -->
+                <!-- Apply Action Footer -->
                 <div class="action-footer glass-panel">
                     <div class="footer-info">
                         <span id="save-status-text" class="status-text">Changes saved locally. Click Apply to push to Squid.</span>
@@ -300,81 +363,6 @@ curl -v https://google.com</code></pre>
                     <button type="submit" id="login-btn" class="btn btn-primary btn-block">
                         <span>Authenticate</span>
                     </button>
-                </form>
-            </div>
-        </div>
-
-        <!-- Rule Modal -->
-        <div id="rule-modal" class="modal-overlay hidden">
-            <div class="modal-card glass-panel">
-                <div class="modal-header">
-                    <h3 id="modal-title">Configure Access Rule</h3>
-                    <button id="modal-close" class="close-btn">&times;</button>
-                </div>
-                <form id="rule-form">
-                    <input type="hidden" id="rule-id">
-                    
-                    <div class="form-group">
-                        <label for="rule-name">Rule Name / Description</label>
-                        <input type="text" id="rule-name" placeholder="e.g. Kid iPad YouTube Weekend Access" required>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group col-6">
-                            <label for="device-select">Target Computer / Device</label>
-                            <select id="device-select">
-                                <!-- Populated from proxy-hosts.conf -->
-                            </select>
-                        </div>
-                        <div class="form-group col-6">
-                            <label for="custom-ip">Or Custom IP Address</label>
-                            <input type="text" id="custom-ip" placeholder="192.168.1.50">
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="blocklist-select">Domain List to Apply</label>
-                        <select id="blocklist-select" required>
-                            <!-- Populated from block-lists dir -->
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Active Days</label>
-                        <div class="days-picker">
-                            <label class="day-chip"><input type="checkbox" name="days" value="Monday" checked> Mon</label>
-                            <label class="day-chip"><input type="checkbox" name="days" value="Tuesday" checked> Tue</label>
-                            <label class="day-chip"><input type="checkbox" name="days" value="Wednesday" checked> Wed</label>
-                            <label class="day-chip"><input type="checkbox" name="days" value="Thursday" checked> Thu</label>
-                            <label class="day-chip"><input type="checkbox" name="days" value="Friday" checked> Fri</label>
-                            <label class="day-chip"><input type="checkbox" name="days" value="Saturday" checked> Sat</label>
-                            <label class="day-chip"><input type="checkbox" name="days" value="Sunday" checked> Sun</label>
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group col-6">
-                            <label for="time-start">Start Time</label>
-                            <input type="time" id="time-start" value="08:00" required>
-                        </div>
-                        <div class="form-group col-6">
-                            <label for="time-end">End Time</label>
-                            <input type="time" id="time-end" value="20:00" required>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="rule-policy">Access Policy</label>
-                        <select id="rule-policy">
-                            <option value="allow_during_slot">Allow access ONLY during scheduled time slot (Block otherwise)</option>
-                            <option value="block_during_slot">Block access ONLY during scheduled time slot (Allow otherwise)</option>
-                        </select>
-                    </div>
-
-                    <div class="modal-footer">
-                        <button type="button" id="cancel-rule-btn" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save & Apply to Squid</button>
-                    </div>
                 </form>
             </div>
         </div>
