@@ -137,10 +137,16 @@ function create_webui() {
         exit 1
     fi
 
-    # Sync proxy-hosts.conf to squid-proxy directory if present
+    # Sync proxy-hosts.conf and devices.list to squid-proxy directory if present
     ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router && touch ${REMOTE_SQUID_BASE}/configs/rules.acl"
     if [ -f "${SQUID_DIR}/router/proxy-hosts.conf" ]; then
         scp "${SQUID_DIR}/router/proxy-hosts.conf" "$QNAP_SERVER:${REMOTE_SQUID_BASE}/router/"
+    fi
+    if [ -f "${SQUID_DIR}/webui/devices.list" ]; then
+        scp "${SQUID_DIR}/webui/devices.list" "$QNAP_SERVER:${REMOTE_SQUID_BASE}/configs/devices.list"
+    fi
+    if [ -d "${SQUID_DIR}/block-lists" ]; then
+        scp "${SQUID_DIR}/block-lists/"*.txt "$QNAP_SERVER:${REMOTE_SQUID_BASE}/block-lists/" 2>/dev/null || true
     fi
 
     # Stop and remove existing container if running

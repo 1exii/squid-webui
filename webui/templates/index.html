@@ -156,43 +156,126 @@ curl -v https://google.com</code></pre>
             </div>
         </main>
 
-        <!-- Admin View: Access Control Rules (Protected) -->
+        <!-- Admin View: Device Access Control Matrix (Protected) -->
         <main id="admin-screen" class="main-content hidden">
-            <!-- Action Bar -->
-            <div class="dashboard-toolbar">
+            <!-- Toolbar & Device Selector -->
+            <div class="dashboard-toolbar glass-panel">
                 <div class="toolbar-title">
-                    <h2>Conditional Access Rules</h2>
-                    <p>Configure device-specific time windows and domain restrictions</p>
+                    <h2>Device Policy Manager</h2>
+                    <p>Select a device below to configure domain blocker-lists and 30-minute weekly schedules.</p>
                 </div>
-                <button id="add-rule-btn" class="btn btn-accent">
-                    <span>+ Add Access Rule</span>
-                </button>
+                <div class="toolbar-controls">
+                    <select id="all-devices-dropdown" class="device-dropdown-select">
+                        <option value="">-- Select Target Device --</option>
+                    </select>
+                    <div class="search-box">
+                        <input type="text" id="device-search-input" placeholder="🔍 Search device or IP...">
+                    </div>
+                </div>
             </div>
 
-            <!-- Rules Table Card -->
-            <div class="card glass-panel">
-                <div class="table-responsive">
-                    <table class="rules-table">
-                        <thead>
-                            <tr>
-                                <th>Status</th>
-                                <th>Rule Name</th>
-                                <th>Target Device</th>
-                                <th>Target Blocklist</th>
-                                <th>Allowed Schedule</th>
-                                <th>Policy</th>
-                                <th class="text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="rules-list">
-                            <!-- Dynamic Rules populated by JS -->
-                        </tbody>
-                    </table>
-                    <div id="empty-state" class="empty-state hidden">
-                        <div class="empty-icon">🛡️</div>
-                        <h3>No Conditional Rules Configured</h3>
-                        <p>Click "Add Access Rule" above to create your first conditional blocklist policy.</p>
+            <!-- Top 5 Quick Selection Bar -->
+            <div class="top5-devices-card glass-panel">
+                <span class="top5-label">⭐ Quick Select (Top Devices):</span>
+                <div id="top5-devices-buttons" class="top5-buttons-group">
+                    <!-- Populated dynamically with top 5 devices from devices.list -->
+                </div>
+            </div>
+
+            <!-- Active Device Status Bar -->
+            <div class="device-status-bar glass-panel">
+                <div class="device-status-info">
+                    <span id="active-device-icon" class="device-icon-sm">💻</span>
+                    <strong id="active-device-name">No device selected</strong>
+                    <span id="active-device-ip" class="ip-badge">—</span>
+                </div>
+                <div class="preset-actions">
+                    <span class="preset-label">Quick Fill:</span>
+                    <button type="button" class="btn btn-secondary btn-sm" id="preset-block-all">🚫 Block All</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="preset-allow-all">✅ Allow All</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="preset-night">🌙 Nights</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="preset-school">📚 School Hrs</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="preset-weekends">🎮 Weekends</button>
+                </div>
+            </div>
+
+
+            <!-- Active Device Policy Configuration Workspace -->
+            <div id="device-config-workspace" class="config-workspace">
+                <!-- Router Redirection Warning Banner (Shown if IP not in proxy-hosts.conf) -->
+                <div id="proxy-hosts-warning" class="warning-banner glass-panel hidden">
+                    <span class="warning-icon">⚠️</span>
+                    <div class="warning-content">
+                        <strong>Router Redirection Warning:</strong>
+                        <span id="warning-device-msg">This device is not listed in router/proxy-hosts.conf. Access blocking rules will NOT take effect on the router until added to proxy-hosts.conf!</span>
                     </div>
+                </div>
+
+                <!-- Blocker-Lists Checkboxes Card (BEFORE THE TABLE) -->
+                <div class="card glass-panel blocker-lists-card">
+                    <div class="card-header">
+                        <h4>🛡️ Blocker-Lists to Apply</h4>
+                        <span class="subtext">Check the domain lists to block during the selected matrix time slots</span>
+                    </div>
+                    <div id="blocklist-checkboxes" class="blocklist-checkbox-grid">
+                        <!-- Dynamically populated checkboxes -->
+                    </div>
+                </div>
+
+                <!-- 30-Minute Schedule Matrix Table -->
+                <div class="card glass-panel matrix-card">
+                    <div class="matrix-header">
+                        <div>
+                            <h4>⏰ 30-Minute Weekly Schedule</h4>
+                            <p class="subtext">Click or drag mouse over cells to toggle blocked slots (Red = Blocked, Translucent = Allowed)</p>
+                        </div>
+                        <div class="matrix-legend">
+                            <span class="legend-item"><span class="legend-box allowed"></span> Allowed</span>
+                            <span class="legend-item"><span class="legend-box blocked"></span> 🚫 Blocked</span>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive schedule-table-container">
+                        <table class="schedule-matrix-table" id="schedule-matrix-table">
+                            <thead>
+                                <tr>
+                                    <th class="time-col">Time Slot</th>
+                                    <th class="day-col" data-day="0">Sun</th>
+                                    <th class="day-col" data-day="1">Mon</th>
+                                    <th class="day-col" data-day="2">Tue</th>
+                                    <th class="day-col" data-day="3">Wed</th>
+                                    <th class="day-col" data-day="4">Thu</th>
+                                    <th class="day-col" data-day="5">Fri</th>
+                                    <th class="day-col" data-day="6">Sat</th>
+                                </tr>
+                            </thead>
+                            <tbody id="matrix-table-body">
+                                <!-- 48 half-hour rows generated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Real-Time Generated Rules Preview Textbox -->
+                <div class="card glass-panel rules-preview-card">
+                    <div class="card-header preview-header">
+                        <div>
+                            <h4>📋 Real-Time Generated Squid Rules Preview</h4>
+                            <span class="subtext">Live view of Squid ACL syntax compiled from your selections</span>
+                        </div>
+                        <button type="button" id="copy-rules-btn" class="btn btn-secondary btn-sm">📋 Copy Rules</button>
+                    </div>
+                    <textarea id="rules-preview-textbox" class="rules-textarea" readonly placeholder="# Real-time compiled Squid ACL rules will appear here as you select blocklists and matrix cells..."></textarea>
+                </div>
+
+                <!-- Apply Action Section (AFTER THE TABLE & PREVIEW) -->
+                <div class="action-footer glass-panel">
+                    <div class="footer-info">
+                        <span id="save-status-text" class="status-text">Changes saved locally. Click Apply to push to Squid.</span>
+                    </div>
+                    <button id="apply-policy-btn" class="btn btn-primary btn-lg">
+                        <span>🚀 Apply Configuration to Squid Proxy</span>
+                    </button>
                 </div>
             </div>
         </main>

@@ -1,0 +1,15 @@
+# Squid Proxy Device Control List
+# Format: IP_ADDRESS HOSTNAME
+# Extracted from pihole/name-lists/generated-pihole-ip_name.final.list
+# Modifiable manually for target proxy access control devices.
+
+192.168.1.11 pc-daughter
+192.168.1.12 laptop-daughter
+192.168.2.1 pc-son
+192.168.2.2 laptop-son
+192.168.2.3 phone-benmoto
+
+192.168.1.13 phone-pixel7pro
+192.168.1.15 tablet-ipad
+
+# 192.168.3.1 pc-mom
