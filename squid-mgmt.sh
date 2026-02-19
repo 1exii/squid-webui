@@ -72,31 +72,6 @@ generate_cert() {
     echo "  [+] Certificate available for download at http://${QNAP_IP}/certs/squid-ca.crt"
 }
 
-sync_blocklists() {
-    echo "-----------------------------------------------"
-    echo ">>> Syncing Blocklists..."
-    
-    local combined_list_path="/tmp/squid_blocklist.txt"
-    
-    # Combine all .txt files in the blocklist directory
-    if [ -n "$(find "${BLOCKLIST_DIR}" -maxdepth 1 -name '*.txt' -print -quit)" ]; then
-        echo "  [+] Combining blocklist files..."
-        # Strip comments, remove empty lines, and sort uniquely
-        sed 's/#.*//' "${BLOCKLIST_DIR}"/*.txt | grep -v '^[[:space:]]*$' | sort -u > "${combined_list_path}"
-        
-        echo "  [*] Syncing combined blocklist to QNAP..."
-        ssh "${QNAP_SERVER}" "mkdir -p ${SQUID_BLOCKLIST_DIR_REMOTE}"
-        scp "${combined_list_path}" "${QNAP_SERVER}:${SQUID_BLOCKLIST_DIR_REMOTE}/domains.txt"
-        rm "${combined_list_path}"
-        echo "  [+] Blocklist synced."
-        echo "  [*] Reloading Squid configuration on QNAP..."
-        ssh -T "${QNAP_SERVER}" "${DOCKER} exec ${SQUID_INSTANCE_NAME} squid -k reconfigure 2>/dev/null || ${DOCKER} restart ${SQUID_INSTANCE_NAME}"
-        echo "  [+] Squid reloaded with new blocklist."
-    else
-        echo "  [!] No blocklist files (*.txt) found in ${BLOCKLIST_DIR}. Skipping sync."
-    fi
-}
-
 apply_config() {
     echo "-----------------------------------------------"
     echo ">>> Applying Squid Configuration..."
@@ -494,14 +469,14 @@ deploy_webui() {
 # --- 3. EXECUTION ---
 
 if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 [cert|blocklist|config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
+    echo "Usage: $0 [cert|config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
     exit 1
 fi
 
 while [ $# -gt 0 ] ; do
     case "$1" in
         cert)           generate_cert ;;
-        blocklist)      sync_blocklists ;;
+
         config)         apply_config ;;
         logs)           analyze_logs ;;
         catlogs)        cat_logs ;;
@@ -510,13 +485,13 @@ while [ $# -gt 0 ] ; do
         webui-deploy)   deploy_webui ;;
         all)
             generate_cert
-            sync_blocklists
+
             apply_config
             deploy_webui
             ;;
         *)
             echo "Unknown command: $1"
-            echo "Usage: $0 [cert|blocklist|config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
+            echo "Usage: $0 [cert|config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
             ;;
     esac
     shift

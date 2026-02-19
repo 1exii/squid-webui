@@ -951,4 +951,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Initialize visual state based on default scheduleMode
+    if (scheduleMode === 'today') {
+        modeTodayBtn && modeTodayBtn.click();
+    } else {
+        modeWeeklyBtn && modeWeeklyBtn.click();
+    }
 });
