@@ -2,6 +2,8 @@ import os
 import json
 import secrets
 import subprocess
+import threading
+import time
 from datetime import date
 import paramiko
 from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
@@ -741,6 +743,42 @@ echo "========================================================="
 """
     return script, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
+
+# --- STARTUP LOGIC & BACKGROUND TASKS ---
+
+def daily_expiration_task():
+    """Background thread to auto-expire 'Today Only' rules at midnight."""
+    while True:
+        time.sleep(3600)  # Check every hour
+        try:
+            policies = load_device_policies()
+            changed = False
+            current_today = today_str()
+            
+            for ip, policy in policies.items():
+                for entry in policy.get("default_block", []):
+                    if entry.get("today_date") and entry["today_date"] != current_today:
+                        changed = True
+                        break
+                if changed:
+                    break
+            
+            if changed:
+                print("Daily expiration triggered: Cleaning up stale 'Today Only' rules.")
+                # This will automatically clear stale today_date entries during ensure_policy_schema
+                save_device_policies(policies)
+        except Exception as e:
+            print(f"Error in daily_expiration_task: {e}")
+
+# Compile on startup to ensure rules.acl is always generated correctly
+try:
+    initial_policies = load_device_policies()
+    compile_device_policies_acls(initial_policies)
+except Exception as e:
+    print(f"Startup compilation failed: {e}")
+
+expiration_thread = threading.Thread(target=daily_expiration_task, daemon=True)
+expiration_thread.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3131, debug=False)
