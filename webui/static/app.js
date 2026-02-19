@@ -84,7 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let adminDataLoaded  = false;
 
     // Schedule UI state
-    let scheduleMode     = 'weekly';   // 'weekly' | 'today'
+    let scheduleMode     = 'today';   // 'weekly' | 'today'
     let schedEditMode    = 'basic';    // 'basic' | 'advanced'
     let activeListNames  = [];         // in advanced mode: which lists are selected for editing
 
