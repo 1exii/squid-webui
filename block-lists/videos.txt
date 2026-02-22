@@ -1,70 +1,42 @@
 # Streaming Video & Video Platforms Blocklist for Squid Proxy
 
-youtube.com
 .youtube.com
-youtu.be
 .youtu.be
-googlevideo.com
 .googlevideo.com
-ytimg.com
 .ytimg.com
-youtube-nocookie.com
 .youtube-nocookie.com
-youtubekids.com
 .youtubekids.com
 
-netflix.com
 .netflix.com
-nflxext.com
 .nflxext.com
-nflxvideo.net
 .nflxvideo.net
-nflxso.net
 .nflxso.net
 
-hulu.com
 .hulu.com
-hulustream.com
 .hulustream.com
 
-disneyplus.com
 .disneyplus.com
-bamgrid.com
 .bamgrid.com
 
-primevideo.com
 .primevideo.com
-pv-cdn.net
 .pv-cdn.net
 
-twitch.tv
 .twitch.tv
-ttvnw.net
 .ttvnw.net
 
-vimeo.com
 .vimeo.com
-vimeocdn.com
 .vimeocdn.com
 
-tiktokcdn.com
 .tiktokcdn.com
-v16m.tiktokcdn.com
 .v16m.tiktokcdn.com
 
-dailymotion.com
 .dailymotion.com
 
-peacocktv.com
 .peacocktv.com
 
-max.com
 .max.com
-hbo.com
 .hbo.com
 
-crunchyroll.com
 .crunchyroll.com
 
-kick.com
 .kick.com

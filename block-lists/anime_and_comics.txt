@@ -1,34 +1,18 @@
 # Anime, Manga & Webtoons Blocklist for Squid Proxy
 
-webtoons.com
 .webtoons.com
-mangadex.org
 .mangadex.org
-9anime.to
 .9anime.to
-9animetv.to
 .9animetv.to
-gogoanime.cl
 .gogoanime.cl
-gogoanime3.co
 .gogoanime3.co
-bilibili.tv
 .bilibili.tv
-bilibili.com
 .bilibili.com
-olevod.com
 .olevod.com
-tapas.io
 .tapas.io
-readmanga.live
 .readmanga.live
-mangakakalot.com
 .mangakakalot.com
-manganato.com
 .manganato.com
-animepahe.ru
 .animepahe.ru
-zoro.to
 .zoro.to
-aniwatch.to
 .aniwatch.to

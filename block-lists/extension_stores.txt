@@ -2,11 +2,8 @@
 # Prevents installing unauthorized proxy, VPN, or unblocker extensions
 
 chromewebstore.google.com
-chrome.google.com
 .chrome.google.com
-microsoftedge.microsoft.com
 .microsoftedge.microsoft.com
-addons.mozilla.org
 .addons.mozilla.org
 opera.com/developer/extensions
 .opera.com

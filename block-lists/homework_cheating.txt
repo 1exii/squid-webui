@@ -1,28 +1,15 @@
 # Homework Solvers & Cheating Sites Blocklist for Squid Proxy
 
-brainly.com
 .brainly.com
-chegg.com
 .chegg.com
-coursehero.com
 .coursehero.com
-photomath.com
 .photomath.com
-mathway.com
 .mathway.com
-gauthmath.com
 .gauthmath.com
-symbolab.com
 .symbolab.com
-quizlet.com
 .quizlet.com
-studocu.com
 .studocu.com
-slader.com
 .slader.com
-answers.com
 .answers.com
-quora.com
 .quora.com
-wolframalpha.com
 .wolframalpha.com

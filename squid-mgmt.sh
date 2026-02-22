@@ -72,22 +72,28 @@ generate_cert() {
     echo "  [+] Certificate available for download at http://${QNAP_IP}/certs/squid-ca.crt"
 }
 
-apply_config() {
+deploy_proxy() {
     echo "-----------------------------------------------"
-    echo ">>> Applying Squid Configuration..."
+    echo ">>> Deploying Squid Proxy to QNAP..."
 
-    if [ ! -f "${SQUID_CONF_TEMPLATE}" ]; then
-        echo "  [!] ERROR: Squid config template not found at ${SQUID_CONF_TEMPLATE}"
+    local DEPLOY_SCRIPT="${SQUID_DIR}/docker/deploy-squid-docker.sh"
+
+    if [ ! -f "${DEPLOY_SCRIPT}" ]; then
+        echo "  [!] ERROR: Deploy script not found: ${DEPLOY_SCRIPT}"
         exit 1
     fi
 
-    echo "  [*] Syncing squid.conf to QNAP (${SQUID_CONF_REMOTE})..."
-    scp "${SQUID_CONF_TEMPLATE}" "${QNAP_SERVER}:${SQUID_CONF_REMOTE}"
-    
-    echo "  [*] Restarting Squid container '${SQUID_INSTANCE_NAME}' on QNAP..."
-    ssh -T "${QNAP_SERVER}" "${DOCKER} restart ${SQUID_INSTANCE_NAME}"
-    
-    echo "  [+] Squid configuration applied and container restarted."
+    echo "  [*] Building and running squid-proxy container on QNAP..."
+    "${DEPLOY_SCRIPT}" remove create squid-proxy
+
+    echo "  [+] Squid Proxy deployed!"
+}
+
+dump_config() {
+    echo "-----------------------------------------------"
+    echo ">>> Dumping parsed Squid Configuration from QNAP proxy container..."
+    ssh -T "${QNAP_SERVER}" "${DOCKER} exec ${SQUID_INSTANCE_NAME} squid -k parse 2>&1"
+    echo "  [+] Config dumped."
 }
 
 analyze_logs() {
@@ -469,7 +475,7 @@ deploy_webui() {
 # --- 3. EXECUTION ---
 
 if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 [cert|config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
+    echo "Usage: $0 [cert|proxy-deploy|dump-config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
     exit 1
 fi
 
@@ -477,7 +483,8 @@ while [ $# -gt 0 ] ; do
     case "$1" in
         cert)           generate_cert ;;
 
-        config)         apply_config ;;
+        proxy-deploy)   deploy_proxy ;;
+        dump-config)    dump_config ;;
         logs)           analyze_logs ;;
         catlogs)        cat_logs ;;
         router-deploy)  deploy_router_proxy ;;
@@ -486,12 +493,12 @@ while [ $# -gt 0 ] ; do
         all)
             generate_cert
 
-            apply_config
+            deploy_proxy
             deploy_webui
             ;;
         *)
             echo "Unknown command: $1"
-            echo "Usage: $0 [cert|config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
+            echo "Usage: $0 [cert|proxy-deploy|dump-config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
             ;;
     esac
     shift
