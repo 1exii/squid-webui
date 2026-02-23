@@ -37,10 +37,6 @@ acl CONNECT method CONNECT
 
 # -- 2. BLOCKLIST CONFIGURATION --
 
-# Define an ACL that reads the domain list to be blocked.
-# The 'squid-mgmt.sh' script will create and sync this file.
-acl blocked_domains dstdomain "/etc/squid/block-lists/domains.txt"
-
 # -- 3. HTTP ACCESS RULES --
 
 # 1. Allow localhost and internal helper requests (AIA cert downloads)
@@ -50,7 +46,7 @@ http_access allow localhost
 include /etc/squid/configs/rules.acl
 
 # 3. Block access to domains in the blocklist.
-http_access deny blocked_domains
+
 
 # 3. Deny requests to non-safe ports.
 http_access deny !Safe_ports

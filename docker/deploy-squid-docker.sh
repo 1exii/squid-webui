@@ -90,7 +90,7 @@ function create_squid() {
 
     # Sync config and certs before starting the container
     echo "  [*] Syncing squid.conf to QNAP..."
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/block-lists/domains.txt ${REMOTE_BASE}/configs/rules.acl"
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/configs/rules.acl"
     scp "$LOCAL_CONF_TEMPLATE" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
 
     if [ -f "${LOCAL_CERT_DIR}/squid-ca.pem" ] && [ -f "${LOCAL_CERT_DIR}/squid-ca.key" ]; then
@@ -102,6 +102,7 @@ function create_squid() {
 
     if [ -d "${SQUID_DIR}/block-lists" ]; then
         echo "  [*] Syncing blocklists to QNAP..."
+        ssh "$QNAP_SERVER" "rm -f ${REMOTE_BASE}/block-lists/*.txt"
         scp "${SQUID_DIR}/block-lists/"*.txt "$QNAP_SERVER:${REMOTE_BASE}/block-lists/" 2>/dev/null || true
     fi
 
@@ -145,6 +146,8 @@ function create_webui() {
 
     # Sync proxy-hosts.conf and devices.list to squid-proxy directory if present
     ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router && touch ${REMOTE_SQUID_BASE}/configs/rules.acl"
+    
+    ssh "$QNAP_SERVER" "rm -f ${REMOTE_SQUID_BASE}/router/proxy-hosts.conf ${REMOTE_SQUID_BASE}/configs/devices.list"
     if [ -f "${SQUID_DIR}/router/proxy-hosts.conf" ]; then
         scp "${SQUID_DIR}/router/proxy-hosts.conf" "$QNAP_SERVER:${REMOTE_SQUID_BASE}/router/"
     fi
@@ -152,6 +155,7 @@ function create_webui() {
         scp "${SQUID_DIR}/webui/devices.list" "$QNAP_SERVER:${REMOTE_SQUID_BASE}/configs/devices.list"
     fi
     if [ -d "${SQUID_DIR}/block-lists" ]; then
+        ssh "$QNAP_SERVER" "rm -f ${REMOTE_SQUID_BASE}/block-lists/*.txt"
         scp "${SQUID_DIR}/block-lists/"*.txt "$QNAP_SERVER:${REMOTE_SQUID_BASE}/block-lists/" 2>/dev/null || true
     fi
 
