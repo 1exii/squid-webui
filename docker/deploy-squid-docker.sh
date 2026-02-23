@@ -100,6 +100,11 @@ function create_squid() {
         echo "  [!] WARNING: SSL certs not found in ${LOCAL_CERT_DIR}. Run squid-mgmt.sh cert first."
     fi
 
+    if [ -d "${SQUID_DIR}/block-lists" ]; then
+        echo "  [*] Syncing blocklists to QNAP..."
+        scp "${SQUID_DIR}/block-lists/"*.txt "$QNAP_SERVER:${REMOTE_BASE}/block-lists/" 2>/dev/null || true
+    fi
+
     ssh -T "$QNAP_SERVER" << EOF
         $DOCKER run -d \
             --name "$NAME" --hostname "$NAME" \
@@ -108,6 +113,7 @@ function create_squid() {
             --restart=unless-stopped \
             -e TZ="$TIMEZONE" \
             -v "${REMOTE_BASE}/configs/squid.conf:/etc/squid/squid.conf:ro" \
+            -v "${REMOTE_BASE}/configs/rules.acl:/etc/squid/configs/rules.acl:ro" \
             -v "${REMOTE_BASE}/configs:/etc/squid/configs" \
             -v "${REMOTE_BASE}/certs:/etc/squid/certs:ro" \
             -v "${REMOTE_BASE}/block-lists:/etc/squid/block-lists:ro" \
