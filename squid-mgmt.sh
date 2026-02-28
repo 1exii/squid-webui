@@ -475,30 +475,33 @@ deploy_webui() {
 # --- 3. EXECUTION ---
 
 if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 [cert|proxy-deploy|dump-config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
+    echo "Usage: $0 [cert|dump-config|logs|catlogs|proxy-deploy|webui-deploy|router-deploy|linux-deploy|all]"
     exit 1
 fi
 
 while [ $# -gt 0 ] ; do
     case "$1" in
+        # Mostly not needed, only when the cert has problems.
         cert)           generate_cert ;;
 
-        proxy-deploy)   deploy_proxy ;;
+        # Command line option to dump the config files to the local machine
         dump-config)    dump_config ;;
         logs)           analyze_logs ;;
         catlogs)        cat_logs ;;
+
+        # Command line option to deploy the system to qnap, router, and linux client.
+        proxy-deploy)   deploy_proxy ;;
+        webui-deploy)   deploy_webui ;;
         router-deploy)  deploy_router_proxy ;;
         linux-deploy)   deploy_linux_cert ;;
-        webui-deploy)   deploy_webui ;;
-        all)
-            generate_cert
 
+        all)
             deploy_proxy
             deploy_webui
             ;;
         *)
             echo "Unknown command: $1"
-            echo "Usage: $0 [cert|proxy-deploy|dump-config|logs|catlogs|router-deploy|linux-deploy|webui-deploy|all]"
+            echo "Usage: $0 [cert|dump-config|logs|catlogs|proxy-deploy|webui-deploy|router-deploy|linux-deploy|all]"
             ;;
     esac
     shift
