@@ -34,8 +34,6 @@
 .discordapp.com
 .discord.gg
 
-web.telegram.org
 .telegram.org
 
-web.whatsapp.com
 .whatsapp.com
