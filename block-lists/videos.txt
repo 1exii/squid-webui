@@ -28,7 +28,6 @@
 .vimeocdn.com
 
 .tiktokcdn.com
-.v16m.tiktokcdn.com
 
 .dailymotion.com
 
