@@ -4,6 +4,9 @@ import secrets
 import subprocess
 import threading
 import time
+import socket
+import requests
+import requests_unixsocket
 from datetime import date
 import paramiko
 from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
@@ -462,16 +465,30 @@ def compile_squid_acls(rules):
 
 
 def reload_squid():
-    """Trigger squid reconfigure inside container."""
+    """Trigger squid -k reconfigure via Docker socket API (no docker CLI needed)."""
+    docker_sock = "/var/run/docker.sock"
     try:
-        cmd = ["docker", "exec", SQUID_CONTAINER_NAME, "squid", "-k", "reconfigure"]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode == 0:
-            print("Squid reconfigured successfully.")
-        else:
-            print(f"Squid reconfigure output: {res.stderr or res.stdout}")
+        session_req = requests_unixsocket.Session()
+        base = "http+unix://%2Fvar%2Frun%2Fdocker.sock"
+
+        # Step 1: Create an exec instance
+        create_url = f"{base}/containers/{SQUID_CONTAINER_NAME}/exec"
+        payload = {
+            "AttachStdout": True,
+            "AttachStderr": True,
+            "Cmd": ["squid", "-k", "reconfigure"]
+        }
+        r = session_req.post(create_url, json=payload)
+        r.raise_for_status()
+        exec_id = r.json()["Id"]
+
+        # Step 2: Start the exec instance
+        start_url = f"{base}/exec/{exec_id}/start"
+        r2 = session_req.post(start_url, json={"Detach": False})
+        r2.raise_for_status()
+        print("Squid reconfigured successfully via Docker socket API.")
     except Exception as e:
-        print(f"Failed to reload Squid: {e}")
+        print(f"Failed to reload Squid via Docker socket: {e}")
 
 
 # --- API ENDPOINTS ---
