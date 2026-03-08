@@ -257,7 +257,7 @@ deploy_router_proxy() {
         '' \
         '# Always MASQUERADE LAN traffic redirected to Squid proxy' \
         'iptables -t nat -D POSTROUTING -d "$SQUID_IP" -p tcp -m multiport --dports 80,443 -j MASQUERADE 2>/dev/null' \
-        'iptables -t nat -I POSTROUTING 1 -d "$SQUID_IP" -p tcp -m multiport --dports 80,443 -j MASQUERADE' \
+        'iptables -t nat -I POSTROUTING 1 -d "$SQUID_IP" -p tcp -m multiport --dports $SQUID_HTTP_PORT,$SQUID_HTTPS_PORT -j MASQUERADE' \
         '' \
         'add_host() {' \
         '    # $1 = source host IP' \
@@ -265,8 +265,8 @@ deploy_router_proxy() {
         '    iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null' \
         '    iptables -I FORWARD 1 -s "$1" -p udp --dport 443 -j REJECT' \
         '    iptables -t nat -A "$CHAIN" -s "$1" -d "$SQUID_IP" -j RETURN' \
-        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 80  -j DNAT --to-destination "$SQUID_IP:80"' \
-        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 443 -j DNAT --to-destination "$SQUID_IP:443"' \
+        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 80  -j DNAT --to-destination "$SQUID_IP:$SQUID_HTTP_PORT"' \
+        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 443 -j DNAT --to-destination "$SQUID_IP:$SQUID_HTTPS_PORT"' \
         '}' \
         '' \
         '# --- Per-host rules ---' \
