@@ -5,8 +5,7 @@ import subprocess
 import threading
 import time
 import socket
-import requests
-import requests_unixsocket
+import http.client
 from datetime import date
 import paramiko
 from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
@@ -464,29 +463,53 @@ def compile_squid_acls(rules):
 
 
 
+class UnixSocketHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection over a Unix domain socket."""
+    def __init__(self, unix_socket):
+        super().__init__("localhost")
+        self.unix_socket = unix_socket
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self.unix_socket)
+
+
+def docker_socket_request(method, path, body=None):
+    """Make an HTTP request to the Docker daemon via Unix socket."""
+    conn = UnixSocketHTTPConnection("/var/run/docker.sock")
+    headers = {"Content-Type": "application/json"}
+    body_bytes = json.dumps(body).encode() if body else b""
+    conn.request(method, path, body=body_bytes, headers=headers)
+    resp = conn.getresponse()
+    data = resp.read()
+    conn.close()
+    return resp.status, data
+
+
 def reload_squid():
     """Trigger squid -k reconfigure via Docker socket API (no docker CLI needed)."""
-    docker_sock = "/var/run/docker.sock"
     try:
-        session_req = requests_unixsocket.Session()
-        base = "http+unix://%2Fvar%2Frun%2Fdocker.sock"
-
         # Step 1: Create an exec instance
-        create_url = f"{base}/containers/{SQUID_CONTAINER_NAME}/exec"
-        payload = {
-            "AttachStdout": True,
-            "AttachStderr": True,
-            "Cmd": ["squid", "-k", "reconfigure"]
-        }
-        r = session_req.post(create_url, json=payload)
-        r.raise_for_status()
-        exec_id = r.json()["Id"]
+        status, data = docker_socket_request(
+            "POST",
+            f"/containers/{SQUID_CONTAINER_NAME}/exec",
+            {"AttachStdout": True, "AttachStderr": True, "Cmd": ["squid", "-k", "reconfigure"]}
+        )
+        if status not in (200, 201):
+            print(f"Failed to create exec: HTTP {status} {data.decode()}")
+            return
+        exec_id = json.loads(data)["Id"]
 
         # Step 2: Start the exec instance
-        start_url = f"{base}/exec/{exec_id}/start"
-        r2 = session_req.post(start_url, json={"Detach": False})
-        r2.raise_for_status()
-        print("Squid reconfigured successfully via Docker socket API.")
+        status2, data2 = docker_socket_request(
+            "POST",
+            f"/exec/{exec_id}/start",
+            {"Detach": False}
+        )
+        if status2 in (200, 204):
+            print("Squid reconfigured successfully via Docker socket API.")
+        else:
+            print(f"Exec start returned HTTP {status2}: {data2.decode()}")
     except Exception as e:
         print(f"Failed to reload Squid via Docker socket: {e}")
 
