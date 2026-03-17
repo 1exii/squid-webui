@@ -255,9 +255,9 @@ deploy_router_proxy() {
         'iptables -t nat -A "$CHAIN" -s "$SQUID_IP" -j RETURN' \
         'iptables -t nat -A "$CHAIN" -s 192.168.1.2 -j RETURN' \
         '' \
-        '# Always MASQUERADE LAN traffic redirected to Squid proxy' \
-        'iptables -t nat -D POSTROUTING -d "$SQUID_IP" -p tcp -m multiport --dports 80,443 -j MASQUERADE 2>/dev/null' \
-        'iptables -t nat -I POSTROUTING 1 -d "$SQUID_IP" -p tcp -m multiport --dports $SQUID_HTTP_PORT,$SQUID_HTTPS_PORT -j MASQUERADE' \
+        '# NOTE: Do NOT add MASQUERADE here — Squid transparent interception' \
+        '# requires the real client source IP for NF getsockopt(ORIGINAL_DST).' \
+        '# MASQUERADE rewrites the src to the router IP and breaks interception.' \
         '' \
         'add_host() {' \
         '    # $1 = source host IP' \
