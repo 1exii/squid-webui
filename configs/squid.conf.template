@@ -18,7 +18,7 @@ host_verify_strict off
 # locally. With remote-router DNAT, SO_ORIGINAL_DST fails. Squid falls back to
 # using the TLS ClientHello SNI (extracted via ssl_bump peek step1 below) to
 # determine the destination hostname. host_verify_strict off allows this fallback.
-https_port 3130 intercept ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
+https_port 3130 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
 
 # Define an Access Control List (ACL) for your local network.
 # Adjust this to match your home network's IP range.
