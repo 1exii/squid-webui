@@ -255,9 +255,12 @@ deploy_router_proxy() {
         'iptables -t nat -A "$CHAIN" -s "$SQUID_IP" -j RETURN' \
         'iptables -t nat -A "$CHAIN" -s 192.168.1.2 -j RETURN' \
         '' \
-        '# NOTE: Do NOT add MASQUERADE here — Squid transparent interception' \
-        '# requires the real client source IP for NF getsockopt(ORIGINAL_DST).' \
-        '# MASQUERADE rewrites the src to the router IP and breaks interception.' \
+        '# MASQUERADE: needed so return packets from Squid go back via the router,' \
+        '# which rewrites responses to look like they came from the original destination.' \
+        '# Without this, Squid sends responses directly to clients, bypassing the router' \
+        '# conntrack, causing vm-ubuntu to receive unexpected src IPs and RST connections.' \
+        'iptables -t nat -D POSTROUTING -d "$SQUID_IP" -p tcp -m multiport --dports 80,443,3129,3130 -j MASQUERADE 2>/dev/null' \
+        'iptables -t nat -I POSTROUTING 1 -d "$SQUID_IP" -p tcp -m multiport --dports 3129,3130 -j MASQUERADE' \
         '' \
         'add_host() {' \
         '    # $1 = source host IP' \
