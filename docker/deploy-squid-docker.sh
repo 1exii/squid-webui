@@ -88,10 +88,13 @@ function create_squid() {
         exit 1
     fi
 
-    # Sync config and certs before starting the container
+    # Sync config, errors, and certs before starting the container
     echo "  [*] Syncing squid.conf to QNAP..."
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/configs/rules.acl"
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/configs/rules.acl"
     scp "$LOCAL_CONF_TEMPLATE" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
+    if [ -d "${SQUID_DIR}/configs/errors" ]; then
+        scp -r "${SQUID_DIR}/configs/errors/"* "$QNAP_SERVER:${REMOTE_BASE}/configs/errors/" 2>/dev/null || true
+    fi
 
     if [ -f "${LOCAL_CERT_DIR}/squid-ca.pem" ] && [ -f "${LOCAL_CERT_DIR}/squid-ca.key" ]; then
         echo "  [*] Syncing SSL certs to QNAP..."

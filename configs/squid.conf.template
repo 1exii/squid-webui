@@ -17,10 +17,7 @@ host_verify_strict off
 error_directory /etc/squid/configs/errors
 
 # Transparent HTTPS interception port using ssl-bump.
-# NOTE: 'intercept' requires SO_ORIGINAL_DST which only works when NAT is done
-# locally. With remote-router DNAT, SO_ORIGINAL_DST fails. Squid falls back to
-# using the TLS ClientHello SNI (extracted via ssl_bump peek step1 below) to
-# determine the destination hostname. host_verify_strict off allows this fallback.
+# Container-level iptables REDIRECT from port 443 to 3130 preserves SO_ORIGINAL_DST.
 https_port 3130 intercept ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
 
 # Define an Access Control List (ACL) for your local network.
@@ -65,8 +62,10 @@ http_access allow localnet
 # 5. Deny all other access to this proxy.
 http_access deny all
 
-# Always connect directly to origin servers (prevents proxy loops when destination IP is DNAT'd)
-always_direct allow all
+# Prevent proxy loop by forcing DNS resolution of Host header/SNI when destination IP is local proxy IP
+acl proxy_self dst 192.168.1.90 192.168.1.2 192.168.0.0/16
+always_direct deny proxy_self
+
 
 # -- 4. SSL BUMPING (INTERCEPTION) RULES --
 
@@ -80,7 +79,6 @@ acl step1 at_step SslBump1
 ssl_bump peek step1
 
 # Allow transparent SSL bumping for remote upstream certificates
-sslproxy_flags DONT_VERIFY_PEER
 sslproxy_cert_error allow all
 
 # Step 2: Bump (decrypt and inspect) connections.

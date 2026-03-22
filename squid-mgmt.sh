@@ -268,8 +268,8 @@ deploy_router_proxy() {
         '    iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null' \
         '    iptables -I FORWARD 1 -s "$1" -p udp --dport 443 -j REJECT' \
         '    iptables -t nat -A "$CHAIN" -s "$1" -d "$SQUID_IP" -j RETURN' \
-        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 80  -j DNAT --to-destination "$SQUID_IP:$SQUID_HTTP_PORT"' \
-        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 443 -j DNAT --to-destination "$SQUID_IP:$SQUID_HTTPS_PORT"' \
+        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 80  -j DNAT --to-destination "$SQUID_IP:80"' \
+        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 443 -j DNAT --to-destination "$SQUID_IP:443"' \
         '}' \
         '' \
         '# --- Per-host rules ---' \
