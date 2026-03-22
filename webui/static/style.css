@@ -805,7 +805,48 @@ input:focus, select:focus {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
 }
+.bl-view-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: var(--primary-light, #818cf8);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: bold;
+    transition: all 0.2s ease;
+    margin-left: 6px;
+    flex-shrink: 0;
+}
+.bl-view-btn:hover {
+    background: var(--primary);
+    color: #ffffff;
+    border-color: var(--primary);
+    transform: scale(1.15);
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+}
+.bl-tab-view {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 8px;
+    color: rgba(255, 255, 255, 0.6);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: bold;
+    transition: all 0.2s ease;
+}
+.bl-tab-view:hover {
+    color: #ffffff;
+    transform: scale(1.2);
+}
+
 
 /* Real-Time Generated Rules Preview Textbox */
 .rules-preview-card {

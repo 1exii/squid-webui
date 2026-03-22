@@ -13,6 +13,9 @@ http_port 3129 intercept
 # Disable strict host verification to allow transparent interception with remote router DNAT
 host_verify_strict off
 
+# Custom error pages directory (Parental Control Block Page)
+error_directory /etc/squid/configs/errors
+
 # Transparent HTTPS interception port using ssl-bump.
 # NOTE: 'intercept' requires SO_ORIGINAL_DST which only works when NAT is done
 # locally. With remote-router DNAT, SO_ORIGINAL_DST fails. Squid falls back to

@@ -392,7 +392,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const label = document.createElement('label');
             label.className = 'blocklist-chip';
             label.dataset.list = bl;
-            label.innerHTML = `<input type="checkbox" id="${idPrefix}${bl}" value="${bl}"><span class="bl-name">🛡️ ${displayName(bl)}</span>`;
+            label.innerHTML = `
+                <input type="checkbox" id="${idPrefix}${bl}" value="${bl}">
+                <span class="bl-name">🛡️ ${displayName(bl)}</span>
+                <a href="/api/blocklists/${bl}" target="_blank" class="bl-view-btn" title="View content of ${bl}" onclick="event.stopPropagation();">↗</a>
+            `;
             label.querySelector('input').addEventListener('change', (e) => onChange(bl, e.target.checked));
             container.appendChild(label);
         });
@@ -528,8 +532,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     const btn = document.createElement('button');
                     btn.type = 'button';
                     btn.className = `db-tab-btn ${activeListNames.includes(bl) ? 'active' : ''}`;
-                    btn.textContent = displayName(bl);
-                    btn.title = `Click to select/deselect ${displayName(bl)} for schedule editing. Hold Ctrl to multi-select.`;
+                    btn.innerHTML = `<span>${displayName(bl)}</span><a href="/api/blocklists/${bl}" target="_blank" class="bl-tab-view" title="View content of ${bl}" onclick="event.stopPropagation();">↗</a>`;
+                    btn.title = `Click to select ${displayName(bl)} for schedule. Click ↗ to view file content.`;
                     btn.addEventListener('click', (e) => {
                         if (e.ctrlKey || e.metaKey) {
                             // Toggle this list in multi-selection

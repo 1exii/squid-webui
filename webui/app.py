@@ -521,6 +521,13 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/blocked")
+def blocked():
+    domain = request.args.get("domain", "Unknown Webpage")
+    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+    return render_template("blocked.html", domain=domain, client_ip=client_ip)
+
+
 @app.route("/api/auth/status", methods=["GET"])
 def auth_status():
     client_ip = request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
@@ -592,6 +599,23 @@ def get_blocklists():
             print(f"Error listing blocklists: {e}")
 
     return jsonify({"blocklists": files})
+
+
+@app.route("/api/blocklists/<filename>", methods=["GET"])
+def get_blocklist_content(filename):
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    safe_filename = os.path.basename(filename)
+    if not safe_filename.endswith(".txt"):
+        return jsonify({"error": "Invalid blocklist file"}), 400
+
+    filepath = os.path.join(SQUID_BLOCKLIST_DIR, safe_filename)
+    if not os.path.isfile(filepath):
+        return jsonify({"error": "File not found"}), 404
+
+    return send_file(filepath, mimetype="text/plain")
+
 
 
 
