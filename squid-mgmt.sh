@@ -241,35 +241,39 @@ deploy_router_proxy() {
         "# ${MARKER} — regenerate with: squid-mgmt.sh router-deploy" \
         '' \
         "SQUID_IP=\"${SQUID_PROXY_IP}\"" \
-        "SQUID_HTTP_PORT=\"${SQUID_HTTP_PORT}\"" \
-        "SQUID_HTTPS_PORT=\"${SQUID_HTTPS_PORT}\"" \
-        'CHAIN="SQUID_REDIRECT"' \
         '' \
-        '# Flush/recreate only our chain; all other chains are untouched' \
-        'iptables -t nat -N "$CHAIN" 2>/dev/null' \
-        'iptables -t nat -F "$CHAIN"' \
-        'iptables -t nat -D PREROUTING -j "$CHAIN" 2>/dev/null' \
-        'iptables -t nat -I PREROUTING 1 -j "$CHAIN"' \
+        '# Clean up old nat DNAT rules if present' \
+        'iptables -t nat -D PREROUTING -j SQUID_REDIRECT 2>/dev/null || true' \
+        'iptables -t nat -F SQUID_REDIRECT 2>/dev/null || true' \
+        'iptables -t nat -X SQUID_REDIRECT 2>/dev/null || true' \
         '' \
-        '# Exempt Squid proxy and QNAP server from redirection to prevent forwarding loops' \
-        'iptables -t nat -A "$CHAIN" -s "$SQUID_IP" -j RETURN' \
-        'iptables -t nat -A "$CHAIN" -s 192.168.1.2 -j RETURN' \
+        '# Disable rp_filter on router so return packets are not dropped' \
+        'echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null || true' \
+        'echo 0 > /proc/sys/net/ipv4/conf/br0/rp_filter 2>/dev/null || true' \
         '' \
-        '# MASQUERADE: needed so return packets from Squid go back via the router,' \
-        '# which rewrites responses to look like they came from the original destination.' \
-        '# Without this, Squid sends responses directly to clients, bypassing the router' \
-        '# conntrack, causing vm-ubuntu to receive unexpected src IPs and RST connections.' \
-        'iptables -t nat -D POSTROUTING -d "$SQUID_IP" -p tcp -m multiport --dports 80,443,3129,3130 -j MASQUERADE 2>/dev/null' \
-        'iptables -t nat -I POSTROUTING 1 -d "$SQUID_IP" -p tcp -m multiport --dports 3129,3130 -j MASQUERADE' \
+        '# Setup Policy Based Routing table 100 to route to Squid container without changing destination IP' \
+        'ip rule del fwmark 0x8000/0x8000 2>/dev/null || true' \
+        'ip rule add fwmark 0x8000/0x8000 table 100 2>/dev/null || true' \
+        'ip route flush table 100 2>/dev/null || true' \
+        'ip route add default via "$SQUID_IP" table 100 2>/dev/null || true' \
+        '' \
+        '# Setup mangle chain SQUID_MARK' \
+        'iptables -t mangle -N SQUID_MARK 2>/dev/null || true' \
+        'iptables -t mangle -F SQUID_MARK' \
+        'iptables -t mangle -D PREROUTING -j SQUID_MARK 2>/dev/null || true' \
+        'iptables -t mangle -I PREROUTING 1 -j SQUID_MARK' \
+        '' \
+        '# Exempt Squid proxy and QNAP server from redirection' \
+        'iptables -t mangle -A SQUID_MARK -s "$SQUID_IP" -j RETURN' \
+        'iptables -t mangle -A SQUID_MARK -s 192.168.1.2 -j RETURN' \
         '' \
         'add_host() {' \
         '    # $1 = source host IP' \
-        '    # Block QUIC (UDP 443) so browsers fall back to TCP 443 for transparent proxy interception' \
-        '    iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null' \
+        '    # Block QUIC (UDP 443) so browsers fall back to TCP 443' \
+        '    iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null || true' \
         '    iptables -I FORWARD 1 -s "$1" -p udp --dport 443 -j REJECT' \
-        '    iptables -t nat -A "$CHAIN" -s "$1" -d "$SQUID_IP" -j RETURN' \
-        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 80  -j DNAT --to-destination "$SQUID_IP:80"' \
-        '    iptables -t nat -A "$CHAIN" -s "$1" -p tcp --dport 443 -j DNAT --to-destination "$SQUID_IP:443"' \
+        '    # Mark TCP 80 & 443 for policy routing to Squid container' \
+        '    iptables -t mangle -A SQUID_MARK -s "$1" -p tcp -m multiport --dports 80,443 -j MARK --set-mark 0x8000/0x8000' \
         '}' \
         '' \
         '# --- Per-host rules ---' \

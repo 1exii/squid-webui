@@ -1,11 +1,12 @@
 #!/bin/bash
 
 # ==============================================================================
-# SQUID PROXY DIAGNOSTIC & POLICY VERIFICATION SCRIPT
-# - Sends test traffic from vm-ubuntu (192.168.8.30)
-# - Captures & verifies Squid access logs and cache logs immediately after
-# - Validates results against Web UI active policies in rules.json / rules.acl
-# - Dumps detailed diagnostics to squid/debug/latest_debug.log
+# SQUID PROXY AUTOMATED TEST & VERIFICATION SCRIPT
+# Tests both HTTP & HTTPS for:
+#   1. example.com (Always Allowed -> must return real remote content / 200 OK)
+#   2. pornhub.com (Adult blocklist -> must return Webpage Blocked page)
+#   3. youtube.com (Dynamic Web UI Policy -> verified against rules.json / rules.acl)
+# Dumps full log to squid/debug/latest_debug.log
 # ==============================================================================
 
 set -u
@@ -26,21 +27,21 @@ CLIENT_IP="192.168.8.30"
 QNAP_USER="admin"
 QNAP_DOCKER="/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker"
 
-# Start logging stdout and stderr
+# Exec tee to log files
 exec > >(tee -a "${LOG_FILE}" | tee "${LATEST_LOG}") 2>&1
 
 echo "========================================================================"
-echo " SQUID PROXY AUTOMATED TEST & DIAGNOSTIC RUN - ${TIMESTAMP}"
+echo " SQUID PROXY COMPREHENSIVE TEST & DIAGNOSTIC - ${TIMESTAMP}"
 echo " Log file: ${LOG_FILE}"
 echo "========================================================================"
 echo ""
 
 # ------------------------------------------------------------------------------
-# STEP 1: ROUTER & PROXY INFRASTRUCTURE CHECK
+# STEP 1: ROUTER & CONTAINER STATUS CHECK
 # ------------------------------------------------------------------------------
 echo ">>> 1. INFRASTRUCTURE & ROUTING CHECK"
 echo "--------------------------------------------------"
-echo "Checking router redirection chain..."
+echo "Checking router redirection chain (SQUID_REDIRECT)..."
 ssh "${ROUTER_IP}" "iptables -t nat -L SQUID_REDIRECT -n -v" 2>&1
 
 echo ""
@@ -48,28 +49,58 @@ echo "Checking container status on QNAP..."
 ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} ps | grep -E 'squid-proxy|squid-webui'" 2>&1
 echo ""
 
-# Record access.log line count before tests
-LOG_BEFORE_COUNT=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy wc -l /var/log/squid/access.log 2>/dev/null | awk '{print \$1}'" || echo "0")
-
 # ------------------------------------------------------------------------------
-# STEP 2: RUN TEST TRAFFIC FROM CLIENT (vm-ubuntu)
+# STEP 2: RUN HTTP & HTTPS TRAFFIC TESTS FROM vm-ubuntu (192.168.8.30)
 # ------------------------------------------------------------------------------
-echo ">>> 2. EXECUTING TEST REQUESTS FROM CLIENT (vm-ubuntu)"
+echo ">>> 2. TESTING HTTP & HTTPS TRAFFIC FROM vm-ubuntu"
 echo "--------------------------------------------------"
 
-echo "[Test 1] Allowed Domain Check (http://example.com)..."
-OUT_ALLOWED=$(ssh "${CLIENT_IP}" "curl -sv -4 --max-time 6 http://example.com 2>&1" || true)
-echo "$OUT_ALLOWED" | grep -E 'HTTP/|Connected|Host:|HTML|title' | head -10
+test_site() {
+    local label="$1"
+    local url="$2"
 
-echo ""
-echo "[Test 2] Blocked Domain Check (https://www.pornhub.com)..."
-OUT_BLOCKED=$(ssh "${CLIENT_IP}" "curl -sv -4 -k --max-time 6 https://www.pornhub.com 2>&1" || true)
-echo "$OUT_BLOCKED" | grep -E 'HTTP/|Connected|Host:|Webpage Blocked|Access Restricted' | head -10
+    echo "--------------------------------------------------"
+    echo "[Testing] ${label} (${url})"
+    echo "--------------------------------------------------"
+    local res
+    res=$(ssh "${CLIENT_IP}" "curl -siv -4 -k --max-time 6 '${url}' 2>&1" || true)
 
+    # Extract status line & title
+    local status_line
+    status_line=$(echo "$res" | grep -i '^< HTTP/' | head -1)
+    local page_title
+    page_title=$(echo "$res" | grep -i '<title>' | head -1 | sed -e 's/^[ \t]*//')
+
+    echo "  Status Line : ${status_line:-No HTTP Response (Connection Failed / Timeout)}"
+    echo "  Page Title  : ${page_title:-No HTML Title Found}"
+
+    # Print first few lines of body preview if available
+    local body_snippet
+    body_snippet=$(echo "$res" | grep -v '^[*><]' | grep -v '^[[:space:]]*$' | head -5)
+    if [ -n "${body_snippet}" ]; then
+        echo "  Body Preview:"
+        echo "${body_snippet}" | sed 's/^/    /'
+    fi
+
+    echo "$res"
+}
+
+# 1. ALLOWED DOMAIN TESTS (example.com)
+OUT_EX_HTTP=$(test_site "Allowed HTTP" "http://example.com")
 echo ""
-echo "[Test 3] YouTube Domain Check (https://www.youtube.com)..."
-OUT_YOUTUBE=$(ssh "${CLIENT_IP}" "curl -sv -4 -k --max-time 6 https://www.youtube.com 2>&1" || true)
-echo "$OUT_YOUTUBE" | grep -E 'HTTP/|Connected|Host:|Webpage Blocked|Access Restricted' | head -10
+OUT_EX_HTTPS=$(test_site "Allowed HTTPS" "https://example.com")
+echo ""
+
+# 2. BLOCKED ADULT DOMAIN TESTS (pornhub.com)
+OUT_AD_HTTP=$(test_site "Blocked Adult HTTP" "http://pornhub.com")
+echo ""
+OUT_AD_HTTPS=$(test_site "Blocked Adult HTTPS" "https://www.pornhub.com")
+echo ""
+
+# 3. YOUTUBE DOMAIN TESTS (youtube.com)
+OUT_YT_HTTP=$(test_site "YouTube HTTP" "http://youtube.com")
+echo ""
+OUT_YT_HTTPS=$(test_site "YouTube HTTPS" "https://www.youtube.com")
 echo ""
 
 sleep 2
@@ -77,21 +108,21 @@ sleep 2
 # ------------------------------------------------------------------------------
 # STEP 3: CAPTURE & VERIFY SQUID LOGS
 # ------------------------------------------------------------------------------
-echo ">>> 3. CAPTURING SQUID ACCESS & CACHE LOGS"
+echo ">>> 3. CAPTURING SQUID LOGS POST-TEST"
 echo "--------------------------------------------------"
 
 echo "=== Recent access.log Entries (Post-Test) ==="
-ACCESS_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 25 /var/log/squid/access.log" 2>&1)
+ACCESS_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 30 /var/log/squid/access.log" 2>&1)
 echo "${ACCESS_LOG_ENTRIES}"
 
 echo ""
 echo "=== Recent cache.log Warnings/Errors ==="
-CACHE_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 20 /var/log/squid/cache.log" 2>&1)
+CACHE_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 25 /var/log/squid/cache.log" 2>&1)
 echo "${CACHE_LOG_ENTRIES}"
 echo ""
 
 # ------------------------------------------------------------------------------
-# STEP 4: FETCH WEB UI POLICY CONFIGURATION
+# STEP 4: WEB UI POLICY CROSS-CHECK
 # ------------------------------------------------------------------------------
 echo ">>> 4. WEB UI POLICY & RULES CROSS-CHECK"
 echo "--------------------------------------------------"
@@ -113,29 +144,39 @@ echo "========================================================================"
 echo " VERIFICATION SUMMARY"
 echo "========================================================================"
 
-# Check 1: Allowed website (example.com)
-if echo "${ACCESS_LOG_ENTRIES}" | grep -qi "example.com"; then
-    echo "  [PASS] http://example.com was captured in Squid access.log."
+# Allowed site check (Example Domain)
+if echo "${OUT_EX_HTTP}" | grep -qi "Example Domain" || echo "${OUT_EX_HTTPS}" | grep -qi "Example Domain"; then
+    echo "  [PASS] Allowed Site (example.com) successfully returned REAL remote content!"
 else
-    echo "  [WARN] http://example.com did NOT appear in Squid access.log."
+    echo "  [FAIL] Allowed Site (example.com) failed to return real remote content."
 fi
 
-# Check 2: Blocked website (pornhub.com / adult.txt)
-if echo "${ACCESS_LOG_ENTRIES}" | grep -qi "pornhub"; then
-    echo "  [PASS] pornhub.com (Adult blocklist) was captured in Squid access.log."
+# Blocked site check (Adult)
+if echo "${OUT_AD_HTTP}" | grep -qi "Webpage Blocked" || echo "${OUT_AD_HTTPS}" | grep -qi "Webpage Blocked"; then
+    echo "  [PASS] Blocked Site (pornhub.com) returned custom Parental Control Block Page."
 else
-    echo "  [WARN] pornhub.com did NOT appear in Squid access.log."
+    echo "  [WARN] Blocked Site (pornhub.com) did not return custom block page."
 fi
 
-# Check 3: YouTube status
-if echo "${ACCESS_LOG_ENTRIES}" | grep -qi "youtube"; then
-    echo "  [PASS] youtube.com traffic was captured in Squid access.log."
+# YouTube check vs active policy
+if echo "${RULES_ACL}" | grep -q "http_access deny.*list_videos_txt"; then
+    echo "  [POLICY] YouTube is currently CONFIGURED TO BE BLOCKED in Web UI."
+    if echo "${OUT_YT_HTTPS}" | grep -qi "Webpage Blocked" || echo "${OUT_YT_HTTPS}" | grep -qi "503"; then
+        echo "  [PASS] YouTube traffic was correctly BLOCKED as defined by policy."
+    else
+        echo "  [FAIL] YouTube was NOT blocked despite policy requiring block!"
+    fi
 else
-    echo "  [INFO] youtube.com traffic was not recorded in access.log."
+    echo "  [POLICY] YouTube is currently ALLOWED in Web UI."
+    if echo "${OUT_YT_HTTPS}" | grep -qi "HTTP/1.1 200" || echo "${OUT_YT_HTTPS}" | grep -qi "YouTube"; then
+        echo "  [PASS] YouTube traffic was correctly ALLOWED as defined by policy."
+    else
+        echo "  [FAIL] YouTube traffic failed to load despite policy allowing it!"
+    fi
 fi
 
 echo ""
-echo "Full detailed output saved to:"
+echo "Full detailed log saved to:"
 echo "  - ${LOG_FILE}"
 echo "  - ${LATEST_LOG}"
 echo "========================================================================"
