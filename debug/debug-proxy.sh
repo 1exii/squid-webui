@@ -65,14 +65,19 @@ test_site() {
     local res
     res=$(ssh "${CLIENT_IP}" "curl -siv -4 -k --max-time 6 '${url}' 2>&1" || true)
 
-    # Extract status line & title
+    # Extract status line, title, and block message
     local status_line
     status_line=$(echo "$res" | grep -i '^< HTTP/' | head -1)
     local page_title
     page_title=$(echo "$res" | grep -i '<title>' | head -1 | sed -e 's/^[ \t]*//')
+    local block_msg
+    block_msg=$(echo "$res" | grep -i 'blocked by your parent' | head -1 | sed -e 's/^[ \t]*//')
 
     echo "  Status Line : ${status_line:-No HTTP Response (Connection Failed / Timeout)}"
     echo "  Page Title  : ${page_title:-No HTML Title Found}"
+    if [ -n "${block_msg}" ]; then
+        echo "  Block Banner: ${block_msg}"
+    fi
 
     # Print first few lines of body preview if available
     local body_snippet
