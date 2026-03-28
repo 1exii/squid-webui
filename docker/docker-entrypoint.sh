@@ -42,11 +42,14 @@ if [ ! -d "/var/cache/squid/0F/FF" ]; then
 fi
 
 # Set up container-level iptables REDIRECT rules so SO_ORIGINAL_DST is preserved
-echo "[entrypoint] Setting up container iptables REDIRECT rules..."
-update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null || true
-iptables -t nat -F PREROUTING 2>/dev/null || true
-iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 3129
-iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 3130
+echo "[entrypoint] Setting up container iptables REDIRECT rules (legacy + nft)..."
+iptables-legacy -t nat -F PREROUTING 2>/dev/null || true
+iptables-legacy -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 3129 2>/dev/null || true
+iptables-legacy -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 3130 2>/dev/null || true
+
+iptables-nft -t nat -F PREROUTING 2>/dev/null || true
+iptables-nft -t nat -A PREROUTING -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 3129 2>/dev/null || true
+iptables-nft -t nat -A PREROUTING -p tcp -m tcp --dport 443 -j REDIRECT --to-ports 3130 2>/dev/null || true
 
 echo "[entrypoint] Starting Squid..."
 rm -f /run/squid.pid /var/run/squid.pid

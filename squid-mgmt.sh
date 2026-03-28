@@ -251,11 +251,12 @@ deploy_router_proxy() {
         'echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null || true' \
         'echo 0 > /proc/sys/net/ipv4/conf/br0/rp_filter 2>/dev/null || true' \
         '' \
-        '# Setup Policy Based Routing table 100 to route to Squid container without changing destination IP' \
-        'ip rule del fwmark 0x8000/0x8000 2>/dev/null || true' \
-        'ip rule add fwmark 0x8000/0x8000 table 100 2>/dev/null || true' \
-        'ip route flush table 100 2>/dev/null || true' \
-        'ip route add default via "$SQUID_IP" table 100 2>/dev/null || true' \
+        '# Setup Policy Based Routing table 150 to route to Squid container without changing destination IP' \
+        'ip rule del pref 10 2>/dev/null || true' \
+        'ip rule del fwmark 0x5000/0x5000 2>/dev/null || true' \
+        'ip rule add pref 10 fwmark 0x5000/0x5000 table 150 2>/dev/null || true' \
+        'ip route flush table 150 2>/dev/null || true' \
+        'ip route add default via "$SQUID_IP" dev br0 table 150 2>/dev/null || true' \
         '' \
         '# Setup mangle chain SQUID_MARK' \
         'iptables -t mangle -N SQUID_MARK 2>/dev/null || true' \
@@ -273,7 +274,7 @@ deploy_router_proxy() {
         '    iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null || true' \
         '    iptables -I FORWARD 1 -s "$1" -p udp --dport 443 -j REJECT' \
         '    # Mark TCP 80 & 443 for policy routing to Squid container' \
-        '    iptables -t mangle -A SQUID_MARK -s "$1" -p tcp -m multiport --dports 80,443 -j MARK --set-mark 0x8000/0x8000' \
+        '    iptables -t mangle -A SQUID_MARK -s "$1" -p tcp -m multiport --dports 80,443 -j MARK --set-mark 0x5000/0x5000' \
         '}' \
         '' \
         '# --- Per-host rules ---' \

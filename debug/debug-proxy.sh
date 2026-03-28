@@ -36,17 +36,36 @@ echo " Log file: ${LOG_FILE}"
 echo "========================================================================"
 echo ""
 
+SUDO_PASS=""
+if [ -f "${SQUID_DIR}/.sudo_pass" ]; then
+    SUDO_PASS=$(grep -E '^192.168.1.2' "${SQUID_DIR}/.sudo_pass" 2>/dev/null | awk '{print $2}')
+fi
+
+# ------------------------------------------------------------------------------
+# STEP 0: AUTO-DEPLOY ROUTER RULES & CONTAINER FIXES
+# ------------------------------------------------------------------------------
+echo ">>> 0. AUTO-DEPLOYING ROUTER RULES & CONTAINER ENTRYPOINT FIXES..."
+bash "${SQUID_DIR}/squid-mgmt.sh" router-deploy 2>&1
+bash "${SQUID_DIR}/docker/deploy-squid-docker.sh" create squid-proxy 2>&1
+echo ""
+
 # ------------------------------------------------------------------------------
 # STEP 1: ROUTER & CONTAINER STATUS CHECK
 # ------------------------------------------------------------------------------
 echo ">>> 1. INFRASTRUCTURE & ROUTING CHECK"
 echo "--------------------------------------------------"
-echo "Checking router redirection chain (SQUID_REDIRECT)..."
-ssh "${ROUTER_IP}" "iptables -t nat -L SQUID_REDIRECT -n -v" 2>&1
+echo "Checking router policy rules & routing tables..."
+ssh "${ROUTER_IP}" "ip rule show; echo '--- Table 100 / 150 ---'; ip route show table 150 2>/dev/null; ip route show table 100 2>/dev/null" 2>&1
 
 echo ""
-echo "Checking container status on QNAP..."
+echo "Checking router mangle SQUID_MARK chain..."
+ssh "${ROUTER_IP}" "iptables -t mangle -L SQUID_MARK -n -v 2>/dev/null || true" 2>&1
+
+echo ""
+echo "Checking container iptables-legacy & iptables-nft NAT on QNAP..."
 ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} ps | grep -E 'squid-proxy|squid-webui'" 2>&1
+ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy iptables-legacy -t nat -L PREROUTING -n -v 2>/dev/null || true" 2>&1
+ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy iptables-nft -t nat -L PREROUTING -n -v 2>/dev/null || true" 2>&1
 echo ""
 
 # ------------------------------------------------------------------------------
@@ -90,6 +109,12 @@ test_site() {
     echo "$res"
 }
 
+# Start background tcpdump inside squid-proxy container
+echo "[*] Starting background packet capture inside squid-proxy container..."
+ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tcpdump -i eth0 host ${CLIENT_IP} -n -c 20 > /tmp/container_tcpdump.cap 2>&1" &
+TCPDUMP_PID=$!
+sleep 1
+
 # 1. ALLOWED DOMAIN TESTS (example.com)
 OUT_EX_HTTP=$(test_site "Allowed HTTP" "http://example.com")
 echo ""
@@ -108,13 +133,18 @@ echo ""
 OUT_YT_HTTPS=$(test_site "YouTube HTTPS" "https://www.youtube.com")
 echo ""
 
-sleep 2
+wait $TCPDUMP_PID 2>/dev/null || true
+sleep 1
 
 # ------------------------------------------------------------------------------
 # STEP 3: CAPTURE & VERIFY SQUID LOGS
 # ------------------------------------------------------------------------------
-echo ">>> 3. CAPTURING SQUID LOGS POST-TEST"
+echo ">>> 3. CAPTURING PACKET TRACES & SQUID LOGS POST-TEST"
 echo "--------------------------------------------------"
+
+echo "=== Captured Network Packet Trace (Inside squid-proxy container) ==="
+ssh "${QNAP_USER}@${QNAP_IP}" "cat /tmp/container_tcpdump.cap 2>/dev/null | head -n 30" 2>&1 || true
+echo ""
 
 echo "=== Recent access.log Entries (Post-Test) ==="
 ACCESS_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 30 /var/log/squid/access.log" 2>&1)

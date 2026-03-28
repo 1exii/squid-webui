@@ -110,6 +110,8 @@ function create_squid() {
     fi
 
     ssh -T "$QNAP_SERVER" << EOF
+        $DOCKER stop "$NAME" >/dev/null 2>&1 || true
+        $DOCKER rm -f "$NAME" >/dev/null 2>&1 || true
         $DOCKER run -d \
             --name "$NAME" --hostname "$NAME" \
             --net "$DOCKER_NET" --ip "$IP" \

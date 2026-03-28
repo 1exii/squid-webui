@@ -4,7 +4,17 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends squid-openssl iptables tzdata && \
+    apt-get install -y --no-install-recommends \
+        squid-openssl \
+        iptables \
+        tzdata \
+        tcpdump \
+        iproute2 \
+        net-tools \
+        procps \
+        curl \
+        netcat-traditional \
+        ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
