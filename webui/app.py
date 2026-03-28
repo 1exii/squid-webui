@@ -785,7 +785,7 @@ if command -v certutil > /dev/null 2>&1; then
     echo "[*] Importing into Chrome/NSS Certificate Database..."
     for user_home in /root /home/*; do
         if [ -d "$user_home/.pki/nssdb" ]; then
-            sudo certutil -d "sql:$user_home/.pki/nssdb" -A -t "C,," -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt 2>/dev/null || true
+            sudo certutil -d "sql:$user_home/.pki/nssdb" -A -t "CT,C,C" -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt 2>/dev/null || true
         fi
     done
 fi
