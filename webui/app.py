@@ -790,16 +790,8 @@ if command -v certutil > /dev/null 2>&1; then
     done
 fi
 
-echo "[*] Setting System Proxy Profile (/etc/profile.d/squid-proxy.sh)..."
-cat << 'EOF' | sudo tee /etc/profile.d/squid-proxy.sh > /dev/null
-export http_proxy="http://192.168.1.90:3128"
-export https_proxy="http://192.168.1.90:3128"
-export HTTP_PROXY="http://192.168.1.90:3128"
-export HTTPS_PROXY="http://192.168.1.90:3128"
-export no_proxy="localhost,127.0.0.1,192.168.0.0/16,local,.local"
-export NO_PROXY="localhost,127.0.0.1,192.168.0.0/16,local,.local"
-EOF
-sudo chmod 755 /etc/profile.d/squid-proxy.sh
+echo "[*] Cleaning up any old static proxy profiles (Transparent Routing active)..."
+sudo rm -f /etc/profile.d/squid-proxy.sh
 
 echo "========================================================="
 echo "   [+] Installation Complete! HTTPS traffic is now trusted."

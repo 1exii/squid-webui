@@ -116,22 +116,15 @@ sudo update-ca-certificates</code></pre>
 certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt</code></pre>
                     </div>
                     <div class="method-box">
-                        <h5>Step 3: System-Wide Proxy Environment</h5>
-                        <pre><code>cat &lt;&lt; 'EOF' | sudo tee /etc/profile.d/squid-proxy.sh
-export http_proxy="http://192.168.1.90:3128"
-export https_proxy="http://192.168.1.90:3128"
-export HTTP_PROXY="http://192.168.1.90:3128"
-export HTTPS_PROXY="http://192.168.1.90:3128"
-export no_proxy="localhost,127.0.0.1,192.168.0.0/16,local,.local"
-export NO_PROXY="localhost,127.0.0.1,192.168.0.0/16,local,.local"
-EOF
-sudo chmod 755 /etc/profile.d/squid-proxy.sh</code></pre>
+                        <h5>Step 3: Transparent Proxy Active</h5>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px;">
+                            ✨ All HTTP and HTTPS network traffic is automatically and transparently routed to the proxy by your router. No manual proxy settings or environment variables are required!
+                        </p>
                     </div>
                 </section>
                 <section class="guide-section">
                     <h4>3. Verification &amp; Testing</h4>
-                    <pre><code>. /etc/profile.d/squid-proxy.sh
-curl -v https://google.com</code></pre>
+                    <pre><code>curl -v https://google.com</code></pre>
                 </section>
             </div>
         </main>
