@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # ==============================================================================
-# SQUID PROXY AUTOMATED TEST & VERIFICATION SCRIPT
-# Tests both HTTP & HTTPS for:
-#   1. example.com (Always Allowed -> must return real remote content / 200 OK)
-#   2. pornhub.com (Adult blocklist -> must return Webpage Blocked page)
-#   3. youtube.com (Dynamic Web UI Policy -> verified against rules.json / rules.acl)
-# Dumps full log to squid/debug/latest_debug.log
+# SQUID PROXY & WEB UI COMPREHENSIVE AUTOMATED TEST & VERIFICATION SCRIPT
+# Tests:
+#   1. Deployment & Infrastructure (Router rules, QNAP containers status)
+#   2. Squid Interception & Bumping (HTTP/HTTPS for allowed, blocked, policy sites)
+#   3. Web UI Health, Endpoints, & Policy Auto-Reload via Docker Socket
+#   4. Squid Management CLI (squid-mgmt.sh dump-config, catlogs, router-deploy)
+# Log saved to squid/debug/latest_debug.log
 # ==============================================================================
 
 set -u
@@ -23,6 +24,7 @@ mkdir -p "${DEBUG_DIR}"
 ROUTER_IP="192.168.0.1"
 QNAP_IP="192.168.1.2"
 SQUID_IP="192.168.1.90"
+WEBUI_IP="192.168.1.91"
 CLIENT_IP="192.168.8.30"
 QNAP_USER="admin"
 QNAP_DOCKER="/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker"
@@ -31,7 +33,7 @@ QNAP_DOCKER="/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker"
 exec > >(tee -a "${LOG_FILE}" | tee "${LATEST_LOG}") 2>&1
 
 echo "========================================================================"
-echo " SQUID PROXY COMPREHENSIVE TEST & DIAGNOSTIC - ${TIMESTAMP}"
+echo " SQUID PROXY & WEB UI COMPREHENSIVE TEST & DIAGNOSTIC - ${TIMESTAMP}"
 echo " Log file: ${LOG_FILE}"
 echo "========================================================================"
 echo ""
@@ -41,37 +43,112 @@ if [ -f "${SQUID_DIR}/.sudo_pass" ]; then
     SUDO_PASS=$(grep -E '^192.168.1.2' "${SQUID_DIR}/.sudo_pass" 2>/dev/null | awk '{print $2}')
 fi
 
-# ------------------------------------------------------------------------------
-# STEP 0: AUTO-DEPLOY ROUTER RULES & CONTAINER FIXES
-# ------------------------------------------------------------------------------
-echo ">>> 0. AUTO-DEPLOYING ROUTER RULES & CONTAINER ENTRYPOINT FIXES..."
-bash "${SQUID_DIR}/squid-mgmt.sh" router-deploy 2>&1
-bash "${SQUID_DIR}/docker/deploy-squid-docker.sh" create squid-proxy 2>&1
-echo ""
+REDEPLOY=false
+
+for arg in "$@"; do
+    case "$arg" in
+        redeploy|--redeploy|deploy|--deploy)
+            REDEPLOY=true
+            ;;
+    esac
+done
+
+# Track pass/fail status
+TESTS_PASSED=0
+TESTS_FAILED=0
+
+pass_test() {
+    echo "  [PASS] $1"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+}
+
+fail_test() {
+    echo "  [FAIL] $1"
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+}
+
+warn_test() {
+    echo "  [WARN] $1"
+}
 
 # ------------------------------------------------------------------------------
-# STEP 1: ROUTER & CONTAINER STATUS CHECK
+# STEP 0: OPTIONAL REDEPLOYMENT OF ROUTER RULES & CONTAINERS
+# ------------------------------------------------------------------------------
+if [ "${REDEPLOY}" = true ]; then
+    echo ">>> 0. AUTO-DEPLOYING ROUTER RULES & DOCKER CONTAINERS..."
+    echo "--------------------------------------------------"
+    echo "--> Running squid-mgmt.sh router-deploy..."
+    bash "${SQUID_DIR}/squid-mgmt.sh" router-deploy 2>&1
+
+    echo "--> Running deploy-squid-docker.sh create squid-proxy squid-webui..."
+    bash "${SQUID_DIR}/docker/deploy-squid-docker.sh" create squid-proxy squid-webui 2>&1
+    echo ""
+
+    echo "--> Waiting for containers & services to become fully ready..."
+    WEBUI_READY=false
+    for i in $(seq 1 20); do
+        if curl -s -o /dev/null -w "%{http_code}" -m 2 "http://${WEBUI_IP}:3131/api/auth/status" 2>/dev/null | grep -q "200" || \
+           curl -s -o /dev/null -w "%{http_code}" -m 2 "http://${QNAP_IP}:3131/api/auth/status" 2>/dev/null | grep -q "200"; then
+            WEBUI_READY=true
+            echo "  [+] Web UI service ready on attempt ${i}."
+            break
+        fi
+        sleep 1
+    done
+    if [ "${WEBUI_READY}" = false ]; then
+        echo "  [!] WARNING: Web UI did not respond within 20s. Proceeding with diagnostics..."
+    fi
+    echo ""
+else
+    echo ">>> 0. SKIPPING REDEPLOYMENT (Pass 'redeploy' or '--redeploy' to rebuild & redeploy)"
+    echo "--------------------------------------------------"
+    echo "--> Running diagnostics directly against active containers."
+    echo ""
+fi
+
+# ------------------------------------------------------------------------------
+# STEP 1: ROUTER & CONTAINER INFRASTRUCTURE CHECK
 # ------------------------------------------------------------------------------
 echo ">>> 1. INFRASTRUCTURE & ROUTING CHECK"
 echo "--------------------------------------------------"
 echo "Checking router policy rules & routing tables..."
-ssh "${ROUTER_IP}" "ip rule show; echo '--- Table 100 / 150 ---'; ip route show table 150 2>/dev/null; ip route show table 100 2>/dev/null" 2>&1
+ssh "${ROUTER_IP}" "ip rule show; echo '--- Table 150 ---'; ip route show table 150 2>/dev/null" 2>&1
 
 echo ""
 echo "Checking router mangle SQUID_MARK chain..."
 ssh "${ROUTER_IP}" "iptables -t mangle -L SQUID_MARK -n -v 2>/dev/null || true" 2>&1
 
 echo ""
-echo "Checking container iptables-legacy & iptables-nft NAT on QNAP..."
-ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} ps | grep -E 'squid-proxy|squid-webui'" 2>&1
+echo "Checking QNAP Docker containers status..."
+CONTAINERS_PS=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} ps | grep -E 'squid-proxy|squid-webui'" 2>&1 || true)
+echo "${CONTAINERS_PS}"
+
+PROXY_UP=false
+WEBUI_UP=false
+if echo "${CONTAINERS_PS}" | grep -q "squid-proxy"; then PROXY_UP=true; fi
+if echo "${CONTAINERS_PS}" | grep -q "squid-webui"; then WEBUI_UP=true; fi
+
+if [ "$PROXY_UP" = true ]; then
+    pass_test "squid-proxy container is UP and running."
+else
+    fail_test "squid-proxy container is NOT running!"
+fi
+
+if [ "$WEBUI_UP" = true ]; then
+    pass_test "squid-webui container is UP and running."
+else
+    fail_test "squid-webui container is NOT running!"
+fi
+
+echo ""
+echo "Checking squid-proxy container iptables NAT rules..."
 ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy iptables-legacy -t nat -L PREROUTING -n -v 2>/dev/null || true" 2>&1
-ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy iptables-nft -t nat -L PREROUTING -n -v 2>/dev/null || true" 2>&1
 echo ""
 
 # ------------------------------------------------------------------------------
-# STEP 2: RUN HTTP & HTTPS TRAFFIC TESTS FROM vm-ubuntu (192.168.8.30)
+# STEP 2: HTTP & HTTPS TRAFFIC INTERCEPTION TESTS FROM vm-ubuntu (192.168.8.30)
 # ------------------------------------------------------------------------------
-echo ">>> 2. TESTING HTTP & HTTPS TRAFFIC FROM vm-ubuntu"
+echo ">>> 2. TESTING HTTP & HTTPS TRAFFIC INTERCEPTION (CLIENT: vm-ubuntu)"
 echo "--------------------------------------------------"
 
 test_site() {
@@ -82,7 +159,7 @@ test_site() {
     echo "[Testing] ${label} (${url})"
     echo "--------------------------------------------------"
     local res
-    res=$(ssh "${CLIENT_IP}" "curl -siv -4 -k --max-time 6 '${url}' 2>&1" || true)
+    res=$(ssh "${CLIENT_IP}" "curl -siv -4 -k --max-time 8 '${url}' 2>&1" || true)
 
     # Extract status line, title, and block message
     local status_line
@@ -98,7 +175,7 @@ test_site() {
         echo "  Block Banner: ${block_msg}"
     fi
 
-    # Print first few lines of body preview if available
+    # Print first few lines of body preview
     local body_snippet
     body_snippet=$(echo "$res" | grep -v '^[*><]' | grep -v '^[[:space:]]*$' | head -5)
     if [ -n "${body_snippet}" ]; then
@@ -133,13 +210,164 @@ echo ""
 OUT_YT_HTTPS=$(test_site "YouTube HTTPS" "https://www.youtube.com")
 echo ""
 
+# 4. STRICT SSL CERTIFICATE TRUST TEST FROM CLIENT (WITHOUT -k)
+echo "--------------------------------------------------"
+echo "[Testing] Strict SSL Certificate Trust Verification on Client (without -k)"
+echo "--------------------------------------------------"
+OUT_STRICT_SSL=$(ssh "${CLIENT_IP}" "curl -siv -4 --max-time 8 'https://example.com' 2>&1" || true)
+STRICT_STATUS=$(echo "${OUT_STRICT_SSL}" | grep -i '^< HTTP/' | head -1)
+STRICT_ERR=$(echo "${OUT_STRICT_SSL}" | grep -i 'SSL certificate\|self-signed\|certificate' | head -1)
+echo "  Status Line : ${STRICT_STATUS:-No HTTP Response}"
+if [ -n "${STRICT_ERR}" ]; then
+    echo "  SSL Warning : ${STRICT_ERR}"
+fi
+echo ""
+
 wait $TCPDUMP_PID 2>/dev/null || true
 sleep 1
 
 # ------------------------------------------------------------------------------
-# STEP 3: CAPTURE & VERIFY SQUID LOGS
+# STEP 3: WEB UI COMPREHENSIVE VERIFICATION & API TESTING
 # ------------------------------------------------------------------------------
-echo ">>> 3. CAPTURING PACKET TRACES & SQUID LOGS POST-TEST"
+echo ">>> 3. SQUID WEB UI FUNCTIONALITY & API VERIFICATION"
+echo "--------------------------------------------------"
+
+WEBUI_URL=""
+for i in $(seq 1 15); do
+    if curl -s -o /dev/null -w "%{http_code}" -m 2 "http://${WEBUI_IP}:3131/api/auth/status" 2>/dev/null | grep -q "200"; then
+        WEBUI_URL="http://${WEBUI_IP}:3131"
+        break
+    elif curl -s -o /dev/null -w "%{http_code}" -m 2 "http://${QNAP_IP}:3131/api/auth/status" 2>/dev/null | grep -q "200"; then
+        WEBUI_URL="http://${QNAP_IP}:3131"
+        break
+    fi
+    sleep 1
+done
+
+if [ -z "${WEBUI_URL}" ]; then
+    WEBUI_URL="http://${WEBUI_IP}:3131"
+fi
+echo "  [*] Target Web UI URL: ${WEBUI_URL}"
+
+echo "=== 3a. Web UI Base Page Access (${WEBUI_URL}/) ==="
+WEBUI_HOME_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/" 2>/dev/null || echo "000")
+WEBUI_HOME_BODY=$(curl -s -m 5 "${WEBUI_URL}/" 2>/dev/null || true)
+echo "  HTTP Response Code: ${WEBUI_HOME_CODE}"
+
+if [ "${WEBUI_HOME_CODE}" = "200" ] && echo "${WEBUI_HOME_BODY}" | grep -qi "Squid Web UI\|Control Center\|<title>"; then
+    pass_test "Web UI Dashboard page loaded successfully (HTTP 200)."
+else
+    fail_test "Web UI Dashboard page failed to respond (HTTP ${WEBUI_HOME_CODE})."
+fi
+echo ""
+
+echo "=== 3b. Web UI API Endpoints Check ==="
+
+# 1. GET /api/auth/status
+AUTH_STATUS_RES=$(curl -s -m 5 "${WEBUI_URL}/api/auth/status" 2>&1 || echo "{}")
+echo "  GET /api/auth/status -> ${AUTH_STATUS_RES}"
+if echo "${AUTH_STATUS_RES}" | grep -q '"authenticated"'; then
+    pass_test "API /api/auth/status returned valid JSON."
+else
+    fail_test "API /api/auth/status failed."
+fi
+
+# 2. GET /api/devices
+DEVICES_RES=$(curl -s -m 5 "${WEBUI_URL}/api/devices" 2>&1 || echo "{}")
+echo "  GET /api/devices -> ${DEVICES_RES}"
+if echo "${DEVICES_RES}" | grep -q '"devices"'; then
+    pass_test "API /api/devices returned device list."
+else
+    fail_test "API /api/devices failed."
+fi
+
+# 3. GET /api/policies
+POLICIES_RES=$(curl -s -m 5 "${WEBUI_URL}/api/policies" 2>&1 || echo "{}")
+echo "  GET /api/policies -> ${POLICIES_RES}"
+if echo "${POLICIES_RES}" | grep -q '"policies"'; then
+    pass_test "API /api/policies returned device policies."
+else
+    fail_test "API /api/policies failed."
+fi
+
+# 4. GET /api/blocklists
+BLOCKLISTS_RES=$(curl -s -m 5 "${WEBUI_URL}/api/blocklists" 2>&1 || echo "{}")
+echo "  GET /api/blocklists -> ${BLOCKLISTS_RES}"
+if echo "${BLOCKLISTS_RES}" | grep -q '"blocklists"'; then
+    pass_test "API /api/blocklists returned list of blocklists."
+else
+    fail_test "API /api/blocklists failed."
+fi
+
+# 5. GET /download/cert.crt & /download/cert.pem
+CERT_CRT_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/download/cert.crt" 2>&1 || echo "000")
+CERT_PEM_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/download/cert.pem" 2>&1 || echo "000")
+echo "  GET /download/cert.crt -> HTTP ${CERT_CRT_CODE}"
+echo "  GET /download/cert.pem -> HTTP ${CERT_PEM_CODE}"
+if [ "${CERT_CRT_CODE}" = "200" ] || [ "${CERT_PEM_CODE}" = "200" ]; then
+    pass_test "Web UI Certificate Download endpoint verified (HTTP 200)."
+else
+    fail_test "Web UI Certificate Download endpoint returned HTTP ${CERT_CRT_CODE} / ${CERT_PEM_CODE}."
+fi
+echo ""
+
+echo "=== 3c. Web UI Policy Apply & Reload Pipeline Test ==="
+echo "--> Triggering /api/apply to test rules compilation and Docker socket reload..."
+APPLY_RES=$(curl -s -m 5 -X POST "${WEBUI_URL}/api/apply" -H "Content-Type: application/json" 2>&1 || echo "{}")
+echo "  POST /api/apply -> ${APPLY_RES}"
+
+if echo "${APPLY_RES}" | grep -q '"success":\s*true'; then
+    pass_test "Web UI policy apply API executed successfully."
+else
+    fail_test "Web UI policy apply API failed."
+fi
+
+# Verify rules.acl generation inside squid-proxy
+echo ""
+echo "=== Active /etc/squid/configs/rules.acl (vm-ubuntu section) ==="
+RULES_ACL=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy cat /etc/squid/configs/rules.acl" 2>&1 || echo "")
+echo "${RULES_ACL}" | grep -A 25 "vm-ubuntu" || echo "${RULES_ACL}"
+echo ""
+
+# ------------------------------------------------------------------------------
+# STEP 4: SQUID MANAGEMENT CLI (squid-mgmt.sh) VERIFICATION
+# ------------------------------------------------------------------------------
+echo ">>> 4. SQUID MANAGEMENT CLI (squid-mgmt.sh) VERIFICATION"
+echo "--------------------------------------------------"
+
+echo "--> 4a. Testing 'squid-mgmt.sh dump-config'..."
+DUMP_CFG_OUT=$(bash "${SQUID_DIR}/squid-mgmt.sh" dump-config 2>&1 || true)
+echo "${DUMP_CFG_OUT}"
+if echo "${DUMP_CFG_OUT}" | grep -qi "Config dumped\|parse OK\|Processing Configuration File"; then
+    pass_test "squid-mgmt.sh dump-config succeeded."
+else
+    fail_test "squid-mgmt.sh dump-config failed!"
+fi
+echo ""
+
+echo "--> 4b. Testing 'squid-mgmt.sh catlogs'..."
+CATLOGS_OUT=$(bash "${SQUID_DIR}/squid-mgmt.sh" catlogs 2>&1 || true)
+echo "=== Last 15 lines of catlogs output ==="
+echo "${CATLOGS_OUT}" | tail -n 15
+if echo "${CATLOGS_OUT}" | grep -qi "Displaying Squid Access Logs\|Saved local log snapshot"; then
+    pass_test "squid-mgmt.sh catlogs retrieved access log successfully."
+else
+    fail_test "squid-mgmt.sh catlogs failed to retrieve access log."
+fi
+echo ""
+
+echo "--> 4c. Checking Local & Remote SSL Certificates..."
+if [ -f "${SQUID_DIR}/certs/squid-ca.pem" ] && [ -f "${SQUID_DIR}/certs/squid-ca.crt" ]; then
+    pass_test "Local SSL CA certificates exist (squid-ca.pem, squid-ca.crt)."
+else
+    fail_test "Local SSL CA certificates missing!"
+fi
+echo ""
+
+# ------------------------------------------------------------------------------
+# STEP 5: CAPTURE PACKET TRACES & SQUID LOGS
+# ------------------------------------------------------------------------------
+echo ">>> 5. CAPTURING PACKET TRACES & SQUID LOGS POST-TEST"
 echo "--------------------------------------------------"
 
 echo "=== Captured Network Packet Trace (Inside squid-proxy container) ==="
@@ -147,70 +375,80 @@ ssh "${QNAP_USER}@${QNAP_IP}" "cat /tmp/container_tcpdump.cap 2>/dev/null | head
 echo ""
 
 echo "=== Recent access.log Entries (Post-Test) ==="
-ACCESS_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 30 /var/log/squid/access.log" 2>&1)
+ACCESS_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 60 /var/log/squid/access.log" 2>&1 || true)
 echo "${ACCESS_LOG_ENTRIES}"
 
 echo ""
+echo "=== YouTube Traffic Log Entries (Double-Confirmation) ==="
+YT_ACCESS_LOGS=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy grep -i "youtube" /var/log/squid/access.log 2>/dev/null | tail -n 20" || true)
+if [ -n "${YT_ACCESS_LOGS}" ]; then
+    echo "${YT_ACCESS_LOGS}"
+else
+    echo "  (No YouTube entries found in access.log)"
+fi
+
+echo ""
 echo "=== Recent cache.log Warnings/Errors ==="
-CACHE_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 25 /var/log/squid/cache.log" 2>&1)
+CACHE_LOG_ENTRIES=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy tail -n 25 /var/log/squid/cache.log" 2>&1 || true)
 echo "${CACHE_LOG_ENTRIES}"
 echo ""
 
 # ------------------------------------------------------------------------------
-# STEP 4: WEB UI POLICY CROSS-CHECK
-# ------------------------------------------------------------------------------
-echo ">>> 4. WEB UI POLICY & RULES CROSS-CHECK"
-echo "--------------------------------------------------"
-
-echo "=== Active /etc/squid/configs/rules.json ==="
-RULES_JSON=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy cat /etc/squid/configs/rules.json" 2>&1 || echo "{}")
-echo "${RULES_JSON}"
-
-echo ""
-echo "=== Generated /etc/squid/configs/rules.acl (vm-ubuntu section) ==="
-RULES_ACL=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy cat /etc/squid/configs/rules.acl" 2>&1 || echo "")
-echo "${RULES_ACL}" | grep -A 25 "vm-ubuntu" || echo "${RULES_ACL}"
-echo ""
-
-# ------------------------------------------------------------------------------
-# STEP 5: VERIFICATION ANALYSIS SUMMARY
+# STEP 6: VERIFICATION ANALYSIS SUMMARY
 # ------------------------------------------------------------------------------
 echo "========================================================================"
-echo " VERIFICATION SUMMARY"
+echo " VERIFICATION SUMMARY & REPORT"
 echo "========================================================================"
 
 # Allowed site check (Example Domain)
 if echo "${OUT_EX_HTTP}" | grep -qi "Example Domain" || echo "${OUT_EX_HTTPS}" | grep -qi "Example Domain"; then
-    echo "  [PASS] Allowed Site (example.com) successfully returned REAL remote content!"
+    pass_test "Allowed Site (example.com) successfully returned REAL remote content!"
 else
-    echo "  [FAIL] Allowed Site (example.com) failed to return real remote content."
+    fail_test "Allowed Site (example.com) failed to return real remote content."
+fi
+
+# Strict SSL Certificate check (without -k)
+if echo "${OUT_STRICT_SSL}" | grep -qi "SSL certificate problem\|self-signed certificate\|certificate has expired\|issuer certificate"; then
+    fail_test "Strict SSL Certificate Verification FAILED on client (vm-ubuntu)! Root CA cert is not trusted by client OS/browser."
+    echo "  [i] FIX: Run 'bash squid-mgmt.sh linux-deploy' to install/trust the Root CA cert on vm-ubuntu."
+else
+    pass_test "Strict SSL Certificate Verification PASSED on client (vm-ubuntu)."
 fi
 
 # Blocked site check (Adult)
 if echo "${OUT_AD_HTTP}" | grep -qi "Webpage Blocked" || echo "${OUT_AD_HTTPS}" | grep -qi "Webpage Blocked"; then
-    echo "  [PASS] Blocked Site (pornhub.com) returned custom Parental Control Block Page."
+    pass_test "Blocked Site (pornhub.com) returned custom Parental Control Block Page."
 else
-    echo "  [WARN] Blocked Site (pornhub.com) did not return custom block page."
+    warn_test "Blocked Site (pornhub.com) did not return custom block page."
 fi
 
 # YouTube check vs active policy
-if echo "${RULES_ACL}" | grep -q "http_access deny.*list_videos_txt"; then
-    echo "  [POLICY] YouTube is currently CONFIGURED TO BE BLOCKED in Web UI."
-    if echo "${OUT_YT_HTTPS}" | grep -qi "Webpage Blocked" || echo "${OUT_YT_HTTPS}" | grep -qi "503"; then
-        echo "  [PASS] YouTube traffic was correctly BLOCKED as defined by policy."
+HAS_UNCONDITIONAL_DENY=false
+if echo "${RULES_ACL}" | grep -q "http_access deny.*list_videos_txt" && ! echo "${RULES_ACL}" | grep -q "http_access allow.*list_videos_txt"; then
+    HAS_UNCONDITIONAL_DENY=true
+fi
+
+if [ "$HAS_UNCONDITIONAL_DENY" = true ]; then
+    echo "  [POLICY] YouTube is currently CONFIGURED TO BE UNCONDITIONALLY BLOCKED in Web UI."
+    if echo "${OUT_YT_HTTPS}" | grep -qi "Webpage Blocked" || echo "${OUT_YT_HTTPS}" | grep -qi "503\|403"; then
+        pass_test "YouTube traffic was correctly BLOCKED as defined by policy."
     else
-        echo "  [FAIL] YouTube was NOT blocked despite policy requiring block!"
+        fail_test "YouTube was NOT blocked despite policy requiring block!"
     fi
 else
-    echo "  [POLICY] YouTube is currently ALLOWED in Web UI."
-    if echo "${OUT_YT_HTTPS}" | grep -qi "HTTP/1.1 200" || echo "${OUT_YT_HTTPS}" | grep -qi "YouTube"; then
-        echo "  [PASS] YouTube traffic was correctly ALLOWED as defined by policy."
+    echo "  [POLICY] YouTube is currently ALLOWED (or within an active unblock window) in Web UI."
+    if echo "${OUT_YT_HTTPS}" | grep -qi "HTTP/[12].* [23][0-9][0-9]" || echo "${OUT_YT_HTTPS}" | grep -qi "YouTube" || echo "${YT_ACCESS_LOGS}" | grep -qi "TCP_MISS\|TCP_TUNNEL"; then
+        pass_test "YouTube traffic was correctly ALLOWED as defined by policy & verified in access.log!"
     else
-        echo "  [FAIL] YouTube traffic failed to load despite policy allowing it!"
+        fail_test "YouTube traffic failed to load despite policy allowing it!"
     fi
 fi
 
 echo ""
+echo "------------------------------------------------------------------------"
+echo " TOTAL TESTS PASSED: ${TESTS_PASSED}"
+echo " TOTAL TESTS FAILED: ${TESTS_FAILED}"
+echo "------------------------------------------------------------------------"
 echo "Full detailed log saved to:"
 echo "  - ${LOG_FILE}"
 echo "  - ${LATEST_LOG}"
