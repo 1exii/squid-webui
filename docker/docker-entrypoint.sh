@@ -5,6 +5,12 @@ set -e
 mkdir -p /var/cache/squid /var/lib/squid /var/log/squid
 chown -R proxy:proxy /var/cache/squid /var/lib/squid /var/log/squid
 
+# 2. Configure system timezone from $TZ if specified
+if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then
+    ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime
+    echo "$TZ" > /etc/timezone
+fi
+
 # 3. Locate SSL certgen helper binary
 SSL_DB="/var/lib/squid/ssl_db/db"
 CERTGEN=""

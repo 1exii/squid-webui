@@ -146,9 +146,112 @@ ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy iptables-legacy -
 echo ""
 
 # ------------------------------------------------------------------------------
-# STEP 2: HTTP & HTTPS TRAFFIC INTERCEPTION TESTS FROM vm-ubuntu (192.168.8.30)
+# STEP 2: SQUID WEB UI FUNCTIONALITY & API VERIFICATION
 # ------------------------------------------------------------------------------
-echo ">>> 2. TESTING HTTP & HTTPS TRAFFIC INTERCEPTION (CLIENT: vm-ubuntu)"
+echo ">>> 2. SQUID WEB UI FUNCTIONALITY & API VERIFICATION"
+echo "--------------------------------------------------"
+
+WEBUI_URL=""
+for i in $(seq 1 15); do
+    if curl -s -o /dev/null -w "%{http_code}" -m 2 "http://${WEBUI_IP}:3131/api/auth/status" 2>/dev/null | grep -q "200"; then
+        WEBUI_URL="http://${WEBUI_IP}:3131"
+        break
+    elif curl -s -o /dev/null -w "%{http_code}" -m 2 "http://${QNAP_IP}:3131/api/auth/status" 2>/dev/null | grep -q "200"; then
+        WEBUI_URL="http://${QNAP_IP}:3131"
+        break
+    fi
+    sleep 1
+done
+
+if [ -z "${WEBUI_URL}" ]; then
+    WEBUI_URL="http://${WEBUI_IP}:3131"
+fi
+echo "  [*] Target Web UI URL: ${WEBUI_URL}"
+
+echo "=== 2a. Web UI Base Page Access (${WEBUI_URL}/) ==="
+WEBUI_HOME_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/" 2>/dev/null || echo "000")
+WEBUI_HOME_BODY=$(curl -s -m 5 "${WEBUI_URL}/" 2>/dev/null || true)
+echo "  HTTP Response Code: ${WEBUI_HOME_CODE}"
+
+if [ "${WEBUI_HOME_CODE}" = "200" ] && echo "${WEBUI_HOME_BODY}" | grep -qi "Squid Web UI\|Control Center\|<title>"; then
+    pass_test "Web UI Dashboard page loaded successfully (HTTP 200)."
+else
+    fail_test "Web UI Dashboard page failed to respond (HTTP ${WEBUI_HOME_CODE})."
+fi
+echo ""
+
+echo "=== 2b. Web UI API Endpoints Check ==="
+
+# 1. GET /api/auth/status
+AUTH_STATUS_RES=$(curl -s -m 5 "${WEBUI_URL}/api/auth/status" 2>&1 || echo "{}")
+echo "  GET /api/auth/status -> ${AUTH_STATUS_RES}"
+if echo "${AUTH_STATUS_RES}" | grep -q '"authenticated"'; then
+    pass_test "API /api/auth/status returned valid JSON."
+else
+    fail_test "API /api/auth/status failed."
+fi
+
+# 2. GET /api/devices
+DEVICES_RES=$(curl -s -m 5 "${WEBUI_URL}/api/devices" 2>&1 || echo "{}")
+echo "  GET /api/devices -> ${DEVICES_RES}"
+if echo "${DEVICES_RES}" | grep -q '"devices"'; then
+    pass_test "API /api/devices returned device list."
+else
+    fail_test "API /api/devices failed."
+fi
+
+# 3. GET /api/policies
+POLICIES_RES=$(curl -s -m 5 "${WEBUI_URL}/api/policies" 2>&1 || echo "{}")
+echo "  GET /api/policies -> ${POLICIES_RES}"
+if echo "${POLICIES_RES}" | grep -q '"policies"'; then
+    pass_test "API /api/policies returned device policies."
+else
+    fail_test "API /api/policies failed."
+fi
+
+# 4. GET /api/blocklists
+BLOCKLISTS_RES=$(curl -s -m 5 "${WEBUI_URL}/api/blocklists" 2>&1 || echo "{}")
+echo "  GET /api/blocklists -> ${BLOCKLISTS_RES}"
+if echo "${BLOCKLISTS_RES}" | grep -q '"blocklists"'; then
+    pass_test "API /api/blocklists returned list of blocklists."
+else
+    fail_test "API /api/blocklists failed."
+fi
+
+# 5. GET /download/cert.crt & /download/cert.pem
+CERT_CRT_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/download/cert.crt" 2>&1 || echo "000")
+CERT_PEM_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/download/cert.pem" 2>&1 || echo "000")
+echo "  GET /download/cert.crt -> HTTP ${CERT_CRT_CODE}"
+echo "  GET /download/cert.pem -> HTTP ${CERT_PEM_CODE}"
+if [ "${CERT_CRT_CODE}" = "200" ] || [ "${CERT_PEM_CODE}" = "200" ]; then
+    pass_test "Web UI Certificate Download endpoint verified (HTTP 200)."
+else
+    fail_test "Web UI Certificate Download endpoint returned HTTP ${CERT_CRT_CODE} / ${CERT_PEM_CODE}."
+fi
+echo ""
+
+echo "=== 2c. Web UI Policy Apply & Reload Pipeline Test ==="
+echo "--> Triggering /api/apply to test rules compilation and Docker socket reload..."
+APPLY_RES=$(curl -s -m 5 -X POST "${WEBUI_URL}/api/apply" -H "Content-Type: application/json" 2>&1 || echo "{}")
+echo "  POST /api/apply -> ${APPLY_RES}"
+
+if echo "${APPLY_RES}" | grep -q '"success":\s*true'; then
+    pass_test "Web UI policy apply API executed successfully."
+else
+    fail_test "Web UI policy apply API failed."
+fi
+
+# Verify rules.acl generation inside squid-proxy
+echo ""
+echo "=== Active /etc/squid/configs/rules.acl (vm-ubuntu section) ==="
+RULES_ACL=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy cat /etc/squid/configs/rules.acl" 2>&1 || echo "")
+echo "${RULES_ACL}" | grep -A 25 "vm-ubuntu" || echo "${RULES_ACL}"
+echo ""
+
+# ------------------------------------------------------------------------------
+# STEP 3: TESTING HTTP & HTTPS TRAFFIC INTERCEPTION (CLIENT: vm-ubuntu)
+# ------------------------------------------------------------------------------
+echo ">>> 3. TESTING HTTP & HTTPS TRAFFIC INTERCEPTION (CLIENT: vm-ubuntu)"
 echo "--------------------------------------------------"
 
 test_site() {
@@ -225,109 +328,6 @@ echo ""
 
 wait $TCPDUMP_PID 2>/dev/null || true
 sleep 1
-
-# ------------------------------------------------------------------------------
-# STEP 3: WEB UI COMPREHENSIVE VERIFICATION & API TESTING
-# ------------------------------------------------------------------------------
-echo ">>> 3. SQUID WEB UI FUNCTIONALITY & API VERIFICATION"
-echo "--------------------------------------------------"
-
-WEBUI_URL=""
-for i in $(seq 1 15); do
-    if curl -s -o /dev/null -w "%{http_code}" -m 2 "http://${WEBUI_IP}:3131/api/auth/status" 2>/dev/null | grep -q "200"; then
-        WEBUI_URL="http://${WEBUI_IP}:3131"
-        break
-    elif curl -s -o /dev/null -w "%{http_code}" -m 2 "http://${QNAP_IP}:3131/api/auth/status" 2>/dev/null | grep -q "200"; then
-        WEBUI_URL="http://${QNAP_IP}:3131"
-        break
-    fi
-    sleep 1
-done
-
-if [ -z "${WEBUI_URL}" ]; then
-    WEBUI_URL="http://${WEBUI_IP}:3131"
-fi
-echo "  [*] Target Web UI URL: ${WEBUI_URL}"
-
-echo "=== 3a. Web UI Base Page Access (${WEBUI_URL}/) ==="
-WEBUI_HOME_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/" 2>/dev/null || echo "000")
-WEBUI_HOME_BODY=$(curl -s -m 5 "${WEBUI_URL}/" 2>/dev/null || true)
-echo "  HTTP Response Code: ${WEBUI_HOME_CODE}"
-
-if [ "${WEBUI_HOME_CODE}" = "200" ] && echo "${WEBUI_HOME_BODY}" | grep -qi "Squid Web UI\|Control Center\|<title>"; then
-    pass_test "Web UI Dashboard page loaded successfully (HTTP 200)."
-else
-    fail_test "Web UI Dashboard page failed to respond (HTTP ${WEBUI_HOME_CODE})."
-fi
-echo ""
-
-echo "=== 3b. Web UI API Endpoints Check ==="
-
-# 1. GET /api/auth/status
-AUTH_STATUS_RES=$(curl -s -m 5 "${WEBUI_URL}/api/auth/status" 2>&1 || echo "{}")
-echo "  GET /api/auth/status -> ${AUTH_STATUS_RES}"
-if echo "${AUTH_STATUS_RES}" | grep -q '"authenticated"'; then
-    pass_test "API /api/auth/status returned valid JSON."
-else
-    fail_test "API /api/auth/status failed."
-fi
-
-# 2. GET /api/devices
-DEVICES_RES=$(curl -s -m 5 "${WEBUI_URL}/api/devices" 2>&1 || echo "{}")
-echo "  GET /api/devices -> ${DEVICES_RES}"
-if echo "${DEVICES_RES}" | grep -q '"devices"'; then
-    pass_test "API /api/devices returned device list."
-else
-    fail_test "API /api/devices failed."
-fi
-
-# 3. GET /api/policies
-POLICIES_RES=$(curl -s -m 5 "${WEBUI_URL}/api/policies" 2>&1 || echo "{}")
-echo "  GET /api/policies -> ${POLICIES_RES}"
-if echo "${POLICIES_RES}" | grep -q '"policies"'; then
-    pass_test "API /api/policies returned device policies."
-else
-    fail_test "API /api/policies failed."
-fi
-
-# 4. GET /api/blocklists
-BLOCKLISTS_RES=$(curl -s -m 5 "${WEBUI_URL}/api/blocklists" 2>&1 || echo "{}")
-echo "  GET /api/blocklists -> ${BLOCKLISTS_RES}"
-if echo "${BLOCKLISTS_RES}" | grep -q '"blocklists"'; then
-    pass_test "API /api/blocklists returned list of blocklists."
-else
-    fail_test "API /api/blocklists failed."
-fi
-
-# 5. GET /download/cert.crt & /download/cert.pem
-CERT_CRT_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/download/cert.crt" 2>&1 || echo "000")
-CERT_PEM_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 "${WEBUI_URL}/download/cert.pem" 2>&1 || echo "000")
-echo "  GET /download/cert.crt -> HTTP ${CERT_CRT_CODE}"
-echo "  GET /download/cert.pem -> HTTP ${CERT_PEM_CODE}"
-if [ "${CERT_CRT_CODE}" = "200" ] || [ "${CERT_PEM_CODE}" = "200" ]; then
-    pass_test "Web UI Certificate Download endpoint verified (HTTP 200)."
-else
-    fail_test "Web UI Certificate Download endpoint returned HTTP ${CERT_CRT_CODE} / ${CERT_PEM_CODE}."
-fi
-echo ""
-
-echo "=== 3c. Web UI Policy Apply & Reload Pipeline Test ==="
-echo "--> Triggering /api/apply to test rules compilation and Docker socket reload..."
-APPLY_RES=$(curl -s -m 5 -X POST "${WEBUI_URL}/api/apply" -H "Content-Type: application/json" 2>&1 || echo "{}")
-echo "  POST /api/apply -> ${APPLY_RES}"
-
-if echo "${APPLY_RES}" | grep -q '"success":\s*true'; then
-    pass_test "Web UI policy apply API executed successfully."
-else
-    fail_test "Web UI policy apply API failed."
-fi
-
-# Verify rules.acl generation inside squid-proxy
-echo ""
-echo "=== Active /etc/squid/configs/rules.acl (vm-ubuntu section) ==="
-RULES_ACL=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy cat /etc/squid/configs/rules.acl" 2>&1 || echo "")
-echo "${RULES_ACL}" | grep -A 25 "vm-ubuntu" || echo "${RULES_ACL}"
-echo ""
 
 # ------------------------------------------------------------------------------
 # STEP 4: SQUID MANAGEMENT CLI (squid-mgmt.sh) VERIFICATION
@@ -423,6 +423,11 @@ else
 fi
 
 # YouTube check vs active policy
+YT_IS_BLOCKED=false
+if echo "${OUT_YT_HTTPS}" | grep -qi "Webpage Blocked\|ERR_ACCESS_DENIED" || echo "${OUT_YT_HTTPS}" | grep -q -E '^< HTTP/[12]\.[01] (403|503)'; then
+    YT_IS_BLOCKED=true
+fi
+
 HAS_UNCONDITIONAL_DENY=false
 if echo "${RULES_ACL}" | grep -q "http_access deny.*list_videos_txt" && ! echo "${RULES_ACL}" | grep -q "http_access allow.*list_videos_txt"; then
     HAS_UNCONDITIONAL_DENY=true
@@ -430,17 +435,17 @@ fi
 
 if [ "$HAS_UNCONDITIONAL_DENY" = true ]; then
     echo "  [POLICY] YouTube is currently CONFIGURED TO BE UNCONDITIONALLY BLOCKED in Web UI."
-    if echo "${OUT_YT_HTTPS}" | grep -qi "Webpage Blocked" || echo "${OUT_YT_HTTPS}" | grep -qi "503\|403"; then
+    if [ "$YT_IS_BLOCKED" = true ]; then
         pass_test "YouTube traffic was correctly BLOCKED as defined by policy."
     else
         fail_test "YouTube was NOT blocked despite policy requiring block!"
     fi
 else
     echo "  [POLICY] YouTube is currently ALLOWED (or within an active unblock window) in Web UI."
-    if echo "${OUT_YT_HTTPS}" | grep -qi "HTTP/[12].* [23][0-9][0-9]" || echo "${OUT_YT_HTTPS}" | grep -qi "YouTube" || echo "${YT_ACCESS_LOGS}" | grep -qi "TCP_MISS\|TCP_TUNNEL"; then
-        pass_test "YouTube traffic was correctly ALLOWED as defined by policy & verified in access.log!"
+    if [ "$YT_IS_BLOCKED" = false ] && echo "${OUT_YT_HTTPS}" | grep -q -E '^< HTTP/[12]\.[01] (200|301|302)'; then
+        pass_test "YouTube traffic was correctly ALLOWED (HTTP 200 OK) as defined by policy!"
     else
-        fail_test "YouTube traffic failed to load despite policy allowing it!"
+        fail_test "YouTube traffic failed to load (was BLOCKED or failed) despite policy allowing it!"
     fi
 fi
 
