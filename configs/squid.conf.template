@@ -81,6 +81,10 @@ ssl_bump peek step1
 # Allow transparent SSL bumping for remote upstream certificates
 sslproxy_cert_error allow all
 
+# Bypass SSL bumping (splice raw TLS) for Snapcraft and system update domains
+acl bypass_ssl_bump dstdomain .snapcraft.io .ubuntu.com .canonical.com
+ssl_bump splice bypass_ssl_bump
+
 # Step 2: Bump (decrypt and inspect) connections.
 ssl_bump bump all
 
