@@ -487,29 +487,16 @@ def docker_socket_request(method, path, body=None):
 
 
 def reload_squid():
-    """Trigger squid -k reconfigure via Docker socket API (no docker CLI needed)."""
+    """Trigger Squid ACL reload by sending SIGHUP via Docker socket API."""
     try:
-        # Step 1: Create an exec instance
         status, data = docker_socket_request(
             "POST",
-            f"/containers/{SQUID_CONTAINER_NAME}/exec",
-            {"AttachStdout": True, "AttachStderr": True, "Cmd": ["squid", "-k", "reconfigure"]}
+            f"/containers/{SQUID_CONTAINER_NAME}/kill?signal=HUP"
         )
-        if status not in (200, 201):
-            print(f"Failed to create exec: HTTP {status} {data.decode()}")
-            return
-        exec_id = json.loads(data)["Id"]
-
-        # Step 2: Start the exec instance
-        status2, data2 = docker_socket_request(
-            "POST",
-            f"/exec/{exec_id}/start",
-            {"Detach": False}
-        )
-        if status2 in (200, 204):
-            print("Squid reconfigured successfully via Docker socket API.")
+        if status in (200, 204):
+            print(f"Squid container '{SQUID_CONTAINER_NAME}' successfully reloaded via SIGHUP.")
         else:
-            print(f"Exec start returned HTTP {status2}: {data2.decode()}")
+            print(f"Failed to send SIGHUP to Squid: HTTP {status} {data.decode()}")
     except Exception as e:
         print(f"Failed to reload Squid via Docker socket: {e}")
 
