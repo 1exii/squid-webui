@@ -81,7 +81,12 @@ ssl_bump peek step1
 # Allow transparent SSL bumping for remote upstream certificates
 sslproxy_cert_error allow all
 
-# Bypass SSL bumping (splice raw TLS) for Snapcraft and system update domains
+# Bypass SSL bumping (splice raw TLS) for Snapcraft, Ubuntu, and Canonical domains.
+# WHY: Ubuntu's 'snapd' daemon performs strict cryptographic assertion signature checks
+# and certificate pinning against Canonical servers (api.snapcraft.io). SSL-bumping
+# decrypts TLS with a local proxy certificate, which breaks snapd assertion verification
+# and causes 'snap install' to fail with signature verification errors.
+# Splicing passes the raw, un-intercepted TLS connection directly to Canonical.
 acl bypass_ssl_bump dstdomain .snapcraft.io .ubuntu.com .canonical.com
 ssl_bump splice bypass_ssl_bump
 
