@@ -37,6 +37,12 @@ fi
 # Clean any stale PID files from previous abnormal shutdowns
 rm -f /run/squid.pid /var/run/squid.pid
 
+# Process blocklists into bump_domains.acl, domain_blocklists.acl, and url_blocklists.acl
+if [ -f "/etc/squid/configs/process_blocklists.py" ]; then
+    echo "[entrypoint] Processing blocklists into ACL files..."
+    python3 /etc/squid/configs/process_blocklists.py /etc/squid/block-lists /etc/squid/configs || true
+fi
+
 # 5. Initialize Squid swap cache directories if running for first time
 if [ ! -d "/var/cache/squid/0F/FF" ]; then
     echo "[entrypoint] Initializing cache directories (squid -z)..."
@@ -52,10 +58,12 @@ echo "[entrypoint] Setting up container iptables REDIRECT rules (legacy + nft)..
 iptables-legacy -t nat -F PREROUTING 2>/dev/null || true
 iptables-legacy -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 3129 2>/dev/null || true
 iptables-legacy -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 3130 2>/dev/null || true
+iptables-legacy -t nat -A PREROUTING -p tcp --dport 4070 -j REDIRECT --to-ports 3130 2>/dev/null || true
 
 iptables-nft -t nat -F PREROUTING 2>/dev/null || true
 iptables-nft -t nat -A PREROUTING -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 3129 2>/dev/null || true
 iptables-nft -t nat -A PREROUTING -p tcp -m tcp --dport 443 -j REDIRECT --to-ports 3130 2>/dev/null || true
+iptables-nft -t nat -A PREROUTING -p tcp -m tcp --dport 4070 -j REDIRECT --to-ports 3130 2>/dev/null || true
 
 echo "[entrypoint] Starting Squid..."
 rm -f /run/squid.pid /var/run/squid.pid

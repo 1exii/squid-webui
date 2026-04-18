@@ -25,11 +25,12 @@ https_port 3130 intercept ssl-bump generate-host-certificates=on dynamic_cert_me
 acl localnet src 192.168.0.0/16
 
 # Define standard ports for SSL/TLS and other safe protocols.
-acl SSL_ports port 443 3130
+acl SSL_ports port 443 3130 4070
 acl Safe_ports port 80          # http
 acl Safe_ports port 21          # ftp
 acl Safe_ports port 443         # https
 acl Safe_ports port 3130        # transparent ssl-bump
+acl Safe_ports port 4070        # spotify ap
 acl Safe_ports port 70          # gopher
 acl Safe_ports port 210         # wais
 acl Safe_ports port 1025-65535  # unregistered ports
@@ -41,6 +42,15 @@ acl CONNECT method CONNECT
 
 # -- 2. BLOCKLIST CONFIGURATION --
 
+# 1. Domains requiring SSL Bumping (only domains with path-based URL rules requiring deep inspection)
+acl bump_domains dstdomain "/etc/squid/configs/bump_domains.acl"
+
+# 2. Plain domain blocklists (blocked at SNI level without SSL Bumping)
+acl domain_blocklists dstdomain "/etc/squid/configs/domain_blocklists.acl"
+
+# 3. Path-specific URL blocklist rules (applied after SSL Bumping)
+include /etc/squid/configs/url_blocklists.acl
+
 # -- 3. HTTP ACCESS RULES --
 
 # 1. Allow localhost and internal helper requests (AIA cert downloads)
@@ -49,17 +59,18 @@ http_access allow localhost
 # 2. Dynamic Conditional Access Rules (Managed by Web UI)
 include /etc/squid/configs/rules.acl
 
-# 3. Block access to domains in the blocklist.
+# 3. Block access to plain domain blocklists
+http_access deny domain_blocklists
 
 
-# 3. Deny requests to non-safe ports.
+# 4. Deny requests to non-safe ports.
 http_access deny !Safe_ports
 http_access deny CONNECT !SSL_ports
 
-# 4. Allow access from your local network.
+# 5. Allow access from your local network.
 http_access allow localnet
 
-# 5. Deny all other access to this proxy.
+# 6. Deny all other access to this proxy.
 http_access deny all
 
 # Prevent proxy loop by forcing DNS resolution of Host header/SNI when destination IP is local proxy IP
@@ -81,17 +92,11 @@ ssl_bump peek step1
 # Allow transparent SSL bumping for remote upstream certificates
 sslproxy_cert_error allow all
 
-# Bypass SSL bumping (splice raw TLS) for Snapcraft, Ubuntu, and Canonical domains.
-# WHY: Ubuntu's 'snapd' daemon performs strict cryptographic assertion signature checks
-# and certificate pinning against Canonical servers (api.snapcraft.io). SSL-bumping
-# decrypts TLS with a local proxy certificate, which breaks snapd assertion verification
-# and causes 'snap install' to fail with signature verification errors.
-# Splicing passes the raw, un-intercepted TLS connection directly to Canonical.
-acl bypass_ssl_bump dstdomain .snapcraft.io .ubuntu.com .canonical.com
-ssl_bump splice bypass_ssl_bump
+# Step 2: Bump ONLY domains that have URL-path blocking rules requiring deep inspection (e.g. steamcommunity.com for /market)
+ssl_bump bump bump_domains
 
-# Step 2: Bump (decrypt and inspect) connections.
-ssl_bump bump all
+# Step 3: Splice by default for all other domains (including plain domain blocklists & allowed sites)
+ssl_bump splice all
 
 # -- 5. CACHE AND LOGGING --
 

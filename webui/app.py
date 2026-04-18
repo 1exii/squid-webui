@@ -390,6 +390,14 @@ def compile_device_policies_acls(policies):
     with open(RULES_ACL_PATH, "w") as f:
         f.write("\n".join(acl_lines) + "\n")
 
+    proc_script = os.path.join(SQUID_CONFIG_DIR, "process_blocklists.py")
+    if os.path.exists(proc_script):
+        try:
+            import subprocess
+            subprocess.run([sys.executable, proc_script, SQUID_BLOCKLIST_DIR, SQUID_CONFIG_DIR], check=False)
+        except Exception as e:
+            print(f"Error running process_blocklists.py: {e}")
+
     reload_squid()
 
 

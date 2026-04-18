@@ -1,0 +1,13 @@
+# Auto-generated: Path-specific URL blocklist rules (requires SSL Bumping)
+acl path_dom_1 dstdomain opera.com .opera.com
+acl path_url_1 urlpath_regex -i ^/developer/extensions
+http_access deny path_dom_1 path_url_1
+
+acl path_dom_2 dstdomain steamcommunity.com .steamcommunity.com
+acl path_url_2 urlpath_regex -i ^/market
+http_access deny path_dom_2 path_url_2
+
+acl path_dom_3 dstdomain roblox.com .roblox.com
+acl path_url_3 urlpath_regex -i ^/upgrades/robux
+http_access deny path_dom_3 path_url_3
+

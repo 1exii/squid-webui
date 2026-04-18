@@ -58,7 +58,7 @@
                     <h4>1. Architecture &amp; HSTS Prevention</h4>
                     <p>This environment uses <strong>Transparent Network Interception</strong>. Windows clients do <em>NOT</em> require manual proxy configurations.</p>
                     <ul>
-                        <li><strong>Router Redirection:</strong> The ASUS Router detects HTTP (80) &amp; HTTPS (443) traffic from registered client IPs and redirects it to the Squid proxy.</li>
+                        <li><strong>Router Redirection:</strong> The ASUS Router detects HTTP (80), HTTPS (443), &amp; Spotify AP (4070) traffic from registered client IPs and redirects it to the Squid proxy.</li>
                         <li><strong>SSL Bumping:</strong> Squid inspects TLS traffic and dynamically generates site-specific certificates signed by the internal Root CA (<code>squid.local</code>).</li>
                         <li><strong>HSTS Prevention:</strong> Installing the Root CA into the <strong>Local Machine Trusted Root Store</strong> ensures Edge, Chrome, and system services recognize <code>squid.local</code>.</li>
                     </ul>

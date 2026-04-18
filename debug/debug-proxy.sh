@@ -313,7 +313,13 @@ echo ""
 OUT_YT_HTTPS=$(test_site "YouTube HTTPS" "https://www.youtube.com")
 echo ""
 
-# 4. STRICT SSL CERTIFICATE TRUST TEST FROM CLIENT (WITHOUT -k)
+# 4. DEEP INSPECTION PATH RULE TESTS (steamcommunity.com/market vs steamcommunity.com)
+OUT_STEAM_MARKET=$(test_site "Steam Community Market (Blocked Path)" "https://steamcommunity.com/market")
+echo ""
+OUT_STEAM_BASE=$(test_site "Steam Community Home (Allowed Base Domain)" "https://steamcommunity.com/")
+echo ""
+
+# 5. STRICT SSL CERTIFICATE TRUST TEST FROM CLIENT (WITHOUT -k)
 echo "--------------------------------------------------"
 echo "[Testing] Strict SSL Certificate Trust Verification on Client (without -k)"
 echo "--------------------------------------------------"
@@ -424,7 +430,7 @@ fi
 
 # YouTube check vs active policy
 YT_IS_BLOCKED=false
-if echo "${OUT_YT_HTTPS}" | grep -qi "Webpage Blocked\|ERR_ACCESS_DENIED" || echo "${OUT_YT_HTTPS}" | grep -q -E '^< HTTP/[12]\.[01] (403|503)'; then
+if echo "${OUT_YT_HTTPS}" | grep -qi "Webpage Blocked\|ERR_ACCESS_DENIED\|wrong version number\|TLS connect error" || echo "${OUT_YT_HTTPS}" | grep -q -E '^< HTTP/[12]\.[01] (403|503)'; then
     YT_IS_BLOCKED=true
 fi
 
@@ -447,6 +453,44 @@ else
     else
         fail_test "YouTube traffic failed to load (was BLOCKED or failed) despite policy allowing it!"
     fi
+fi
+
+# Deep Inspection URL Path check (Steam Community Market vs Base)
+if echo "${OUT_STEAM_MARKET}" | grep -qi "Webpage Blocked\|ERR_ACCESS_DENIED\|wrong version number\|403 Access Denied\|403 Forbidden"; then
+    pass_test "Deep Inspection Path Rule: steamcommunity.com/market was correctly BLOCKED (HTTP 403 / Block Page)."
+else
+    fail_test "Deep Inspection Path Rule: steamcommunity.com/market failed to block!"
+fi
+
+if echo "${OUT_STEAM_BASE}" | grep -qi "^< HTTP/\|<title>\|200 OK\|302 Found"; then
+    pass_test "Selective Bumping Path Exception: steamcommunity.com (base domain) remains ACCESSIBLE."
+else
+    warn_test "steamcommunity.com (base domain) connection check did not complete."
+fi
+
+# Selective Bumping ACL check inside container
+BUMP_ACL_CONTENT=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy cat /etc/squid/configs/bump_domains.acl 2>/dev/null" || true)
+if echo "${BUMP_ACL_CONTENT}" | grep -q "steamcommunity.com" && ! echo "${BUMP_ACL_CONTENT}" | grep -q "pornhub.com"; then
+    pass_test "Selective Bumping ACL Verification: bump_domains.acl contains ONLY path-rule domains (steamcommunity.com) and NOT plain blocklists (pornhub.com)."
+else
+    fail_test "Selective Bumping ACL Verification FAILED! bump_domains.acl missing path domain or contains plain domain."
+fi
+
+# Spotify Port 4070 redirection check
+ROUTER_SQUID_MARK=$(ssh ${ROUTER_SSH_OPTS} "${ROUTER_SERVER}" "iptables -t mangle -L SQUID_MARK 2>/dev/null" || true)
+CONTAINER_PREROUTING=$(ssh "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} exec squid-proxy iptables -t nat -L PREROUTING 2>/dev/null" || true)
+if echo "${ROUTER_SQUID_MARK}" | grep -q "4070" && echo "${CONTAINER_PREROUTING}" | grep -q "4070.*3130"; then
+    pass_test "Spotify Port 4070 Redirection: Router mangle & container NAT REDIRECT rules active."
+else
+    fail_test "Spotify Port 4070 Redirection: Missing port 4070 iptables rules on router or container!"
+fi
+
+# YouTube QUIC router rules check
+ROUTER_FORWARD=$(ssh ${ROUTER_SSH_OPTS} "${ROUTER_SERVER}" "iptables -L FORWARD -n 2>/dev/null" || true)
+if echo "${ROUTER_FORWARD}" | grep -q "youtube_quic" || echo "${ROUTER_FORWARD}" | grep -q "142.250."; then
+    pass_test "YouTube QUIC Protocol Support: Router FORWARD chain ACCEPT rules for YouTube video IPs active."
+else
+    fail_test "YouTube QUIC Protocol Support: Router FORWARD chain rule missing!"
 fi
 
 echo ""
