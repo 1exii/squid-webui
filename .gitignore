@@ -6,5 +6,6 @@ __pycache__/
 debug/*.log
 debug/*.txt
 debug/logs/
-configs/domains_*.acl
+configs/*.acl
+
 

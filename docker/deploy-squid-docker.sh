@@ -95,9 +95,7 @@ function create_squid() {
     if [ -f "${SQUID_DIR}/configs/process_blocklists.py" ]; then
         python3 "${SQUID_DIR}/configs/process_blocklists.py" "${SQUID_DIR}/block-lists" "${SQUID_DIR}/configs"
         scp "${SQUID_DIR}/configs/process_blocklists.py" \
-            "${SQUID_DIR}/configs/bump_domains.acl" \
-            "${SQUID_DIR}/configs/domain_blocklists.acl" \
-            "${SQUID_DIR}/configs/url_blocklists.acl" \
+            "${SQUID_DIR}/configs/"*.acl \
             "$QNAP_SERVER:${REMOTE_BASE}/configs/" 2>/dev/null || true
     fi
     if [ -d "${SQUID_DIR}/configs/errors" ]; then
