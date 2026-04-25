@@ -42,14 +42,8 @@ acl CONNECT method CONNECT
 
 # -- 2. BLOCKLIST CONFIGURATION --
 
-# 1. Domains requiring SSL Bumping (only domains with path-based URL rules requiring deep inspection)
+# Domains requiring SSL Bumping (only domains with path-based URL rules requiring deep inspection)
 acl bump_domains dstdomain "/etc/squid/configs/bump_domains.acl"
-
-# 2. Plain domain blocklists (blocked at SNI level without SSL Bumping)
-acl domain_blocklists dstdomain "/etc/squid/configs/domain_blocklists.acl"
-
-# 3. Path-specific URL blocklist rules (applied after SSL Bumping)
-include /etc/squid/configs/url_blocklists.acl
 
 # -- 3. HTTP ACCESS RULES --
 
@@ -58,9 +52,6 @@ http_access allow localhost
 
 # 2. Dynamic Conditional Access Rules (Managed by Web UI)
 include /etc/squid/configs/rules.acl
-
-# 3. Block access to plain domain blocklists
-http_access deny domain_blocklists
 
 
 # 4. Deny requests to non-safe ports.
