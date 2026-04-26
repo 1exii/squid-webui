@@ -93,10 +93,7 @@ function create_squid() {
     ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/configs/rules.acl"
     scp "$LOCAL_CONF_TEMPLATE" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
     if [ -f "${SQUID_DIR}/configs/process_blocklists.py" ]; then
-        python3 "${SQUID_DIR}/configs/process_blocklists.py" "${SQUID_DIR}/block-lists" "${SQUID_DIR}/configs"
-        scp "${SQUID_DIR}/configs/process_blocklists.py" \
-            "${SQUID_DIR}/configs/"*.acl \
-            "$QNAP_SERVER:${REMOTE_BASE}/configs/" 2>/dev/null || true
+        scp "${SQUID_DIR}/configs/process_blocklists.py" "$QNAP_SERVER:${REMOTE_BASE}/configs/" 2>/dev/null || true
     fi
     if [ -d "${SQUID_DIR}/configs/errors" ]; then
         scp -r "${SQUID_DIR}/configs/errors/"* "$QNAP_SERVER:${REMOTE_BASE}/configs/errors/" 2>/dev/null || true
