@@ -312,20 +312,149 @@ def merge_today_into_weekly(unblock_weekly, unblock_today):
     return merged
 
 
-def get_parsed_blocklists():
-    """Import and execute process_blocklists to get parsed clean domains and path rules per blocklist."""
-    proc_script_dir = SQUID_CONFIG_DIR
-    if proc_script_dir not in sys.path:
-        sys.path.insert(0, proc_script_dir)
-    repo_configs = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "configs"))
-    if repo_configs not in sys.path:
-        sys.path.insert(0, repo_configs)
+def deduplicate_domains(domains):
+    """
+    Deduplicates a collection of domain strings for Squid dstdomain ACLs.
+
+    Squid dstdomain matching rules:
+    - '.example.com' matches 'example.com' and all subdomains ('*.example.com').
+    - 'example.com' matches ONLY exact 'example.com'.
+
+    Subsumption / Duplication rules:
+    1. If '.example.com' exists, 'example.com' is redundant and causes Squid duplicate domain errors/crashes.
+    2. If '.example.com' exists, any '.sub.example.com' or 'sub.example.com' is subsumed and redundant.
+    3. Exact string duplicates are removed.
+    """
+    cleaned = set()
+    for d in domains:
+        d = d.strip()
+        if d:
+            cleaned.add(d)
+
+    wildcard_bases = {}
+    for d in cleaned:
+        if d.startswith("."):
+            base = d.lstrip(".")
+            if base:
+                wildcard_bases[d] = base
+
+    result = set()
+    for d in cleaned:
+        if d.startswith("."):
+            base = d.lstrip(".")
+            subsumed = False
+            for w_domain, w_base in wildcard_bases.items():
+                if w_domain != d:
+                    if base == w_base or base.endswith("." + w_base):
+                        if len(w_base) < len(base) or (len(w_base) == len(base) and w_domain < d):
+                            subsumed = True
+                            break
+            if not subsumed:
+                result.add(d)
+        else:
+            subsumed = False
+            for w_domain, w_base in wildcard_bases.items():
+                if d == w_base or d.endswith("." + w_base):
+                    subsumed = True
+                    break
+            if not subsumed:
+                result.add(d)
+
+    return sorted(result)
+
+
+def parse_blocklists(blocklist_dir, output_dir):
+    """
+    Parse raw blocklist files in blocklist_dir, generate clean per-blocklist domain ACL files
+    and bump_domains.acl, and return structured metadata (domains + URL path rules).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    parsed_blocklists = {}
+    all_bump_domains = set()
+
+    if not os.path.exists(blocklist_dir):
+        return parsed_blocklists
+
     try:
-        from process_blocklists import process_blocklists
-        return process_blocklists(SQUID_BLOCKLIST_DIR, SQUID_CONFIG_DIR)
+        for filename in sorted(os.listdir(blocklist_dir)):
+            if not filename.endswith(".txt"):
+                continue
+
+            filepath = os.path.join(blocklist_dir, filename)
+            plain_domains = set()
+            path_rules = []
+
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+
+                        if "/" in line:
+                            # Entry contains URL path (e.g. steamcommunity.com/market)
+                            parts = line.split("/", 1)
+                            raw_domain = parts[0].strip()
+                            path = "/" + parts[1].strip()
+
+                            clean_domain = raw_domain.lstrip(".")
+                            if not clean_domain:
+                                continue
+
+                            bump_domain = f".{clean_domain}"
+                            all_bump_domains.add(bump_domain)
+                            path_rules.append({
+                                "raw_domain": raw_domain,
+                                "clean_domain": clean_domain,
+                                "bump_domain": bump_domain,
+                                "path": path
+                            })
+                        else:
+                            # Plain domain entry
+                            plain_domains.add(line)
+            except Exception as e:
+                print(f"Error parsing blocklist file {filepath}: {e}")
+
+            # Deduplicate plain domains for this specific blocklist
+            dedup_plain = deduplicate_domains(plain_domains)
+
+            # Write per-blocklist clean domain ACL file
+            domain_acl_filename = f"domains_{filename}.acl"
+            domain_acl_file = os.path.join(output_dir, domain_acl_filename)
+            try:
+                with open(domain_acl_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Auto-generated clean domain blocklist for {filename}\n")
+                    for dom in dedup_plain:
+                        f.write(f"{dom}\n")
+            except Exception as e:
+                print(f"Error writing {domain_acl_file}: {e}")
+
+            parsed_blocklists[filename] = {
+                "domain_acl_file": domain_acl_file,
+                "domain_acl_filename": domain_acl_filename,
+                "plain_domains": dedup_plain,
+                "path_rules": path_rules
+            }
     except Exception as e:
-        print(f"Error running process_blocklists integration: {e}")
-        return {}
+        print(f"Error reading blocklist directory {blocklist_dir}: {e}")
+
+    # Write overall bump_domains.acl
+    dedup_bump_domains = deduplicate_domains(all_bump_domains)
+    bump_file = os.path.join(output_dir, "bump_domains.acl")
+    try:
+        with open(bump_file, "w", encoding="utf-8") as f:
+            f.write("# Auto-generated: Domains requiring SSL Bumping for deep URL inspection\n")
+            for domain in dedup_bump_domains:
+                f.write(f"{domain}\n")
+    except Exception as e:
+        print(f"Error writing {bump_file}: {e}")
+
+    return parsed_blocklists
+
+
+def get_parsed_blocklists():
+    """Get parsed clean domains and path rules per blocklist."""
+    return parse_blocklists(SQUID_BLOCKLIST_DIR, SQUID_CONFIG_DIR)
 
 
 def compile_device_policies_acls(policies):
