@@ -230,7 +230,17 @@ else
 fi
 echo ""
 
-echo "=== 2c. Web UI Policy Apply & Reload Pipeline Test ==="
+echo "=== 2c. Web UI Policy Save & Apply Pipeline Test ==="
+echo "--> Triggering POST /api/policies to test policy save and compilation..."
+POST_POLICIES_RES=$(curl -s -m 5 -X POST "${WEBUI_URL}/api/policies" -H "Content-Type: application/json" -d '{"policies":{}}' 2>&1 || echo "{}")
+echo "  POST /api/policies -> ${POST_POLICIES_RES}"
+
+if echo "${POST_POLICIES_RES}" | grep -q '"success":\s*true'; then
+    pass_test "Web UI policy save API (POST /api/policies) executed successfully."
+else
+    fail_test "Web UI policy save API (POST /api/policies) failed."
+fi
+
 echo "--> Triggering /api/apply to test rules compilation and Docker socket reload..."
 APPLY_RES=$(curl -s -m 5 -X POST "${WEBUI_URL}/api/apply" -H "Content-Type: application/json" 2>&1 || echo "{}")
 echo "  POST /api/apply -> ${APPLY_RES}"
