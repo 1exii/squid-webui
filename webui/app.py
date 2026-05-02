@@ -828,27 +828,35 @@ def update_policies():
     if not is_authenticated():
         return jsonify({"error": "Unauthorized"}), 401
 
-    data = request.json or {}
-    policies = load_device_policies()
+    try:
+        data = request.json or {}
+        policies = load_device_policies()
 
-    if "ip" in data:
-        ip = data["ip"]
-        new_pol = {
-            "ip": ip,
-            "hostname": data.get("hostname", ip),
-            "always_block": data.get("always_block", []),
-            "default_block": data.get("default_block", [])
-        }
-        policies[ip] = ensure_policy_schema(new_pol)
-    elif "policies" in data:
-        raw = data["policies"]
-        policies = {}
-        for ip, pol in raw.items():
-            pol["ip"] = ip
-            policies[ip] = ensure_policy_schema(pol)
+        if "ip" in data:
+            ip = data["ip"]
+            new_pol = {
+                "ip": ip,
+                "hostname": data.get("hostname", ip),
+                "always_block": data.get("always_block", []),
+                "default_block": data.get("default_block", [])
+            }
+            policies[ip] = ensure_policy_schema(new_pol)
+        elif "policies" in data:
+            raw = data["policies"]
+            policies = {}
+            if isinstance(raw, dict):
+                for ip, pol in raw.items():
+                    if isinstance(pol, dict):
+                        pol["ip"] = ip
+                        policies[ip] = ensure_policy_schema(pol)
 
-    save_device_policies(policies)
-    return jsonify({"success": True, "policies": policies})
+        save_device_policies(policies)
+        return jsonify({"success": True, "policies": policies})
+    except Exception as e:
+        print(f"Error in update_policies API: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/apply", methods=["POST"])
@@ -856,9 +864,15 @@ def apply_rules_api():
     if not is_authenticated():
         return jsonify({"error": "Unauthorized"}), 401
 
-    policies = load_device_policies()
-    compile_device_policies_acls(policies)
-    return jsonify({"success": True, "message": "Squid rules applied and service reloaded successfully."})
+    try:
+        policies = load_device_policies()
+        compile_device_policies_acls(policies)
+        return jsonify({"success": True, "message": "Squid rules applied and service reloaded successfully."})
+    except Exception as e:
+        print(f"Error in apply_rules_api: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
 @app.route("/api/rules", methods=["GET"])

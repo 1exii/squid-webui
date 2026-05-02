@@ -942,12 +942,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ policies: devicePolicies })
             });
-            if (!saveRes.ok) throw new Error('Save failed');
+            const saveData = await saveRes.json().catch(() => ({}));
+            if (!saveRes.ok || saveData.success === false) {
+                throw new Error(saveData.error || saveData.message || `Save failed (HTTP ${saveRes.status})`);
+            }
             const applyRes  = await fetch('/api/apply', { method: 'POST' });
-            const applyData = await applyRes.json();
-            saveStatusText.textContent = applyRes.ok && applyData.success
+            const applyData = await applyRes.json().catch(() => ({}));
+            saveStatusText.textContent = applyRes.ok && applyData.success !== false
                 ? '✅ Policies applied — Squid reloaded successfully!'
-                : `❌ Apply failed: ${applyData.message || 'Unknown error'}`;
+                : `❌ Apply failed: ${applyData.message || applyData.error || 'Unknown error'}`;
         } catch (err) {
             saveStatusText.textContent = `❌ Error: ${err.message}`;
         } finally {
