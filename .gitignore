@@ -7,5 +7,6 @@ debug/*.log
 debug/*.txt
 debug/logs/
 configs/*.acl
+!configs/bump_domains.acl
 
 

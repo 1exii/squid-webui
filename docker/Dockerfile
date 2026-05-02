@@ -14,7 +14,8 @@ RUN apt-get update && \
         procps \
         curl \
         netcat-traditional \
-        ca-certificates && \
+        ca-certificates \
+        python3 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh

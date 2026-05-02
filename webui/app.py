@@ -366,12 +366,11 @@ def deduplicate_domains(domains):
 
 def parse_blocklists(blocklist_dir, output_dir):
     """
-    Parse raw blocklist files in blocklist_dir, generate clean per-blocklist domain ACL files
-    and bump_domains.acl, and return structured metadata (domains + URL path rules).
+    Parse raw blocklist files in blocklist_dir, generate clean per-blocklist domain ACL files,
+    and return structured metadata (domains + URL path rules).
     """
     os.makedirs(output_dir, exist_ok=True)
     parsed_blocklists = {}
-    all_bump_domains = set()
 
     if not os.path.exists(blocklist_dir):
         return parsed_blocklists
@@ -403,7 +402,6 @@ def parse_blocklists(blocklist_dir, output_dir):
                                 continue
 
                             bump_domain = f".{clean_domain}"
-                            all_bump_domains.add(bump_domain)
                             path_rules.append({
                                 "raw_domain": raw_domain,
                                 "clean_domain": clean_domain,
@@ -438,17 +436,6 @@ def parse_blocklists(blocklist_dir, output_dir):
             }
     except Exception as e:
         print(f"Error reading blocklist directory {blocklist_dir}: {e}")
-
-    # Write overall bump_domains.acl
-    dedup_bump_domains = deduplicate_domains(all_bump_domains)
-    bump_file = os.path.join(output_dir, "bump_domains.acl")
-    try:
-        with open(bump_file, "w", encoding="utf-8") as f:
-            f.write("# Auto-generated: Domains requiring SSL Bumping for deep URL inspection\n")
-            for domain in dedup_bump_domains:
-                f.write(f"{domain}\n")
-    except Exception as e:
-        print(f"Error writing {bump_file}: {e}")
 
     return parsed_blocklists
 

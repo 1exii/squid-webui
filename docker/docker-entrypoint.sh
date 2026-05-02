@@ -37,10 +37,10 @@ fi
 # Clean any stale PID files from previous abnormal shutdowns
 rm -f /run/squid.pid /var/run/squid.pid
 
-# Process blocklists into bump_domains.acl, domain_blocklists.acl, and url_blocklists.acl
-if [ -f "/etc/squid/configs/process_blocklists.py" ]; then
-    echo "[entrypoint] Processing blocklists into ACL files..."
-    python3 /etc/squid/configs/process_blocklists.py /etc/squid/block-lists /etc/squid/configs || true
+# Dynamically generate bump_domains.acl from raw blocklist files on container startup
+if [ -f "/etc/squid/configs/generate_bump_domains.py" ]; then
+    echo "[entrypoint] Generating /etc/squid/configs/bump_domains.acl..."
+    python3 /etc/squid/configs/generate_bump_domains.py /etc/squid/block-lists /etc/squid/configs/bump_domains.acl || true
 fi
 
 # 5. Initialize Squid swap cache directories if running for first time

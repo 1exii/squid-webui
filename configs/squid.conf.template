@@ -83,10 +83,13 @@ ssl_bump peek step1
 # Allow transparent SSL bumping for remote upstream certificates
 sslproxy_cert_error allow all
 
-# Step 2: Bump ONLY domains that have URL-path blocking rules requiring deep inspection (e.g. steamcommunity.com for /market)
+# Static ACL configuration for SSL Bumping (configured via /etc/squid/configs/bump_domains.acl)
+acl bump_domains dstdomain "/etc/squid/configs/bump_domains.acl"
+
+# Step 2: Bump static bump_domains list
 ssl_bump bump bump_domains
 
-# Step 3: Splice by default for all other domains (including plain domain blocklists & allowed sites)
+# Step 3: Splice all other domains by default (raw passthrough)
 ssl_bump splice all
 
 # -- 5. CACHE AND LOGGING --
