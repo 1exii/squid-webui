@@ -7,7 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY app.py .
-COPY process_blocklists.py .
 COPY devices.list .
 COPY templates/ templates/
 COPY static/ static/
