@@ -63,14 +63,17 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
   - Automatically updates tabs whenever `devices.list` is edited and the Web UI is redeployed.
 - **Blocker-Lists Checkbox Selection (Before Schedule Matrix):**
   - Displayed before the schedule table.
-  - Allows selecting which domain blocklists (`social.txt`, `gaming.txt`, `streaming.txt`, `adult.txt`, etc.) will be active for the device during blocked time slots.
+  - Allows selecting which domain blocklists (`socialmedia.txt`, `gaming.txt`, `videos.txt`, `adult.txt`, etc.) will be active for the device during blocked time slots.
+  - Blocklist files (`block-lists/*.txt`) are dynamically parsed by `parse_blocklists()` into clean `dstdomain` ACLs (`domains_<bl>.acl`) and URL path regex ACLs (`urlpath_regex`).
 - **Interactive 30-Minute Weekly Schedule Matrix:**
   - **Grid Format:** 7 columns (`Sun`, `Mon`, `Tue`, `Wed`, `Thu`, `Fri`, `Sat`) x 48 rows (30-minute intervals from `00:00 - 00:30` to `23:30 - 00:00`).
   - **Mouse Drag Selection:** Click and drag across grid cells to visually set time slots as Blocked (Red gradient `🚫`) or Allowed (Translucent).
   - **Row & Column Toggles:** Click any day header or time slot header to toggle full columns or rows instantly.
   - **Quick Presets:** One-click presets for `Block All`, `Allow All`, `Night (10PM-7AM)`, `School (8AM-4PM)`, and `Weekends`.
-- **One-Click Apply & Hot-Reload (After Schedule Matrix):**
-  - Prominent "Apply Configuration to Squid Proxy" button converts all active device policies into Squid ACL statements inside `rules.acl` and triggers container reconfiguration (`squid -k reconfigure`).
+- **One-Click Save & Apply Pipeline:**
+  - Prominent "Save & Apply" button saves device policies via `POST /api/policies`, compiles per-device conditional ACL rules into `rules.acl`, and triggers Squid reload via Docker Socket SIGHUP signaling (`POST /api/apply`).
+- **Decoupled Global SSL Bumping (`bump_domains.acl`):**
+  - Global SSL Bumping configuration is decoupled from Web UI and managed by `configs/generate_bump_domains.py` during Squid proxy container deployment and startup.
 
 ### 3.3 Security & Authentication
 - **NAS Credential Verification:** Checks submitted admin passwords against mounted QNAP shadow password hashes (`md5_crypt`, `sha512_crypt`, `sha256_crypt`) with paramiko SSH fallback.
@@ -88,9 +91,10 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 | `/api/devices` | `GET` | Admin | Returns list of devices parsed from `devices.list`. |
 | `/api/blocklists` | `GET` | Admin | Lists available blocklist category files. |
 | `/api/policies` | `GET` | Admin | Returns all saved per-device policies & 30-min schedule matrices. |
-| `/api/policies` | `POST` | Admin | Saves/updates per-device blocklist & 30-min matrix policy. |
-| `/api/apply` | `POST` | Admin | Compiles all device policies to `rules.acl` and reloads Squid daemon. |
+| `/api/policies` | `POST` | Admin | Saves per-device policies, compiles clean `domains_<bl>.acl` files and `rules.acl`. |
+| `/api/apply` | `POST` | Admin | Triggers Squid reload via Docker daemon Unix socket (`SIGHUP` signal to `squid-proxy`). |
 | `/download/cert.<ext>` | `GET` | Public | Downloads Root CA certificate (`.crt` or `.pem`). |
+| `/download/install-ubuntu.sh` | `GET` | Public | Automated CA installation shell script for Ubuntu Linux clients. |
 
 ---
 
