@@ -90,8 +90,11 @@ function create_squid() {
 
     # Sync config, errors, and certs before starting the container
     echo "  [*] Syncing squid.conf and configs to QNAP..."
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/configs/rules.acl"
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/configs/rules.acl ${REMOTE_BASE}/configs/ssl_bump.acl"
     scp "$LOCAL_CONF_TEMPLATE" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
+    if [ -f "${SQUID_DIR}/configs/ssl_bump.acl" ]; then
+        scp "${SQUID_DIR}/configs/ssl_bump.acl" "$QNAP_SERVER:${REMOTE_BASE}/configs/" 2>/dev/null || true
+    fi
     if [ -f "${SQUID_DIR}/configs/generate_bump_domains.py" ]; then
         scp "${SQUID_DIR}/configs/generate_bump_domains.py" "$QNAP_SERVER:${REMOTE_BASE}/configs/" 2>/dev/null || true
     fi
@@ -123,6 +126,7 @@ function create_squid() {
             -e TZ="$TIMEZONE" \
             -v "${REMOTE_BASE}/configs/squid.conf:/etc/squid/squid.conf:ro" \
             -v "${REMOTE_BASE}/configs/rules.acl:/etc/squid/configs/rules.acl:ro" \
+            -v "${REMOTE_BASE}/configs/ssl_bump.acl:/etc/squid/configs/ssl_bump.acl:ro" \
             -v "${REMOTE_BASE}/configs:/etc/squid/configs" \
             -v "${REMOTE_BASE}/certs:/etc/squid/certs:ro" \
             -v "${REMOTE_BASE}/block-lists:/etc/squid/block-lists:ro" \
@@ -153,7 +157,7 @@ function create_webui() {
     fi
 
     # Sync proxy-hosts.conf and devices.list to squid-proxy directory if present
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router && touch ${REMOTE_SQUID_BASE}/configs/rules.acl"
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router && touch ${REMOTE_SQUID_BASE}/configs/rules.acl ${REMOTE_SQUID_BASE}/configs/ssl_bump.acl"
     
     ssh "$QNAP_SERVER" "rm -f ${REMOTE_SQUID_BASE}/router/proxy-hosts.conf ${REMOTE_SQUID_BASE}/configs/devices.list"
     if [ -f "${SQUID_DIR}/router/proxy-hosts.conf" ]; then

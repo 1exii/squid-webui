@@ -8,5 +8,6 @@ debug/*.txt
 debug/logs/
 configs/*.acl
 !configs/bump_domains.acl
+!configs/ssl_bump.acl
 
 

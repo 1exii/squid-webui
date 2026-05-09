@@ -917,6 +917,14 @@ document.addEventListener('DOMContentLoaded', () => {
             lines.push(`http_access deny ${srcAcl} ${blAcl}`, '');
         });
 
+        if (allLists.length) {
+            lines.push('# ── Dynamic SSL Bump (Intercept blocked sites for HTML block page) ──');
+            allLists.forEach(bl => {
+                lines.push(`ssl_bump bump ${srcAcl} list_${bl.replace(/[.\-]/g,'_')}`);
+            });
+            lines.push('');
+        }
+
         rulesPreviewTextbox.value = lines.join('\n');
     }
 

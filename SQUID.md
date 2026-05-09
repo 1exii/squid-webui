@@ -17,8 +17,8 @@ The architecture is divided into **3 distinct configuration layers**:
 │ LAYER 1: Static Core Configuration (squid.conf.template)                                         │
 │ • Proxy ports (3128 explicit, 3129 HTTP intercept, 3130 HTTPS ssl-bump intercept)                 │
 │ • Core safety ACLs (SSL_ports, Safe_ports, localnet)                                            │
-│ • Static SSL Bumping policy (ssl_bump splice bypass_domains, ssl_bump bump bump_domains)        │
-│ • Master includes: include /etc/squid/configs/rules.acl                                          │
+│ • Static SSL Bumping workflow (peek step1 -> per-device ssl_bump.acl -> bump_domains -> splice)   │
+│ • Master includes: include /etc/squid/configs/rules.acl & ssl_bump.acl                            │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                 │
                                                 ▼
@@ -36,7 +36,8 @@ The architecture is divided into **3 distinct configuration layers**:
 │ • Parses raw blocklists into clean per-blocklist ACL files (/etc/squid/configs/domains_<bl>.acl).│
 │ • Compiles per-device 30-min schedule matrices & blocklist selections.                           │
 │ • Outputs per-device src ACLs, dstdomain ACLs, time ACLs, and http_access rules.                │
-│ • Outputs: /etc/squid/configs/rules.acl                                                          │
+│ • Generates per-device SSL bump rules so blocked sites render Parental Block Pages over HTTPS.   │
+│ • Outputs: /etc/squid/configs/rules.acl & /etc/squid/configs/ssl_bump.acl                         │
 │ • Triggers live reload via Docker Daemon Unix socket SIGHUP (/var/run/docker.sock).             │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -61,15 +62,15 @@ The architecture is divided into **3 distinct configuration layers**:
    acl step1 at_step SslBump1
    ssl_bump peek step1
 
-   # Step 2: Splice hardcoded pinned apps (Snapcraft, Ubuntu, Canonical)
-   acl bypass_domains dstdomain .snapcraft.io .ubuntu.com .canonical.com
-   ssl_bump splice bypass_domains
+   # Step 2: Dynamic Per-Device SSL Bumping (configured via /etc/squid/configs/ssl_bump.acl)
+   # Bumps blocked categories specifically for target devices so custom block pages render
+   include /etc/squid/configs/ssl_bump.acl
 
-   # Step 3: Bump domains requiring deep URL path inspection
+   # Step 3: Bump global domains requiring deep URL path inspection
    acl bump_domains dstdomain "/etc/squid/configs/bump_domains.acl"
    ssl_bump bump bump_domains
 
-   # Step 4: Splice all other traffic by default (raw passthrough)
+   # Step 4: Splice all other traffic by default (raw passthrough, zero CA needed on unrestricted devices)
    ssl_bump splice all
    ```
 4. **Dynamic Policy Include**:
@@ -156,6 +157,7 @@ When the admin clicks **Save & Apply** in the Web UI:
 | `configs/generate_bump_domains.py` | Python Script | Git | Standalone SSL-bump domain generator script. |
 | `configs/bump_domains.acl` | Auto-Generated ACL | Container Startup | Contains domains requiring SSL Bumping for path rules. |
 | `configs/rules.acl` | Auto-Generated ACL | Web UI (`app.py`) | Contains active per-device conditional ACL rules. |
+| `configs/ssl_bump.acl` | Auto-Generated ACL | Web UI (`app.py`) | Contains active per-device dynamic SSL Bump interception rules. |
 | `configs/domains_*.acl` | Auto-Generated ACL | Web UI (`app.py`) | Deduplicated clean domain lists per blocklist category. |
 | `block-lists/*.txt` | Raw Text Files | Administrator | Category domain and URL path blocklists. |
 | `webui/app.py` | Python Application | Git | Flask Web UI backend API and ACL compiler. |
