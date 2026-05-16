@@ -65,7 +65,7 @@ http_access allow localnet
 http_access deny all
 
 # Prevent proxy loop by forcing DNS resolution of Host header/SNI when destination IP is local proxy IP
-acl proxy_self dst 192.168.1.90 192.168.1.2 192.168.0.0/16
+acl proxy_self dst 192.168.0.0/16
 always_direct deny proxy_self
 
 
