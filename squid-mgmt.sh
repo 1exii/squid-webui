@@ -92,8 +92,28 @@ deploy_proxy() {
 dump_config() {
     echo "-----------------------------------------------"
     echo ">>> Dumping parsed Squid Configuration from QNAP proxy container..."
-    ssh -T "${QNAP_SERVER}" "${DOCKER} exec ${SQUID_INSTANCE_NAME} squid -k parse 2>&1"
-    echo "  [+] Config dumped."
+
+    local out rc
+    out=$(ssh -T "${QNAP_SERVER}" "${DOCKER} exec ${SQUID_INSTANCE_NAME} squid -k parse 2>&1")
+    rc=$?
+    echo "${out}"
+
+    # Report what actually happened. This used to print '[+] Config dumped.'
+    # unconditionally, so a stopped container or a config full of FATAL errors
+    # still looked like a success to both a human and the test suite.
+    if [ ${rc} -ne 0 ] || echo "${out}" | grep -qiE "is not running|No such container|Cannot connect to the Docker daemon"; then
+        echo "  [!] ERROR: could not run 'squid -k parse' in container '${SQUID_INSTANCE_NAME}'."
+        return 1
+    fi
+    if echo "${out}" | grep -qiE "FATAL|Bungled"; then
+        echo "  [!] ERROR: configuration contains FATAL errors (see above)."
+        return 1
+    fi
+    if echo "${out}" | grep -qi "empty ACL"; then
+        echo "  [!] WARNING: empty ACL(s) detected — those rules can never match."
+    fi
+    echo "  [+] Config parsed cleanly."
+    return 0
 }
 
 analyze_logs() {
@@ -201,12 +221,15 @@ cat_logs() {
     mkdir -p "${LOCAL_LOG_DIR}"
 
     echo "  [*] Copying access log from container '${SQUID_INSTANCE_NAME}' on QNAP..."
+    # PIPESTATUS is checked so a failed 'docker cp' is not masked by tar succeeding
+    # on an empty stream, which would leave a 0-byte log looking like a clean run.
     ssh -T "${QNAP_SERVER}" "${DOCKER} cp ${SQUID_INSTANCE_NAME}:${REMOTE_LOG} -" \
         | tar -xO > "${LOCAL_LOG}"
+    local cp_rc=${PIPESTATUS[0]}
 
-    if [ ! -f "${LOCAL_LOG}" ]; then
-        echo "  [!] ERROR: Log file could not be retrieved from container."
-        exit 1
+    if [ ${cp_rc} -ne 0 ] || [ ! -f "${LOCAL_LOG}" ]; then
+        echo "  [!] ERROR: Log file could not be retrieved from container (docker cp rc=${cp_rc})."
+        return 1
     fi
 
     local TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -234,86 +257,59 @@ deploy_router_proxy() {
     local TEMP_SCRIPT="/tmp/squid-proxy-rules.sh"
     local MARKER="MANAGED-BY-SQUID-MGMT"
 
-    # ---- Step 1: Build the sidecar proxy-rules script locally ----
-    # Written to a temp file using printf to avoid heredoc interpolation issues.
-    printf '%s\n' '#!/bin/sh' \
-        "# ${PROXY_SCRIPT}" \
-        "# ${MARKER} — regenerate with: squid-mgmt.sh router-deploy" \
-        '' \
-        "SQUID_IP=\"${SQUID_PROXY_IP}\"" \
-        '' \
-        '# Clean up old nat DNAT rules if present' \
-        'iptables -t nat -D PREROUTING -j SQUID_REDIRECT 2>/dev/null || true' \
-        'iptables -t nat -F SQUID_REDIRECT 2>/dev/null || true' \
-        'iptables -t nat -X SQUID_REDIRECT 2>/dev/null || true' \
-        '' \
-        '# Disable rp_filter on router so return packets are not dropped' \
-        'echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null || true' \
-        'echo 0 > /proc/sys/net/ipv4/conf/br0/rp_filter 2>/dev/null || true' \
-        '' \
-        '# Setup Policy Based Routing table 150 to route to Squid container without changing destination IP' \
-        'ip rule del pref 10 2>/dev/null || true' \
-        'ip rule del fwmark 0x5000/0x5000 2>/dev/null || true' \
-        'ip rule add pref 10 fwmark 0x5000/0x5000 table 150 2>/dev/null || true' \
-        'ip route flush table 150 2>/dev/null || true' \
-        'ip route add default via "$SQUID_IP" dev br0 table 150 2>/dev/null || true' \
-        '' \
-        '# Setup mangle chain SQUID_MARK' \
-        'iptables -t mangle -N SQUID_MARK 2>/dev/null || true' \
-        'iptables -t mangle -F SQUID_MARK' \
-        'iptables -t mangle -D PREROUTING -j SQUID_MARK 2>/dev/null || true' \
-        'iptables -t mangle -I PREROUTING 1 -j SQUID_MARK' \
-        '' \
-        '# Exempt Squid proxy and QNAP server from redirection' \
-        'iptables -t mangle -A SQUID_MARK -s "$SQUID_IP" -j RETURN' \
-        'iptables -t mangle -A SQUID_MARK -s 192.168.1.2 -j RETURN' \
-        '' \
-        '# Setup ipset for YouTube QUIC traffic if ipset is available' \
-        'if command -v ipset >/dev/null 2>&1; then' \
-        '    ipset create youtube_quic hash:net 2>/dev/null || true' \
-        '    for cidr in 172.217.0.0/16 142.250.0.0/16 173.194.0.0/16 216.58.0.0/16 74.125.0.0/16 216.239.32.0/19 64.233.160.0/19 66.249.64.0/19 72.14.192.0/18 209.85.128.0/17; do' \
-        '        ipset add youtube_quic "$cidr" 2>/dev/null || true' \
-        '    done' \
-        'fi' \
-        '' \
-        'add_host() {' \
-        '    # $1 = source host IP' \
-        '    # Allow QUIC (UDP 443/80) for YouTube video traffic so YouTube playback uses QUIC protocol' \
-        '    if command -v ipset >/dev/null 2>&1 && ipset list youtube_quic >/dev/null 2>&1; then' \
-        '        iptables -D FORWARD -s "$1" -p udp -m multiport --dports 80,443 -m set --match-set youtube_quic dst -j ACCEPT 2>/dev/null || true' \
-        '        iptables -I FORWARD 1 -s "$1" -p udp -m multiport --dports 80,443 -m set --match-set youtube_quic dst -j ACCEPT' \
-        '    else' \
-        '        for cidr in 172.217.0.0/16 142.250.0.0/16 173.194.0.0/16 216.58.0.0/16 74.125.0.0/16; do' \
-        '            iptables -D FORWARD -s "$1" -d "$cidr" -p udp -m multiport --dports 80,443 -j ACCEPT 2>/dev/null || true' \
-        '            iptables -I FORWARD 1 -s "$1" -d "$cidr" -p udp -m multiport --dports 80,443 -j ACCEPT' \
-        '        done' \
-        '    fi' \
-        '    # Block QUIC (UDP 443) for all other services so browsers fall back to TCP 443' \
-        '    iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null || true' \
-        '    iptables -I FORWARD 2 -s "$1" -p udp --dport 443 -j REJECT' \
-        '    # Mark TCP 80, 443, & 4070 for policy routing to Squid container' \
-        '    iptables -t mangle -A SQUID_MARK -s "$1" -p tcp -m multiport --dports 80,443,4070 -j MARK --set-mark 0x5000/0x5000' \
-        '}' \
-        '' \
-        '# --- Per-host rules ---' \
-        > "${TEMP_SCRIPT}"
+    # ---- Step 1: Render the sidecar script from the checked-in template ----
+    #
+    # The rule logic lives in router/squid-proxy-rules.sh, NOT inline here. It used
+    # to be duplicated as a long printf block, which drifted out of sync with the
+    # checked-in copy: the file in git described a DNAT + MASQUERADE scheme while
+    # this function generated a policy-routing one. Deploying the wrong variant
+    # silently breaks every per-device src ACL, so there is now exactly one copy.
+    local RULES_TEMPLATE="${ROUTER_DIR}/squid-proxy-rules.sh"
 
+    if [ ! -f "${RULES_TEMPLATE}" ]; then
+        echo "  [!] ERROR: Rules template not found: ${RULES_TEMPLATE}"
+        exit 1
+    fi
+    if ! grep -q "^# --- Per-host rules ---" "${RULES_TEMPLATE}"; then
+        echo "  [!] ERROR: ${RULES_TEMPLATE} is missing the '# --- Per-host rules ---' marker."
+        exit 1
+    fi
+
+    # Copy the template, pinning SQUID_IP to this script's configured value.
+    sed "s|^SQUID_IP=.*|SQUID_IP=\"${SQUID_PROXY_IP}\"|" "${RULES_TEMPLATE}" > "${TEMP_SCRIPT}"
+
+    # ---- Step 2: Append one add_host call per intercepted host ----
+    local host_count=0
     while IFS= read -r line; do
         [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
         local host_ip host_name
         read -r host_ip host_name <<< "$line"
         [ -z "$host_ip" ] && continue
         echo "add_host \"${host_ip}\"   # ${host_name}" >> "${TEMP_SCRIPT}"
+        host_count=$((host_count + 1))
     done < "${PROXY_HOSTS_CONF}"
+
+    if [ "${host_count}" -eq 0 ]; then
+        echo "  [!] WARNING: ${PROXY_HOSTS_CONF} lists no hosts — deploying rules that intercept nothing."
+    else
+        echo "  [*] Rendered sidecar with ${host_count} intercepted host(s)."
+    fi
 
     chmod +x "${TEMP_SCRIPT}"
 
-    # ---- Step 2: Upload the sidecar script to the router ----
+    # Sanity-check the rendered script before it ever reaches the router.
+    if ! sh -n "${TEMP_SCRIPT}"; then
+        echo "  [!] ERROR: Rendered sidecar script has a syntax error. Aborting deploy."
+        rm -f "${TEMP_SCRIPT}"
+        exit 1
+    fi
+
+    # ---- Step 3: Upload the sidecar script to the router ----
     echo "  [*] Uploading ${PROXY_SCRIPT} to router (${ROUTER_IP})..."
     scp ${ROUTER_SCP_OPTS} "${TEMP_SCRIPT}" "${ROUTER_SERVER}:${PROXY_SCRIPT}"
     rm -f "${TEMP_SCRIPT}"
 
-    # ---- Step 3: Safely update firewall-start to call our sidecar ----
+    # ---- Step 4: Safely update firewall-start to call our sidecar ----
     # firewall-start is NEVER overwritten. We only append a call if not present.
     echo "  [*] Checking firewall-start on router..."
     ssh ${ROUTER_SSH_OPTS} -T "${ROUTER_SERVER}" \

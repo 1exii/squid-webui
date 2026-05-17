@@ -17,4 +17,7 @@ ENV FLASK_APP=app.py
 
 EXPOSE 3131
 
-CMD ["gunicorn", "--bind", "0.0.0.0:3131", "--workers", "2", "app:app"]
+# Single worker on purpose: app.py performs singleton startup work (compiling
+# rules.acl and SIGHUPing Squid) and runs a background expiry thread. Multiple
+# workers would each do both, racing on the generated ACL files.
+CMD ["gunicorn", "--bind", "0.0.0.0:3131", "--workers", "1", "--threads", "4", "--timeout", "120", "app:app"]

@@ -90,7 +90,10 @@ function create_squid() {
 
     # Sync config, errors, and certs before starting the container
     echo "  [*] Syncing squid.conf and configs to QNAP..."
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/configs/rules.acl ${REMOTE_BASE}/configs/ssl_bump.acl"
+    # squid.conf 'include's rules.acl, ssl_bump.acl and bump_domains.conf, and a
+    # missing include file is a FATAL parse error — pre-create all three so a
+    # first-time deploy starts cleanly before the Web UI has ever compiled.
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db && touch ${REMOTE_BASE}/configs/rules.acl ${REMOTE_BASE}/configs/ssl_bump.acl ${REMOTE_BASE}/configs/bump_domains.conf"
     scp "$LOCAL_CONF_TEMPLATE" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
     if [ -f "${SQUID_DIR}/configs/ssl_bump.acl" ]; then
         scp "${SQUID_DIR}/configs/ssl_bump.acl" "$QNAP_SERVER:${REMOTE_BASE}/configs/" 2>/dev/null || true
@@ -115,6 +118,11 @@ function create_squid() {
         scp "${SQUID_DIR}/block-lists/"*.txt "$QNAP_SERVER:${REMOTE_BASE}/block-lists/" 2>/dev/null || true
     fi
 
+    # NOTE: individual :ro file mounts for rules.acl / ssl_bump.acl were removed.
+    # The parent configs/ directory is already mounted read-write (the Web UI and
+    # the entrypoint generator both write into it), so the per-file mounts were
+    # redundant AND fragile: a bind-mounted file is pinned to one inode, so any
+    # writer using write-to-temp + rename would leave Squid reading a stale file.
     ssh -T "$QNAP_SERVER" << EOF
         $DOCKER stop "$NAME" >/dev/null 2>&1 || true
         $DOCKER rm -f "$NAME" >/dev/null 2>&1 || true
@@ -125,8 +133,6 @@ function create_squid() {
             --restart=unless-stopped \
             -e TZ="$TIMEZONE" \
             -v "${REMOTE_BASE}/configs/squid.conf:/etc/squid/squid.conf:ro" \
-            -v "${REMOTE_BASE}/configs/rules.acl:/etc/squid/configs/rules.acl:ro" \
-            -v "${REMOTE_BASE}/configs/ssl_bump.acl:/etc/squid/configs/ssl_bump.acl:ro" \
             -v "${REMOTE_BASE}/configs:/etc/squid/configs" \
             -v "${REMOTE_BASE}/certs:/etc/squid/certs:ro" \
             -v "${REMOTE_BASE}/block-lists:/etc/squid/block-lists:ro" \
@@ -156,8 +162,21 @@ function create_webui() {
         exit 1
     fi
 
-    # Sync proxy-hosts.conf and devices.list to squid-proxy directory if present
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router && touch ${REMOTE_SQUID_BASE}/configs/rules.acl ${REMOTE_SQUID_BASE}/configs/ssl_bump.acl"
+    # Sync proxy-hosts.conf and devices.list to squid-proxy directory if present.
+    # certs/ is created here too: create_webui mounts it, and when the webui is
+    # deployed on its own (without create_squid having run first) Docker would
+    # otherwise silently create an empty directory and the CA download endpoints
+    # would 404.
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/certs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router && touch ${REMOTE_SQUID_BASE}/configs/rules.acl ${REMOTE_SQUID_BASE}/configs/ssl_bump.acl ${REMOTE_SQUID_BASE}/configs/bump_domains.conf"
+
+    if [ -f "${LOCAL_CERT_DIR}/squid-ca.pem" ]; then
+        scp "${LOCAL_CERT_DIR}/squid-ca.pem" "$QNAP_SERVER:${REMOTE_SQUID_BASE}/certs/" 2>/dev/null || true
+        [ -f "${LOCAL_CERT_DIR}/squid-ca.crt" ] && \
+            scp "${LOCAL_CERT_DIR}/squid-ca.crt" "$QNAP_SERVER:${REMOTE_SQUID_BASE}/certs/" 2>/dev/null || true
+    else
+        echo "  [!] WARNING: No CA cert in ${LOCAL_CERT_DIR}; the Web UI cert download endpoints will 404."
+        echo "      Run 'squid-mgmt.sh cert' first."
+    fi
     
     ssh "$QNAP_SERVER" "rm -f ${REMOTE_SQUID_BASE}/router/proxy-hosts.conf ${REMOTE_SQUID_BASE}/configs/devices.list"
     if [ -f "${SQUID_DIR}/router/proxy-hosts.conf" ]; then
@@ -174,12 +193,15 @@ function create_webui() {
     # Stop and remove existing container if running
     ssh -T "$QNAP_SERVER" "$DOCKER stop $NAME > /dev/null 2>&1; $DOCKER rm $NAME > /dev/null 2>&1"
 
+    # NOTE: '-p 3131:3131' was removed. $DOCKER_NET is a macvlan/qnet network, so
+    # published ports are a no-op there — the Web UI is only ever reachable on the
+    # container IP ($IP), never on the QNAP host IP. Keeping the flag implied a
+    # fallback URL that could never work.
     ssh -T "$QNAP_SERVER" << EOF
         $DOCKER run -d \
             --name "$NAME" --hostname "$NAME" \
             --net "$DOCKER_NET" --ip "$IP" \
             --restart=unless-stopped \
-            -p 3131:3131 \
             -e TZ="$TIMEZONE" \
             -e RUNNING_ON_NAS="true" \
             -v "${REMOTE_SQUID_BASE}/configs:/etc/squid/configs" \

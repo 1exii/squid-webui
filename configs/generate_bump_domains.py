@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
 """
-Script to dynamically generate /etc/squid/configs/bump_domains.acl
-from raw blocklist files (extracting domains that require URL path-based deep inspection).
+Generate the selective-SSL-bump configuration from the raw blocklist files.
+
+Two files are produced, and they must always be written together:
+
+  bump_domains.acl   the domain list itself, derived from blocklist entries that
+                     carry a URL path (e.g. 'steamcommunity.com/market')
+  bump_domains.conf  the Squid directives that consume it. When no blocklist
+                     defines a path rule this file contains no directives at all,
+                     rather than declaring an ACL against an empty file — such an
+                     ACL parses cleanly but can never match, so a broken
+                     selective-bump setup would sail past 'squid -k parse'.
+
+This runs at container start (docker-entrypoint.sh). The Web UI regenerates the
+same two files on every policy compile, so blocklist edits made through the UI
+take effect without waiting for a container restart.
 """
 import os
 import sys
@@ -71,10 +84,26 @@ def generate_bump_domains(blocklist_dir, output_file):
     dedup = deduplicate_domains(bump_domains)
     os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
-        f.write("# Auto-generated: Domains requiring SSL Bumping for deep URL path rules\n")
+        f.write("# Auto-generated: domains requiring SSL Bumping for deep URL path rules.\n")
+        f.write("# Source: block-lists/*.txt entries of the form 'domain/path'.\n")
         for domain in dedup:
             f.write(f"{domain}\n")
-    print(f"[generate_bump_domains] Wrote {len(dedup)} bump domains to {output_file}")
+
+    # Emit the matching directives file. squid.conf includes this, never the .acl
+    # directly, so an empty domain list yields no ACL rather than a dead one.
+    conf_file = os.path.join(os.path.dirname(os.path.abspath(output_file)), "bump_domains.conf")
+    with open(conf_file, "w", encoding="utf-8") as f:
+        f.write("# Auto-generated Squid directives for deep URL path SSL bumping.\n")
+        if dedup:
+            f.write(f'acl bump_domains dstdomain "{os.path.abspath(output_file)}"\n')
+            f.write("ssl_bump bump bump_domains\n")
+        else:
+            f.write("# No blocklist defines a 'domain/path' rule, so no global bump\n")
+            f.write("# ACL is emitted. Declaring one against an empty file would\n")
+            f.write("# parse cleanly but never match.\n")
+
+    print(f"[generate_bump_domains] Wrote {len(dedup)} bump domain(s) to {output_file}")
+    print(f"[generate_bump_domains] Wrote directives to {conf_file}")
 
 if __name__ == "__main__":
     bl_dir = sys.argv[1] if len(sys.argv) > 1 else "/etc/squid/block-lists"
