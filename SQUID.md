@@ -1,8 +1,8 @@
 # Squid Proxy Architecture & ACL Configuration Guide (`SQUID.md`)
 
 > **System Component:** Squid Parental Control & Web Management System  
-> **Deployment Target:** QNAP NAS Container Station (`squid-proxy` and `squid-webui` Docker containers)  
-> **Router Daemon:** ASUS Router (`nftables` / `iptables` Policy Routing & Port Redirection)
+> **Deployment Target:** QNAP NAS Container Station (`admin@192.168.1.2`, containers `squid-proxy` and `squid-webui`)  
+> **Router Daemon:** ASUS Router (`admin@192.168.0.1`, `nftables` / `iptables` Policy Routing & Port Redirection)
 
 ---
 
