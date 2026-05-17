@@ -6,8 +6,13 @@ __pycache__/
 debug/*.log
 debug/*.txt
 debug/logs/
+
+# Generated at runtime by the Web UI / container entrypoint — never committed.
 configs/*.acl
+configs/bump_domains.conf
+configs/rules.json
+configs/device_policies.json
+configs/.flask_secret_key
+configs/.startup.lock
 !configs/bump_domains.acl
 !configs/ssl_bump.acl
-
-

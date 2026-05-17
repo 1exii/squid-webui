@@ -40,28 +40,27 @@ acl Safe_ports port 591         # filemaker
 acl Safe_ports port 777         # multiling http
 acl CONNECT method CONNECT
 
-# -- 2. BLOCKLIST CONFIGURATION --
-
-# Domains requiring SSL Bumping (only domains with path-based URL rules requiring deep inspection)
-acl bump_domains dstdomain "/etc/squid/configs/bump_domains.acl"
-
-# -- 3. HTTP ACCESS RULES --
+# -- 2. HTTP ACCESS RULES --
+#
+# ORDER MATTERS. Squid stops at the first matching http_access line, so the port
+# safety guards must come BEFORE the Web UI rules: an 'http_access allow' emitted
+# for a device time-window would otherwise short-circuit both denies below and
+# permit CONNECT to arbitrary ports.
 
 # 1. Allow localhost and internal helper requests (AIA cert downloads)
 http_access allow localhost
 
-# 2. Dynamic Conditional Access Rules (Managed by Web UI)
-include /etc/squid/configs/rules.acl
-
-
-# 4. Deny requests to non-safe ports.
+# 2. Deny requests to non-safe ports.
 http_access deny !Safe_ports
 http_access deny CONNECT !SSL_ports
 
-# 5. Allow access from your local network.
+# 3. Dynamic Conditional Access Rules (Managed by Web UI)
+include /etc/squid/configs/rules.acl
+
+# 4. Allow access from your local network.
 http_access allow localnet
 
-# 6. Deny all other access to this proxy.
+# 5. Deny all other access to this proxy.
 http_access deny all
 
 # Prevent proxy loop by forcing DNS resolution of Host header/SNI when destination IP is local proxy IP
@@ -86,8 +85,14 @@ sslproxy_cert_error allow all
 # Step 2: Dynamic Per-Device SSL Bumping (configured via /etc/squid/configs/ssl_bump.acl)
 include /etc/squid/configs/ssl_bump.acl
 
-# Step 3: Bump static bump_domains list (URL path rules requiring deep inspection)
-ssl_bump bump bump_domains
+# Step 3: Bump the global path-rule domain list.
+#
+# Both the 'acl bump_domains ...' declaration and the 'ssl_bump bump' line live in
+# the generated bump_domains.conf rather than here. When no blocklist defines a
+# 'domain/path' rule that file is empty, so no ACL is declared at all. Declaring
+# one against an empty bump_domains.acl parses cleanly but can never match, which
+# hides a broken selective-bump configuration behind a passing 'squid -k parse'.
+include /etc/squid/configs/bump_domains.conf
 
 # Step 4: Splice all other domains by default (raw passthrough)
 ssl_bump splice all

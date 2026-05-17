@@ -1,8 +1,6 @@
 import os
 import json
-import re
 import secrets
-import subprocess
 import threading
 import time
 import socket
@@ -13,7 +11,6 @@ from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
 from flask import Flask, render_template, request, jsonify, session, send_file
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(24))
 
 # Configuration paths (inside container / host)
 SQUID_CONFIG_DIR = os.environ.get("SQUID_CONFIG_DIR", "/etc/squid/configs")
@@ -21,12 +18,63 @@ SQUID_BLOCKLIST_DIR = os.environ.get("SQUID_BLOCKLIST_DIR", "/etc/squid/block-li
 SQUID_CERT_DIR = os.environ.get("SQUID_CERT_DIR", "/etc/squid/certs")
 ROUTER_HOSTS_CONF = os.environ.get("ROUTER_HOSTS_CONF", "/etc/squid/router/proxy-hosts.conf")
 
-RULES_JSON_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.json")
 RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
 SSL_BUMP_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "ssl_bump.acl")
+# Domain list requiring SSL bumping for deep URL path inspection (data file).
+BUMP_DOMAINS_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "bump_domains.acl")
+# Squid directives that reference the list above. Generated alongside it so that
+# when NO blocklist defines a URL path rule this file is empty, instead of
+# leaving squid.conf with an `acl ... dstdomain "<empty file>"` that parses fine
+# but can never match — a silently dead rule.
+BUMP_DOMAINS_CONF_PATH = os.path.join(SQUID_CONFIG_DIR, "bump_domains.conf")
 
 QNAP_IP = os.environ.get("QNAP_IP", "192.168.1.2")
 SQUID_CONTAINER_NAME = os.environ.get("SQUID_CONTAINER_NAME", "squid-proxy")
+
+
+def _load_or_create_secret_key():
+    """
+    Return a Flask secret key that is stable across gunicorn workers and restarts.
+
+    Generating the key at import time gives every worker process a DIFFERENT key,
+    so a session cookie set by worker 1 is rejected by worker 2 and logins fail
+    intermittently. Prefer the environment, then a key persisted on the shared
+    config volume, and only fall back to an ephemeral key if neither works.
+    """
+    env_key = os.environ.get("FLASK_SECRET_KEY")
+    if env_key:
+        return env_key
+
+    key_path = os.path.join(SQUID_CONFIG_DIR, ".flask_secret_key")
+    try:
+        if os.path.exists(key_path):
+            with open(key_path, "r") as f:
+                existing = f.read().strip()
+            if existing:
+                return existing
+
+        os.makedirs(SQUID_CONFIG_DIR, exist_ok=True)
+        key = secrets.token_hex(32)
+        # Write atomically so a concurrently starting worker cannot read a
+        # half-written key, then re-read to settle races on who wrote first.
+        tmp_path = f"{key_path}.{os.getpid()}.tmp"
+        with open(tmp_path, "w") as f:
+            f.write(key)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, key_path)
+        with open(key_path, "r") as f:
+            return f.read().strip() or key
+    except Exception as e:
+        print(f"[secret_key] Could not persist Flask secret key ({e}); using an "
+              f"ephemeral key. Sessions will not survive a restart.")
+        return secrets.token_hex(32)
+
+
+app.secret_key = _load_or_create_secret_key()
+
+# Serialises ACL compilation + reload. Guards against two requests (or the
+# background expiry thread) interleaving writes to rules.acl / ssl_bump.acl.
+COMPILE_LOCK = threading.Lock()
 
 # IPs that get the Admin page as the default landing page
 ADMIN_CLIENT_IPS = {
@@ -251,12 +299,17 @@ def load_device_policies():
 
 
 def save_device_policies(policies):
+    """Persist policies to disk and recompile the Squid ACLs. Returns (ok, message)."""
     os.makedirs(os.path.dirname(DEVICE_POLICIES_PATH), exist_ok=True)
     for ip in policies:
         policies[ip] = ensure_policy_schema(policies[ip])
-    with open(DEVICE_POLICIES_PATH, "w") as f:
+    # Write atomically so a crash mid-write cannot leave unparseable JSON behind,
+    # which load_device_policies() would silently swallow as "no policies at all".
+    tmp_path = f"{DEVICE_POLICIES_PATH}.tmp"
+    with open(tmp_path, "w") as f:
         json.dump(policies, f, indent=2)
-    compile_device_policies_acls(policies)
+    os.replace(tmp_path, DEVICE_POLICIES_PATH)
+    return compile_device_policies_acls(policies)
 
 
 def slot_to_time(slot_idx):
@@ -367,6 +420,65 @@ def deduplicate_domains(domains):
     return sorted(result)
 
 
+def ere_escape(text):
+    """
+    Escape a literal string for use in a Squid POSIX ERE (urlpath_regex).
+
+    re.escape() is NOT safe here: it emits Python-flavoured escapes such as '\\-'
+    and '\\ ', which are undefined sequences in POSIX ERE and behave
+    inconsistently across Squid's regex backends. Only the characters that are
+    actually special in ERE are escaped.
+    """
+    special = set('.^$*+?()[]{}|\\')
+    return "".join("\\" + c if c in special else c for c in text)
+
+
+def collect_path_rule_domains(parsed_blocklists):
+    """
+    Return the sorted set of '.domain' entries that require SSL bumping because a
+    blocklist defines a deep URL path rule for them (e.g. 'steamcommunity.com/market').
+    Derived from the SAME parse used to build the ACLs, so the two can never drift.
+    """
+    bump = set()
+    for meta in parsed_blocklists.values():
+        for rule in meta.get("path_rules", []):
+            bump.add(rule["bump_domain"])
+    return deduplicate_domains(bump)
+
+
+def write_bump_domains(parsed_blocklists):
+    """
+    Regenerate bump_domains.acl (the data file) and bump_domains.conf (the Squid
+    directives that use it).
+
+    Previously bump_domains.acl was only produced by docker-entrypoint.sh at
+    container start, so any blocklist edit made through the Web UI left it stale
+    until the next restart. Regenerating it on every compile keeps selective
+    bumping in step with the blocklists.
+    """
+    domains = collect_path_rule_domains(parsed_blocklists)
+
+    os.makedirs(SQUID_CONFIG_DIR, exist_ok=True)
+    with open(BUMP_DOMAINS_ACL_PATH, "w", encoding="utf-8") as f:
+        f.write("# Auto-generated: domains requiring SSL Bumping for deep URL path rules.\n")
+        f.write("# Source: block-lists/*.txt entries of the form 'domain/path'.\n")
+        for d in domains:
+            f.write(f"{d}\n")
+
+    with open(BUMP_DOMAINS_CONF_PATH, "w", encoding="utf-8") as f:
+        f.write("# Auto-generated Squid directives for deep URL path SSL bumping.\n")
+        if domains:
+            f.write(f'acl bump_domains dstdomain "{BUMP_DOMAINS_ACL_PATH}"\n')
+            f.write("ssl_bump bump bump_domains\n")
+        else:
+            f.write("# No blocklist defines a 'domain/path' rule, so no global bump\n")
+            f.write("# ACL is emitted. Declaring one against an empty file would\n")
+            f.write("# parse cleanly but never match.\n")
+
+    print(f"[bump_domains] Wrote {len(domains)} bump domain(s).")
+    return domains
+
+
 def parse_blocklists(blocklist_dir, output_dir):
     """
     Parse raw blocklist files in blocklist_dir, generate clean per-blocklist domain ACL files,
@@ -448,14 +560,14 @@ def get_parsed_blocklists():
     return parse_blocklists(SQUID_BLOCKLIST_DIR, SQUID_CONFIG_DIR)
 
 
-def compile_device_policies_acls(policies):
+def _build_policy_acls(policies, parsed_blocklists):
     """
-    Compile device policies into Squid ACL rules and dynamic SSL bump rules.
+    Render device policies into the text of rules.acl and ssl_bump.acl.
     - always_block lists  → unconditional http_access deny (domain + path rules)
     - default_block lists → allow windows + fallback deny (domain + path rules)
     - ssl_bump.acl        → per-device dynamic SSL bump rules (blocked sites or full device bump)
+    Returns (rules_acl_text, ssl_bump_acl_text).
     """
-    parsed_blocklists = get_parsed_blocklists()
 
     acl_lines = [
         "# ===========================================================",
@@ -514,7 +626,7 @@ def compile_device_policies_acls(policies):
                         p_url_acl = f"path_url_{bl_id}_{idx}"
                         if p_dom_acl not in declared_path_rules:
                             acl_lines.append(f"acl {p_dom_acl} dstdomain {rule['bump_domain']}")
-                            acl_lines.append(f"acl {p_url_acl} urlpath_regex -i ^{re.escape(rule['path'])}")
+                            acl_lines.append(f"acl {p_url_acl} urlpath_regex -i ^{ere_escape(rule['path'])}")
                             declared_path_rules.add(p_dom_acl)
         acl_lines.append("")
 
@@ -590,120 +702,53 @@ def compile_device_policies_acls(policies):
 
         acl_lines.append("")
 
-    os.makedirs(os.path.dirname(RULES_ACL_PATH), exist_ok=True)
-    with open(RULES_ACL_PATH, "w") as f:
-        f.write("\n".join(acl_lines) + "\n")
-
-    os.makedirs(os.path.dirname(SSL_BUMP_ACL_PATH), exist_ok=True)
-    with open(SSL_BUMP_ACL_PATH, "w") as f:
-        f.write("\n".join(ssl_bump_lines) + "\n")
-
-    reload_squid()
+    return "\n".join(acl_lines) + "\n", "\n".join(ssl_bump_lines) + "\n"
 
 
-def load_rules():
-    if os.path.exists(RULES_JSON_PATH):
+def compile_device_policies_acls(policies):
+    """
+    Regenerate every managed Squid config file from the device policies, then
+    validate and reload. On a validation failure the previous configuration is
+    restored and Squid is never signalled.
+
+    Returns (ok, message).
+    """
+    with COMPILE_LOCK:
+        snap = snapshot_configs()
         try:
-            with open(RULES_JSON_PATH, "r") as f:
-                return json.load(f)
+            parsed_blocklists = get_parsed_blocklists()
+
+            # Keep the bump list in step with the blocklists on every compile,
+            # not just at container start.
+            write_bump_domains(parsed_blocklists)
+
+            rules_text, ssl_text = _build_policy_acls(policies, parsed_blocklists)
+
+            os.makedirs(SQUID_CONFIG_DIR, exist_ok=True)
+            with open(RULES_ACL_PATH, "w") as f:
+                f.write(rules_text)
+            with open(SSL_BUMP_ACL_PATH, "w") as f:
+                f.write(ssl_text)
         except Exception as e:
-            print(f"Error loading rules.json: {e}")
-    return []
+            restore_configs(snap)
+            msg = f"ACL generation failed, previous configuration restored: {e}"
+            print(f"[compile] {msg}")
+            return False, msg
+
+        ok, detail = reload_squid()
+        if not ok:
+            restore_configs(snap)
+            # Best effort: put Squid back on the known-good config.
+            reload_squid()
+            return False, detail
+        return True, "Squid rules applied and service reloaded successfully."
 
 
-def save_rules(rules):
-    os.makedirs(os.path.dirname(RULES_JSON_PATH), exist_ok=True)
-    with open(RULES_JSON_PATH, "w") as f:
-        json.dump(rules, f, indent=2)
-    compile_squid_acls(rules)
-
-
-def compile_squid_acls(rules):
-    """Compile custom rules list into Squid ACL file (rules.acl) and ssl_bump.acl."""
-    parsed_blocklists = get_parsed_blocklists()
-
-    acl_lines = [
-        "# ===========================================================",
-        "# AUTO-GENERATED BY SQUID WEB UI - DO NOT EDIT MANUALLY",
-        "# ===========================================================",
-        ""
-    ]
-
-    ssl_bump_lines = [
-        "# ===========================================================",
-        "# AUTO-GENERATED BY SQUID WEB UI - DYNAMIC SSL BUMP RULES",
-        "# ===========================================================",
-        ""
-    ]
-
-    for rule in rules:
-        if not rule.get("enabled", True):
-            continue
-
-        rule_id = rule.get("id")
-        rule_name = rule.get("name", "Unnamed Rule")
-        src_ip = rule.get("source_ip")
-        blocklist = rule.get("blocklist")
-        days = rule.get("days", [])
-        time_start = rule.get("time_start", "00:00")
-        time_end = rule.get("time_end", "23:59")
-        policy = rule.get("policy", "allow_during_slot")
-
-        if not src_ip or not blocklist:
-            continue
-
-        acl_lines.append(f"# Rule: {rule_name} ({rule_id})")
-        acl_lines.append(f"acl src_{rule_id} src {src_ip}")
-
-        bl_id = blocklist.replace('.', '_').replace('-', '_')
-        if blocklist in parsed_blocklists:
-            dom_file = parsed_blocklists[blocklist]["domain_acl_file"]
-            path_rules = parsed_blocklists[blocklist].get("path_rules", [])
-        else:
-            dom_file = f"/etc/squid/block-lists/{blocklist}"
-            path_rules = []
-
-        acl_lines.append(f"acl list_{rule_id} dstdomain \"{dom_file}\"")
-        for idx, p_rule in enumerate(path_rules, 1):
-            acl_lines.append(f"acl path_dom_{rule_id}_{idx} dstdomain {p_rule['bump_domain']}")
-            acl_lines.append(f"acl path_url_{rule_id}_{idx} urlpath_regex -i ^{re.escape(p_rule['path'])}")
-
-        day_codes = "".join([DAY_MAP[d] for d in days if d in DAY_MAP])
-        if not day_codes:
-            day_codes = "SMWTHFA"
-
-        acl_lines.append(f"acl time_{rule_id} time {day_codes} {time_start}-{time_end}")
-
-        if policy == "allow_during_slot":
-            acl_lines.append(f"http_access allow src_{rule_id} list_{rule_id} time_{rule_id}")
-            for idx in range(1, len(path_rules) + 1):
-                acl_lines.append(f"http_access allow src_{rule_id} path_dom_{rule_id}_{idx} path_url_{rule_id}_{idx} time_{rule_id}")
-
-            acl_lines.append(f"http_access deny src_{rule_id} list_{rule_id}")
-            for idx in range(1, len(path_rules) + 1):
-                acl_lines.append(f"http_access deny src_{rule_id} path_dom_{rule_id}_{idx} path_url_{rule_id}_{idx}")
-        elif policy == "block_during_slot":
-            acl_lines.append(f"http_access deny src_{rule_id} list_{rule_id} time_{rule_id}")
-            for idx in range(1, len(path_rules) + 1):
-                acl_lines.append(f"http_access deny src_{rule_id} path_dom_{rule_id}_{idx} path_url_{rule_id}_{idx} time_{rule_id}")
-
-        acl_lines.append("")
-
-        # SSL Bump rule for this custom rule
-        ssl_bump_lines.append(f"ssl_bump bump src_{rule_id} list_{rule_id}")
-        for idx in range(1, len(path_rules) + 1):
-            ssl_bump_lines.append(f"ssl_bump bump src_{rule_id} path_dom_{rule_id}_{idx}")
-
-    os.makedirs(os.path.dirname(RULES_ACL_PATH), exist_ok=True)
-    with open(RULES_ACL_PATH, "w") as f:
-        f.write("\n".join(acl_lines) + "\n")
-
-    os.makedirs(os.path.dirname(SSL_BUMP_ACL_PATH), exist_ok=True)
-    with open(SSL_BUMP_ACL_PATH, "w") as f:
-        f.write("\n".join(ssl_bump_lines) + "\n")
-
-    reload_squid()
-
+# NOTE: the legacy rules.json engine (load_rules / save_rules / compile_squid_acls
+# and the /api/rules endpoints) has been removed. It wrote the SAME rules.acl and
+# ssl_bump.acl files as compile_device_policies_acls(), so a single call to
+# /api/rules silently erased every per-device parental-control policy. The Web UI
+# never used it — device policies are the only supported rule engine.
 
 
 class UnixSocketHTTPConnection(http.client.HTTPConnection):
@@ -729,19 +774,155 @@ def docker_socket_request(method, path, body=None):
     return resp.status, data
 
 
-def reload_squid():
-    """Trigger Squid ACL reload by sending SIGHUP via Docker socket API."""
+def _demux_docker_stream(raw):
+    """
+    Strip Docker's 8-byte stream-multiplexing frame headers from exec output.
+    Falls back to a best-effort decode when the stream is not multiplexed.
+    """
+    out = bytearray()
+    i = 0
+    try:
+        while i + 8 <= len(raw):
+            stream_type = raw[i]
+            if stream_type not in (0, 1, 2):
+                # Not a framed stream — return the payload as-is.
+                return raw.decode("utf-8", "replace")
+            length = int.from_bytes(raw[i + 4:i + 8], "big")
+            out += raw[i + 8:i + 8 + length]
+            i += 8 + length
+        return bytes(out).decode("utf-8", "replace")
+    except Exception:
+        return raw.decode("utf-8", "replace")
+
+
+def docker_exec(cmd):
+    """
+    Run a command inside the Squid container via the Docker exec API.
+    Returns (exit_code, output). exit_code is None when the call itself failed.
+    """
     try:
         status, data = docker_socket_request(
             "POST",
-            f"/containers/{SQUID_CONTAINER_NAME}/kill?signal=HUP"
+            f"/containers/{SQUID_CONTAINER_NAME}/exec",
+            {"AttachStdout": True, "AttachStderr": True, "Tty": False, "Cmd": cmd},
+        )
+        if status not in (200, 201):
+            return None, f"exec create failed: HTTP {status} {data.decode('utf-8', 'replace')}"
+
+        exec_id = json.loads(data.decode()).get("Id")
+        if not exec_id:
+            return None, "exec create returned no Id"
+
+        status, out = docker_socket_request(
+            "POST", f"/exec/{exec_id}/start", {"Detach": False, "Tty": False}
+        )
+        text = _demux_docker_stream(out)
+
+        status, info = docker_socket_request("GET", f"/exec/{exec_id}/json")
+        exit_code = json.loads(info.decode()).get("ExitCode") if status == 200 else None
+        return exit_code, text
+    except Exception as e:
+        return None, f"exec failed: {e}"
+
+
+def validate_squid_config():
+    """
+    Run 'squid -k parse' inside the container.
+    Returns (ok, message). ok is True only on a clean parse.
+
+    Validation is advisory when the exec API itself is unavailable: we do not
+    want an unreachable Docker socket to block every policy save. It is NOT
+    advisory when the parser actually reports a problem.
+    """
+    exit_code, output = docker_exec(["squid", "-k", "parse"])
+
+    if exit_code is None:
+        return True, f"config validation skipped (could not run squid -k parse: {output.strip()[:200]})"
+
+    fatal_lines = [
+        ln for ln in output.splitlines()
+        if any(tok in ln.upper() for tok in ("FATAL", "BUNGLED", "ERROR:"))
+    ]
+    if exit_code != 0 or fatal_lines:
+        detail = " | ".join(fatal_lines[:5]) or f"exit code {exit_code}"
+        return False, detail
+
+    empty_acls = [ln for ln in output.splitlines() if "empty ACL" in ln]
+    if empty_acls:
+        # Not fatal to Squid, but it means a block rule can never match.
+        print(f"[validate] WARNING — empty ACL(s) detected: {' | '.join(empty_acls[:5])}")
+    return True, "ok"
+
+
+# Files rewritten on every compile; all are snapshotted so a bad generation can
+# be rolled back before Squid is ever asked to load it.
+_MANAGED_CONFIG_FILES = (
+    RULES_ACL_PATH,
+    SSL_BUMP_ACL_PATH,
+    BUMP_DOMAINS_ACL_PATH,
+    BUMP_DOMAINS_CONF_PATH,
+)
+
+
+def snapshot_configs():
+    """Read the current managed config files so they can be restored on failure."""
+    snap = {}
+    for path in _MANAGED_CONFIG_FILES:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                snap[path] = f.read()
+        except FileNotFoundError:
+            snap[path] = None
+        except Exception as e:
+            print(f"[snapshot] Could not read {path}: {e}")
+    return snap
+
+
+def restore_configs(snap):
+    """
+    Roll the managed config files back to a previous snapshot.
+
+    A file that did not exist before is truncated rather than skipped: squid.conf
+    `include`s all of them, so leaving a rejected generation on disk would let it
+    load on the next container restart, bypassing validation entirely.
+    """
+    for path, content in snap.items():
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content if content is not None else
+                        "# Reverted: this generation failed validation.\n")
+        except Exception as e:
+            print(f"[restore] Could not restore {path}: {e}")
+
+
+def reload_squid():
+    """
+    Validate the generated configuration, then reload Squid via SIGHUP.
+
+    Squid is the default route for HTTP/HTTPS on every intercepted host, so a
+    reload that kills it takes those devices offline entirely. Never send the
+    signal without checking that the config parses first. Returns (ok, message).
+    """
+    valid, detail = validate_squid_config()
+    if not valid:
+        msg = f"Refusing to reload Squid — generated configuration is invalid: {detail}"
+        print(f"[reload] {msg}")
+        return False, msg
+
+    try:
+        status, data = docker_socket_request(
+            "POST", f"/containers/{SQUID_CONTAINER_NAME}/kill?signal=HUP"
         )
         if status in (200, 204):
-            print(f"Squid container '{SQUID_CONTAINER_NAME}' successfully reloaded via SIGHUP.")
-        else:
-            print(f"Failed to send SIGHUP to Squid: HTTP {status} {data.decode()}")
+            print(f"[reload] Squid container '{SQUID_CONTAINER_NAME}' reloaded via SIGHUP.")
+            return True, "reloaded"
+        msg = f"Failed to send SIGHUP to Squid: HTTP {status} {data.decode('utf-8', 'replace')}"
+        print(f"[reload] {msg}")
+        return False, msg
     except Exception as e:
-        print(f"Failed to reload Squid via Docker socket: {e}")
+        msg = f"Failed to reload Squid via Docker socket: {e}"
+        print(f"[reload] {msg}")
+        return False, msg
 
 
 # --- API ENDPOINTS ---
@@ -891,8 +1072,12 @@ def update_policies():
                         pol["ip"] = ip
                         policies[ip] = ensure_policy_schema(pol)
 
-        save_device_policies(policies)
-        return jsonify({"success": True, "policies": policies})
+        ok, message = save_device_policies(policies)
+        if not ok:
+            # Policies are saved, but Squid rejected the generated config and the
+            # previous ACLs were restored. Surface it instead of reporting success.
+            return jsonify({"success": False, "error": message, "policies": policies}), 500
+        return jsonify({"success": True, "message": message, "policies": policies})
     except Exception as e:
         print(f"Error in update_policies API: {e}")
         import traceback
@@ -907,82 +1092,15 @@ def apply_rules_api():
 
     try:
         policies = load_device_policies()
-        compile_device_policies_acls(policies)
-        return jsonify({"success": True, "message": "Squid rules applied and service reloaded successfully."})
+        ok, message = compile_device_policies_acls(policies)
+        if not ok:
+            return jsonify({"success": False, "message": message}), 500
+        return jsonify({"success": True, "message": message})
     except Exception as e:
         print(f"Error in apply_rules_api: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "message": str(e)}), 500
-
-
-@app.route("/api/rules", methods=["GET"])
-def get_rules_api():
-    if not is_authenticated():
-        return jsonify({"error": "Unauthorized"}), 401
-    return jsonify({"rules": load_rules()})
-
-
-
-@app.route("/api/rules", methods=["POST"])
-def add_or_update_rule():
-    if not is_authenticated():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    data = request.json or {}
-    rules = load_rules()
-
-    rule_id = data.get("id") or f"rule_{secrets.token_hex(4)}"
-    new_rule = {
-        "id": rule_id,
-        "name": data.get("name", "New Rule").strip(),
-        "source_ip": data.get("source_ip", "").strip(),
-        "source_name": data.get("source_name", "").strip(),
-        "blocklist": data.get("blocklist", "").strip(),
-        "days": data.get("days", []),
-        "time_start": data.get("time_start", "00:00"),
-        "time_end": data.get("time_end", "23:59"),
-        "policy": data.get("policy", "allow_during_slot"),
-        "enabled": data.get("enabled", True)
-    }
-
-    # Replace existing rule if ID matches, otherwise append
-    updated = False
-    for i, r in enumerate(rules):
-        if r.get("id") == rule_id:
-            rules[i] = new_rule
-            updated = True
-            break
-    if not updated:
-        rules.append(new_rule)
-
-    save_rules(rules)
-    return jsonify({"success": True, "rule": new_rule})
-
-
-@app.route("/api/rules/<rule_id>", methods=["DELETE"])
-def delete_rule(rule_id):
-    if not is_authenticated():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    rules = load_rules()
-    rules = [r for r in rules if r.get("id") != rule_id]
-    save_rules(rules)
-    return jsonify({"success": True})
-
-
-@app.route("/api/rules/<rule_id>/toggle", methods=["POST"])
-def toggle_rule(rule_id):
-    if not is_authenticated():
-        return jsonify({"error": "Unauthorized"}), 401
-
-    rules = load_rules()
-    for r in rules:
-        if r.get("id") == rule_id:
-            r["enabled"] = not r.get("enabled", True)
-            break
-    save_rules(rules)
-    return jsonify({"success": True})
 
 
 @app.route("/download/cert.crt")
@@ -1047,39 +1165,97 @@ echo "========================================================="
 
 # --- STARTUP LOGIC & BACKGROUND TASKS ---
 
+def raw_policies_have_stale_today():
+    """
+    Return True when device_policies.json on disk still holds a 'today only'
+    unblock window from a previous day.
+
+    This MUST read the raw JSON. load_device_policies() runs every policy through
+    ensure_policy_schema(), which already resets today_date to the current day —
+    so comparing its output against today never finds a stale entry, and the
+    expiry task it gated could never fire. The visible symptom was a one-off
+    "unblock for today" staying compiled into rules.acl on that weekday forever.
+    """
+    try:
+        if not os.path.exists(DEVICE_POLICIES_PATH):
+            return False
+        with open(DEVICE_POLICIES_PATH, "r") as f:
+            raw = json.load(f)
+    except Exception as e:
+        print(f"[expiry] Could not read raw policies: {e}")
+        return False
+
+    current = today_str()
+    for policy in raw.values():
+        if not isinstance(policy, dict):
+            continue
+        for entry in policy.get("default_block", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            stamp = entry.get("today_date")
+            if not stamp or stamp == current:
+                continue
+            # Only a window that actually granted access needs recompiling.
+            if any(entry.get("unblock_today") or []):
+                return True
+    return False
+
+
 def daily_expiration_task():
-    """Background thread to auto-expire 'Today Only' rules at midnight."""
+    """Background thread that expires 'Today Only' unblock windows after midnight."""
     while True:
-        time.sleep(3600)  # Check every hour
+        time.sleep(600)  # Check every 10 minutes so expiry lands close to midnight
         try:
-            policies = load_device_policies()
-            changed = False
-            current_today = today_str()
-            
-            for ip, policy in policies.items():
-                for entry in policy.get("default_block", []):
-                    if entry.get("today_date") and entry["today_date"] != current_today:
-                        changed = True
-                        break
-                if changed:
-                    break
-            
-            if changed:
-                print("Daily expiration triggered: Cleaning up stale 'Today Only' rules.")
-                # This will automatically clear stale today_date entries during ensure_policy_schema
-                save_device_policies(policies)
+            if not raw_policies_have_stale_today():
+                continue
+            print("[expiry] Stale 'Today Only' unblock window detected — recompiling ACLs.")
+            # load_device_policies() clears the stale slots via ensure_policy_schema;
+            # saving persists the cleared state and regenerates rules.acl.
+            ok, message = save_device_policies(load_device_policies())
+            if not ok:
+                print(f"[expiry] Recompile failed: {message}")
         except Exception as e:
-            print(f"Error in daily_expiration_task: {e}")
+            print(f"[expiry] Error in daily_expiration_task: {e}")
 
-# Compile on startup to ensure rules.acl is always generated correctly
-try:
-    initial_policies = load_device_policies()
-    compile_device_policies_acls(initial_policies)
-except Exception as e:
-    print(f"Startup compilation failed: {e}")
 
-expiration_thread = threading.Thread(target=daily_expiration_task, daemon=True)
-expiration_thread.start()
+def _is_primary_worker():
+    """
+    True when this process should own the singleton startup work.
+
+    Gunicorn forks one process per worker and each imports this module, so
+    without a guard every worker recompiles the ACLs and SIGHUPs Squid on boot,
+    and every worker runs its own expiry thread. An advisory lock file on the
+    shared config volume elects exactly one owner.
+    """
+    lock_path = os.path.join(SQUID_CONFIG_DIR, ".startup.lock")
+    try:
+        os.makedirs(SQUID_CONFIG_DIR, exist_ok=True)
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Deliberately leaked: the lock is held for the lifetime of the process.
+        globals()["_STARTUP_LOCK_FD"] = fd
+        return True
+    except (OSError, IOError):
+        return False
+    except Exception as e:
+        print(f"[startup] Worker election unavailable ({e}); proceeding as primary.")
+        return True
+
+
+if _is_primary_worker():
+    # Compile on startup so rules.acl always matches device_policies.json.
+    try:
+        ok, message = compile_device_policies_acls(load_device_policies())
+        if not ok:
+            print(f"[startup] Compilation reported: {message}")
+    except Exception as e:
+        print(f"[startup] Compilation failed: {e}")
+
+    expiration_thread = threading.Thread(target=daily_expiration_task, daemon=True)
+    expiration_thread.start()
+else:
+    print("[startup] Secondary worker — skipping ACL compilation and expiry thread.")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3131, debug=False)

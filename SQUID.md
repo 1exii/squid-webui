@@ -23,11 +23,13 @@ The architecture is divided into **3 distinct configuration layers**:
                                                 │
                                                 ▼
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ LAYER 2: Container Startup SSL-Bump Generator (configs/generate_bump_domains.py)                 │
-│ • Runs automatically on squid-proxy container startup / deployment.                               │
+│ LAYER 2: SSL-Bump Domain Generator (configs/generate_bump_domains.py)                            │
+│ • Runs on squid-proxy container startup, AND is mirrored by the Web UI on every                  │
+│   policy compile so Web UI blocklist edits take effect without a restart.                        │
 │ • Parses raw blocklists (/etc/squid/block-lists/*.txt) for entries with URL path rules (/).      │
 │ • Deduplicates domains (.steamcommunity.com) to prevent Squid duplicate domain errors.           │
-│ • Outputs: /etc/squid/configs/bump_domains.acl                                                   │
+│ • Outputs: bump_domains.acl (the list) AND bump_domains.conf (the directives).                   │
+│   When no path rule exists, bump_domains.conf is empty — no dead ACL is declared.                │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
                                                 │
                                                 ▼
@@ -38,6 +40,8 @@ The architecture is divided into **3 distinct configuration layers**:
 │ • Outputs per-device src ACLs, dstdomain ACLs, time ACLs, and http_access rules.                │
 │ • Generates per-device SSL bump rules so blocked sites render Parental Block Pages over HTTPS.   │
 │ • Outputs: /etc/squid/configs/rules.acl & /etc/squid/configs/ssl_bump.acl                         │
+│ • Validates with `squid -k parse` via the Docker exec API BEFORE reloading, and                 │
+│   rolls back to the previous ACLs if the generated config is rejected.                          │
 │ • Triggers live reload via Docker Daemon Unix socket SIGHUP (/var/run/docker.sock).             │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -66,17 +70,24 @@ The architecture is divided into **3 distinct configuration layers**:
    # Bumps blocked categories specifically for target devices so custom block pages render
    include /etc/squid/configs/ssl_bump.acl
 
-   # Step 3: Bump global domains requiring deep URL path inspection
-   acl bump_domains dstdomain "/etc/squid/configs/bump_domains.acl"
-   ssl_bump bump bump_domains
+   # Step 3: Bump global domains requiring deep URL path inspection.
+   # The acl/ssl_bump pair lives in the generated bump_domains.conf, which is
+   # empty when no blocklist defines a 'domain/path' rule.
+   include /etc/squid/configs/bump_domains.conf
 
    # Step 4: Splice all other traffic by default (raw passthrough, zero CA needed on unrestricted devices)
    ssl_bump splice all
    ```
-4. **Dynamic Policy Include**:
+4. **Dynamic Policy Include** — placed AFTER the `Safe_ports` / `CONNECT` denies.
+   Squid stops at the first matching `http_access` line, so a Web UI `allow` for a
+   time window would otherwise short-circuit both port guards:
    ```acl
-   # Include Web UI auto-generated device rules
-   include /etc/squid/configs/rules.acl
+   http_access allow localhost
+   http_access deny !Safe_ports
+   http_access deny CONNECT !SSL_ports
+   include /etc/squid/configs/rules.acl   # Web UI auto-generated device rules
+   http_access allow localnet
+   http_access deny all
    ```
 
 ---
@@ -143,9 +154,12 @@ acl path_url_gaming_txt_1 urlpath_regex -i ^/market
 When the admin clicks **Save & Apply** in the Web UI:
 1. `POST /api/policies` saves policies and writes `/etc/squid/configs/rules.acl`.
 2. `POST /api/apply` invokes `reload_squid()`.
-3. `reload_squid()` communicates with the Docker daemon via Unix Socket `/var/run/docker.sock`:
-   `POST /containers/squid-proxy/kill?signal=HUP`
-4. Squid reloads `rules.acl` instantly without dropping active TCP connections.
+3. `reload_squid()` first runs `squid -k parse` inside the container via the Docker
+   exec API. If the generated configuration is rejected, the previous ACL files are
+   restored and **no signal is sent** — Squid is the default route for HTTP/HTTPS on
+   every intercepted host, so a reload that kills it takes those devices offline.
+4. On a clean parse it sends `POST /containers/squid-proxy/kill?signal=HUP`.
+5. Squid reloads `rules.acl` instantly without dropping active TCP connections.
 
 ---
 
@@ -155,7 +169,8 @@ When the admin clicks **Save & Apply** in the Web UI:
 | :--- | :--- | :--- | :--- |
 | `configs/squid.conf.template` | Static Config | Git / Manual | Master Squid configuration template. |
 | `configs/generate_bump_domains.py` | Python Script | Git | Standalone SSL-bump domain generator script. |
-| `configs/bump_domains.acl` | Auto-Generated ACL | Container Startup | Contains domains requiring SSL Bumping for path rules. |
+| `configs/bump_domains.acl` | Auto-Generated ACL | Container start + Web UI | Domains requiring SSL Bumping for path rules. |
+| `configs/bump_domains.conf` | Auto-Generated Config | Container start + Web UI | The `acl`/`ssl_bump` directives for the list above; empty when no path rule exists. |
 | `configs/rules.acl` | Auto-Generated ACL | Web UI (`app.py`) | Contains active per-device conditional ACL rules. |
 | `configs/ssl_bump.acl` | Auto-Generated ACL | Web UI (`app.py`) | Contains active per-device dynamic SSL Bump interception rules. |
 | `configs/domains_*.acl` | Auto-Generated ACL | Web UI (`app.py`) | Deduplicated clean domain lists per blocklist category. |
@@ -166,10 +181,11 @@ When the admin clicks **Save & Apply** in the Web UI:
 
 ## 4. Troubleshooting & Operational Commands
 
-### 1. Re-generate `bump_domains.acl` manually
+### 1. Re-generate `bump_domains.acl` / `bump_domains.conf` manually
 ```bash
 python3 configs/generate_bump_domains.py block-lists configs/bump_domains.acl
 ```
+(The Web UI does this automatically on every **Save & Apply**.)
 
 ### 2. Verify Squid syntax inside proxy container
 ```bash
@@ -190,3 +206,26 @@ ssh admin@192.168.1.2 "/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker 
 ```bash
 ssh admin@192.168.1.2 "/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker exec squid-proxy tail -f /var/log/squid/access.log"
 ```
+
+---
+
+## 5. Router Rules (`router/squid-proxy-rules.sh`)
+
+`router/squid-proxy-rules.sh` is the **single source of truth** for the router-side
+rules. `squid-mgmt.sh router-deploy` copies it, substitutes `SQUID_IP`, appends one
+`add_host` line per entry in `router/proxy-hosts.conf`, syntax-checks the result,
+and uploads it to `/jffs/scripts/squid-proxy-rules.sh`.
+
+It uses **policy routing (fwmark 0x5000 → table 150), not DNAT.** This matters:
+a DNAT + MASQUERADE scheme rewrites the source address to the router's, so every
+request reaches Squid from `192.168.0.1` and all per-device `src` ACLs collapse to
+a single client — filtering appears to work while applying the wrong policy to
+everyone. Preserving the client IP is what makes `acl src_dev_<ip> src <ip>` mean
+anything.
+
+QUIC handling is two-sided and both halves are required:
+
+1. `ACCEPT` UDP 80/443 toward the `youtube_quic` ipset, so YouTube playback stays
+   on QUIC and does not degrade.
+2. `REJECT` all other UDP 443, so no other site can negotiate QUIC and bypass the
+   proxy — Squid only ever sees TCP.
