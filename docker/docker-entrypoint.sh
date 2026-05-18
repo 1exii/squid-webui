@@ -43,6 +43,40 @@ if [ -f "/etc/squid/configs/generate_bump_domains.py" ]; then
     python3 /etc/squid/configs/generate_bump_domains.py /etc/squid/block-lists /etc/squid/configs/bump_domains.acl || true
 fi
 
+# ------------------------------------------------------------------------------
+# FAIL-CLOSED GUARD: rules.acl and ssl_bump.acl must agree.
+#
+# rules.acl scopes its denies to '!CONNECT' so that intercepted HTTPS is allowed
+# to reach the ssl_bump stage, gets bumped, and can be shown the block page on the
+# decrypted request. That is only safe while ssl_bump.acl actually contains the
+# matching 'ssl_bump bump' rules. If the two ever desync — a stale volume, a
+# partial deploy, a hand-edit — the CONNECT is allowed but never bumped, falls
+# through to 'http_access allow localnet', and EVERY blocked HTTPS site becomes
+# reachable. Parental controls must fail closed, never open.
+#
+# When a desync is detected, strip the '!CONNECT' scoping so the denies apply at
+# the CONNECT stage again. Blocked sites then fail with a TLS error instead of a
+# pretty block page — degraded, but blocked. The Web UI restores the full
+# behaviour on its next compile.
+# ------------------------------------------------------------------------------
+RULES_ACL="/etc/squid/configs/rules.acl"
+SSL_BUMP_ACL="/etc/squid/configs/ssl_bump.acl"
+
+if [ -f "${RULES_ACL}" ] && grep -q '^http_access deny !CONNECT' "${RULES_ACL}" 2>/dev/null; then
+    if ! grep -qE '^ssl_bump[[:space:]]+bump[[:space:]]' "${SSL_BUMP_ACL}" 2>/dev/null; then
+        echo "[entrypoint] ***********************************************************"
+        echo "[entrypoint] FAIL-CLOSED: rules.acl uses '!CONNECT' deny scoping but"
+        echo "[entrypoint] ssl_bump.acl contains NO bump rules. Blocked HTTPS sites"
+        echo "[entrypoint] would tunnel through unfiltered. Removing the scoping so"
+        echo "[entrypoint] denies apply at the CONNECT stage."
+        echo "[entrypoint] Re-run Save & Apply in the Web UI to restore block pages."
+        echo "[entrypoint] ***********************************************************"
+        sed -i 's/^http_access deny !CONNECT /http_access deny /' "${RULES_ACL}"
+    else
+        echo "[entrypoint] ACL pairing OK: '!CONNECT' denies are backed by bump rules."
+    fi
+fi
+
 # 5. Initialize Squid swap cache directories if running for first time
 if [ ! -d "/var/cache/squid/0F/FF" ]; then
     echo "[entrypoint] Initializing cache directories (squid -z)..."

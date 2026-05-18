@@ -599,8 +599,39 @@ def _build_policy_acls(policies, parsed_blocklists):
         clean_ip_id = ip.replace(".", "_")
         src_acl_name = f"src_dev_{clean_ip_id}"
 
+        # ------------------------------------------------------------------
+        # CONNECT scoping — this is what makes the HTTPS block page render.
+        #
+        # For an intercepted TLS connection Squid peeks the ClientHello, builds a
+        # synthetic "CONNECT host:443" request, and runs http_access on it BEFORE
+        # consulting ssl_bump. A plain 'http_access deny <src> <list>' therefore
+        # matches at the CONNECT stage and Squid writes the ERR_ACCESS_DENIED HTML
+        # in cleartext onto a socket where the client is still waiting for a
+        # ServerHello. The browser sees a protocol error, not the block page — and
+        # the 'ssl_bump bump' rule never runs at all.
+        #
+        # Restricting the deny to '!CONNECT' lets the tunnel be established and
+        # bumped; the decrypted inner GET then matches the same deny and the block
+        # page is delivered inside the TLS session, where the browser can render it.
+        #
+        # This is ONLY safe when the connection is guaranteed to be bumped —
+        # otherwise the CONNECT would fall through to 'http_access allow localnet'
+        # and the site would be fully reachable. ssl_bump.acl below bumps exactly
+        # 'src_dev + list' in blocked_only mode and the whole device in all mode,
+        # so those two modes qualify. Any other mode keeps the CONNECT-level deny:
+        # the user gets a connection error rather than a page, but access is denied.
+        bump_guaranteed = ssl_bump_mode in ("all", "blocked_only")
+        deny_scope = "!CONNECT " if bump_guaranteed else ""
+
         acl_lines.append(f"# ── Device: {hostname} ({ip}) ──")
         acl_lines.append(f"acl {src_acl_name} src {ip}")
+        if not bump_guaranteed:
+            acl_lines.append(
+                f"# NOTE: ssl_bump_mode='{ssl_bump_mode}' — HTTPS is denied at the CONNECT"
+            )
+            acl_lines.append(
+                "#       stage, so blocked sites fail with a TLS error instead of the block page."
+            )
         acl_lines.append("")
 
         ssl_bump_lines.append(f"# ── Device SSL Bump: {hostname} ({ip}) [Mode: {ssl_bump_mode}] ──")
@@ -654,12 +685,14 @@ def _build_policy_acls(policies, parsed_blocklists):
             for bl in always_block:
                 bl_id = bl.replace('.', '_').replace('-', '_')
                 bl_acl_name = f"list_{bl_id}"
-                acl_lines.append(f"http_access deny {src_acl_name} {bl_acl_name}")
+                acl_lines.append(f"http_access deny {deny_scope}{src_acl_name} {bl_acl_name}")
                 if bl in parsed_blocklists:
                     path_rules = parsed_blocklists[bl].get("path_rules", [])
                     for idx in range(1, len(path_rules) + 1):
                         p_dom_acl = f"path_dom_{bl_id}_{idx}"
                         p_url_acl = f"path_url_{bl_id}_{idx}"
+                        # urlpath_regex can never match a CONNECT (no path component),
+                        # so these are inherently post-decryption rules already.
                         acl_lines.append(f"http_access deny {src_acl_name} {p_dom_acl} {p_url_acl}")
             acl_lines.append("")
 
@@ -691,7 +724,7 @@ def _build_policy_acls(policies, parsed_blocklists):
                 time_acl_idx += 1
 
             # Fallback: deny plain domains and path rules outside allowed windows
-            acl_lines.append(f"http_access deny {src_acl_name} {bl_acl_name}")
+            acl_lines.append(f"http_access deny {deny_scope}{src_acl_name} {bl_acl_name}")
             if bl in parsed_blocklists:
                 path_rules = parsed_blocklists[bl].get("path_rules", [])
                 for idx in range(1, len(path_rules) + 1):

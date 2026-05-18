@@ -89,6 +89,7 @@ It validates:
 | **TC-3.4a: `ssl_bump.acl` Present** | Dynamic bump rules generated. | `cat /etc/squid/configs/ssl_bump.acl`. | Contains the `DYNAMIC SSL BUMP RULES` banner. |
 | **TC-3.4b: No Dangling ACL Refs** | `ssl_bump.acl` references names *defined in* `rules.acl`. | Extract every ACL name used by `ssl_bump bump …` and require an `acl <name>` definition in `rules.acl`. | Zero dangling references. A dangling name aborts Squid on reload and takes the proxy down. |
 | **TC-3.4c: Bump Coverage** | A device with blocked lists must have a bump rule. | Compare policies with blocked lists against `ssl_bump bump` lines. | At least one bump rule whenever any device has blocked categories — otherwise the HTTPS block page can never render. |
+| **TC-3.4d: Bypass Invariant** | Every `http_access deny !CONNECT <src> <list>` must have a matching `ssl_bump bump` rule. | Parse both files and cross-reference. | Zero unmatched denies. The `!CONNECT` scoping deliberately lets the CONNECT through so Squid can bump and render the block page on the decrypted request; without the bump rule the CONNECT falls through to `http_access allow localnet` and **the site becomes fully reachable**. This check must never fail. |
 | **TC-3.5a: `bump_domains.acl` ↔ Blocklists** | The generated bump list matches its source. | Derive the expected set from `block-lists/*.txt` lines containing `/`, diff against the container's file. | Exact match; an empty file is correct when no blocklist has a path rule. The previous hardcoded "must contain `steamcommunity.com`" assertion failed on a correct system and hid the fact that the file was stale. |
 | **TC-3.5b: No Plain-Domain Leak** | Selective bumping must stay selective. | Any entry not derivable from a `domain/path` blocklist line is a leak. | No plain blocklist domain in `bump_domains.acl` — a leak would decrypt that domain for **all** devices. |
 | **TC-3.5c: `.conf` ↔ `.acl` Agreement** | `bump_domains.conf` holds the `acl` + `ssl_bump` directives; `squid.conf` includes it rather than declaring them inline. | Check whether the `.conf` declares `acl bump_domains` and compare against the `.acl` entry count. | Declares the ACL when the list is non-empty; declares nothing when it is empty. A declaration over an empty file parses fine but can never match. |
@@ -164,11 +165,11 @@ The run ends with `exit 1` if any assertion failed.
 
 ## 6. Known Limitations
 
-1. **`--local` mode cannot validate SSL bumping.** It reaches Squid through
-   `http_port 3128`, which is declared without the `ssl-bump` flag, so `CONNECT`
-   tunnels are spliced regardless of policy. Bump-dependent assertions are
-   downgraded to `WARN` in this mode. For a true end-to-end test, add the runner
-   host to `router/proxy-hosts.conf` and run without `--local`.
+1. **`--local` mode exercises the explicit-proxy path.** It reaches Squid through
+   `http_port 3128`. That port now carries the `ssl-bump` flag, so bumping and the
+   block page *are* assertable there — but it still bypasses the router's
+   transparent interception. For a true end-to-end test, add the runner host to
+   `router/proxy-hosts.conf` and run without `--local`.
 2. **TC-4.4 needs a path rule to exist.** Deep URL path inspection can only be
    tested when some blocklist contains a `domain/path` entry; otherwise the test
    reports a WARN and is skipped.

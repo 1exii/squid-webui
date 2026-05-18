@@ -140,14 +140,14 @@ acl list_gaming_txt dstdomain "/etc/squid/configs/domains_gaming.txt.acl"
 acl path_dom_gaming_txt_1 dstdomain .steamcommunity.com
 acl path_url_gaming_txt_1 urlpath_regex -i ^/market
 
-  # Always Block — Child Phone
-  http_access deny src_dev_192_168_1_50 list_gaming_txt
+  # Always Block — Child Phone  (note the !CONNECT scoping)
+  http_access deny !CONNECT src_dev_192_168_1_50 list_gaming_txt
   http_access deny src_dev_192_168_1_50 path_dom_gaming_txt_1 path_url_gaming_txt_1
 
   # Default Block with Unblock Windows — Child Phone
   acl time_allow_192_168_1_50_1 time MTWTF 16:00-20:00
   http_access allow src_dev_192_168_1_50 list_socialmedia_txt time_allow_192_168_1_50_1
-  http_access deny src_dev_192_168_1_50 list_socialmedia_txt
+  http_access deny !CONNECT src_dev_192_168_1_50 list_socialmedia_txt
 ```
 
 #### Step C: Hot-Reload Signal (`reload_squid`)
@@ -229,3 +229,60 @@ QUIC handling is two-sided and both halves are required:
    on QUIC and does not degrade.
 2. `REJECT` all other UDP 443, so no other site can negotiate QUIC and bypass the
    proxy — Squid only ever sees TCP.
+
+---
+
+## 6. Why deny rules are scoped to `!CONNECT`
+
+For an intercepted TLS connection Squid peeks the ClientHello, synthesises a
+`CONNECT host:443` request, and runs `http_access` on it **before** consulting
+`ssl_bump`. A plain `http_access deny <src> <list>` therefore matches at the
+CONNECT stage: Squid writes the `ERR_ACCESS_DENIED` HTML in cleartext onto a
+socket where the browser is still waiting for a TLS ServerHello, the browser
+discards it as a protocol error, and the `ssl_bump bump` rule never runs at all.
+
+The symptom is a site that is blocked but shows a browser TLS error instead of the
+parental block page, with an access log line like:
+
+```
+TCP_DENIED/403 8631 CONNECT www.pornhub.com:443 - HIER_NONE/- text/html
+```
+
+The 8631 bytes are the block page — delivered where it cannot be rendered. The
+same block over plain HTTP works, because there is no CONNECT stage:
+
+```
+TCP_DENIED/403 8636 GET http://www.youtube.com/ - HIER_NONE/- text/html
+```
+
+Scoping the deny to `!CONNECT` lets the tunnel be established and bumped; the
+decrypted inner `GET` then matches the same deny and the block page is delivered
+*inside* the TLS session. A correctly bumped block logs as:
+
+```
+TCP_DENIED/403 ... GET https://www.pornhub.com/ ...
+```
+
+### The invariant this creates
+
+`!CONNECT` scoping is only safe when the connection is **guaranteed** to be
+bumped. Otherwise the CONNECT falls through to `http_access allow localnet` and
+the site becomes fully reachable. Two things enforce this:
+
+1. `compile_device_policies_acls()` emits the `!CONNECT` form only for
+   `ssl_bump_mode` of `blocked_only` or `all` — exactly the modes for which
+   `ssl_bump.acl` emits a matching bump rule. Any other mode keeps the
+   CONNECT-level deny (blocked, but with a TLS error rather than a page).
+2. `http_port 3128` carries the `ssl-bump` flag. Any port that handles CONNECT
+   must be able to bump, or a client manually configured to use it would tunnel
+   straight past the blocklists.
+
+**TC-3.4d** in the test suite cross-references both generated files and fails if
+any `!CONNECT` deny lacks a bump rule.
+
+### Client CA trust is still required
+
+Once bumping works, the browser must trust `squid-ca.crt` or it shows a
+certificate warning instead of the block page — and for HSTS sites (most large
+ones) that warning cannot be clicked through. Install the CA with
+`squid-mgmt.sh linux-deploy`, or from `http://192.168.1.91:3131/download/cert.crt`.

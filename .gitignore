@@ -14,5 +14,6 @@ configs/rules.json
 configs/device_policies.json
 configs/.flask_secret_key
 configs/.startup.lock
+configs/ssl_bump.acl
+configs/rules.acl
 !configs/bump_domains.acl
-!configs/ssl_bump.acl
