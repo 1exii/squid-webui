@@ -4,8 +4,14 @@
 
 # -- 1. NETWORK AND ACCESS CONFIGURATION --
 
-# Explicit HTTP proxy port (for manual proxy settings)
-http_port 3128
+# Explicit HTTP proxy port (for manual proxy settings).
+#
+# 'ssl-bump' is REQUIRED here, not optional. The generated deny rules are scoped
+# to '!CONNECT' so that intercepted HTTPS can be bumped and shown the block page
+# (see rules.acl). That scoping means a CONNECT is allowed through to the ssl_bump
+# stage — so any port handling CONNECT must be able to bump, or a client manually
+# configured to use this port would tunnel straight past the blocklists.
+http_port 3128 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
 
 # Transparent HTTP proxy port (for router port 80 redirection)
 http_port 3129 intercept

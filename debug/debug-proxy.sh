@@ -350,6 +350,32 @@ if require_proxy_up "TC-1.5 Squid listening ports"; then
 fi
 echo ""
 
+# --- TC-1.6: AS-DEPLOYED ACL pairing, checked BEFORE anything mutates it ---
+#
+# This must run before Suite 2 calls POST /api/apply. That call recompiles the
+# ACLs, which SILENTLY REPAIRS a desynced ssl_bump.acl — so an inspection done
+# afterwards reports a healthy config even when the proxy was wide open until the
+# moment the test suite touched it. That is exactly how a fully bypassed proxy
+# once produced a 44-pass run. Capture and judge the on-disk state first.
+echo "--> 1e. As-deployed ACL pairing (pre-apply snapshot)..."
+if require_proxy_up "TC-1.6 As-deployed ACL pairing"; then
+    PRE_RULES=$(proxy_exec "cat /etc/squid/configs/rules.acl")
+    PRE_BUMPS=$(proxy_exec "cat /etc/squid/configs/ssl_bump.acl")
+
+    PRE_CONNECT_DENIES=$(echo "${PRE_RULES}" | grep -cE '^http_access deny !CONNECT' || true)
+    PRE_BUMP_RULES=$(echo "${PRE_BUMPS}" | grep -cE '^ssl_bump[[:space:]]+bump[[:space:]]' || true)
+    info "As deployed: ${PRE_CONNECT_DENIES} '!CONNECT' deny rule(s), ${PRE_BUMP_RULES} ssl_bump bump rule(s)."
+
+    if [ "${PRE_CONNECT_DENIES}" -gt 0 ] && [ "${PRE_BUMP_RULES}" -eq 0 ]; then
+        fail_test "TC-1.6 FAIL-OPEN as deployed! rules.acl has ${PRE_CONNECT_DENIES} '!CONNECT' deny rule(s) but ssl_bump.acl has NO bump rules. Every blocked HTTPS site tunnels through unfiltered. Usual cause: a deploy overwrote the generated ssl_bump.acl with the repo placeholder."
+    elif [ "${PRE_CONNECT_DENIES}" -eq 0 ] && [ "${PRE_BUMP_RULES}" -eq 0 ]; then
+        warn_test "TC-1.6 No device policies with blocked categories are currently deployed."
+    else
+        pass_test "TC-1.6 As-deployed ACLs are paired correctly (${PRE_CONNECT_DENIES} scoped denies, ${PRE_BUMP_RULES} bump rules)."
+    fi
+fi
+echo ""
+
 # ------------------------------------------------------------------------------
 # STEP 2: SQUID WEB UI FUNCTIONALITY & API VERIFICATION
 # ------------------------------------------------------------------------------
@@ -595,6 +621,28 @@ if require_proxy_up "TC-3.4 ssl_bump.acl inspection"; then
             fail_test "TC-3.4b ssl_bump.acl references ACL name(s) not defined in rules.acl:${DANGLING}"
         fi
 
+        # TC-3.4d: BYPASS INVARIANT. Every 'http_access deny !CONNECT <src> <list>'
+        # in rules.acl must have a matching 'ssl_bump bump' rule. The !CONNECT
+        # scoping lets the CONNECT through so Squid can bump and render the block
+        # page on the decrypted request — but if the bump rule is missing, the
+        # CONNECT instead falls through to 'http_access allow localnet' and the
+        # site becomes fully reachable. This check must never fail.
+        BUMP_ALL=$(echo "${SSL_BUMP_ACL}" | awk '$1=="ssl_bump" && $2=="bump" && NF==3 {print $3}' | sort -u)
+        BUMP_PAIR=$(echo "${SSL_BUMP_ACL}" | awk '$1=="ssl_bump" && $2=="bump" && NF==4 {print $3" "$4}' | sort -u)
+        BYPASS=""
+        while read -r src lst; do
+            [ -z "${src}" ] && continue
+            if echo "${BUMP_ALL}"  | grep -qx "${src}"; then continue; fi
+            if echo "${BUMP_PAIR}" | grep -qx "${src} ${lst}"; then continue; fi
+            BYPASS="${BYPASS} ${src}/${lst}"
+        done < <(echo "${RULES_ACL}" | awk '$1=="http_access" && $2=="deny" && $3=="!CONNECT" {print $4" "$5}')
+
+        if [ -z "${BYPASS}" ]; then
+            pass_test "TC-3.4d Bypass invariant holds: every '!CONNECT' deny is backed by an ssl_bump bump rule."
+        else
+            fail_test "TC-3.4d BYPASS HOLE — '!CONNECT' deny with no matching bump rule; these sites are fully reachable over HTTPS:${BYPASS}"
+        fi
+
         # A device with blocked lists but no bump rule can never be shown the block
         # page over HTTPS — the connection is spliced and the browser gets a TLS
         # error or the real site instead.
@@ -715,7 +763,7 @@ CLIENT_REACHABLE=false
 if [ "${IS_LOCAL_CLIENT}" = true ]; then
     CLIENT_REACHABLE=true
     info "Using local machine (${TARGET_CLIENT_IP}) as test client via EXPLICIT proxy ${SQUID_IP}:3128."
-    warn_test "Local mode limitation: port 3128 is declared 'http_port 3128' with NO 'ssl-bump' flag, so CONNECT tunnels are never bumped. SSL-bump dependent assertions below are downgraded to WARN. For a true end-to-end test, add this host to router/proxy-hosts.conf and run without --local."
+    info "Port 3128 now carries the 'ssl-bump' flag, so CONNECT tunnels ARE bumped and block-page assertions are meaningful in local mode. Note this still exercises the explicit-proxy path, not the router's transparent interception."
 else
     echo "--> Checking SSH connectivity to remote test client ${TARGET_CLIENT_IP}..."
     if ssh -o ConnectTimeout=5 -o BatchMode=yes "${TARGET_CLIENT_IP}" "echo OK" 2>/dev/null | grep -q "OK"; then
@@ -731,10 +779,10 @@ echo ""
 # Downgrade bump-dependent failures to warnings in local mode.
 bump_assert() {
     # $1 = ok(true/false)  $2 = message
+    # Both 3128 (explicit) and 3130 (intercept) carry 'ssl-bump', so bump-dependent
+    # assertions are enforced in every mode.
     if [ "$1" = true ]; then
         pass_test "$2"
-    elif [ "${IS_LOCAL_CLIENT}" = true ]; then
-        warn_test "$2 — not assertable in --local mode (port 3128 does not ssl-bump)."
     else
         fail_test "$2"
     fi
