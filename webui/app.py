@@ -674,10 +674,49 @@ def _build_policy_acls(policies, parsed_blocklists):
             # Bump all HTTPS traffic for this specific device
             ssl_bump_lines.append(f"ssl_bump bump {src_acl_name}")
         elif ssl_bump_mode == "blocked_only":
-            # Bump only the blocked category domains & path domains for this device
-            for bl in all_lists:
+            # Always-blocked categories are bumped unconditionally so Squid can
+            # render the HTTPS block page after decrypting the inner request.
+            for bl in always_block:
                 bl_id = bl.replace('.', '_').replace('-', '_')
                 sni_bl_acl_name = f"sni_list_{bl_id}"
+                ssl_bump_lines.append(f"ssl_bump bump {src_acl_name} {sni_bl_acl_name}")
+                if bl in parsed_blocklists:
+                    path_rules = parsed_blocklists[bl].get("path_rules", [])
+                    for idx in range(1, len(path_rules) + 1):
+                        p_sni_acl = f"sni_path_dom_{bl_id}_{idx}"
+                        ssl_bump_lines.append(f"ssl_bump bump {src_acl_name} {p_sni_acl}")
+
+            # A scheduled category must use native end-to-end TLS while it is
+            # allowed. Merely adding an http_access allow still leaves the stream
+            # bumped, which breaks transports such as YouTube's googlevideo UMP
+            # playback. Splice the category during each allow window, then retain
+            # the unconditional fallback bump so it can be blocked outside them.
+            bump_time_acl_idx = 0
+            for entry in default_block:
+                bl = entry.get("list", "")
+                if not bl:
+                    continue
+                bl_id = bl.replace('.', '_').replace('-', '_')
+                sni_bl_acl_name = f"sni_list_{bl_id}"
+                unblock_weekly = entry.get("unblock_weekly", make_empty_weekly())
+                unblock_today = entry.get("unblock_today", make_empty_today())
+                merged = merge_today_into_weekly(unblock_weekly, unblock_today)
+                allow_ranges = extract_allow_ranges(merged)
+
+                for _range_key in allow_ranges:
+                    time_acl_name = f"time_allow_{clean_ip_id}_{bump_time_acl_idx}"
+                    ssl_bump_lines.append(
+                        f"ssl_bump splice {src_acl_name} {sni_bl_acl_name} {time_acl_name}"
+                    )
+                    if bl in parsed_blocklists:
+                        path_rules = parsed_blocklists[bl].get("path_rules", [])
+                        for idx in range(1, len(path_rules) + 1):
+                            p_sni_acl = f"sni_path_dom_{bl_id}_{idx}"
+                            ssl_bump_lines.append(
+                                f"ssl_bump splice {src_acl_name} {p_sni_acl} {time_acl_name}"
+                            )
+                    bump_time_acl_idx += 1
+
                 ssl_bump_lines.append(f"ssl_bump bump {src_acl_name} {sni_bl_acl_name}")
                 if bl in parsed_blocklists:
                     path_rules = parsed_blocklists[bl].get("path_rules", [])
