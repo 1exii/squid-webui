@@ -633,14 +633,40 @@ if require_proxy_up "TC-3.4 ssl_bump.acl inspection"; then
         while read -r src lst; do
             [ -z "${src}" ] && continue
             if echo "${BUMP_ALL}"  | grep -qx "${src}"; then continue; fi
-            if echo "${BUMP_PAIR}" | grep -qx "${src} ${lst}"; then continue; fi
+            # http_access uses dstdomain list_* ACLs. Transparent SSL bumping
+            # must use the corresponding SNI ACL because its CONNECT target may
+            # still be the original destination IP at SslBump2.
+            sni_lst="sni_${lst}"
+            if echo "${BUMP_PAIR}" | grep -qx "${src} ${sni_lst}"; then continue; fi
             BYPASS="${BYPASS} ${src}/${lst}"
         done < <(echo "${RULES_ACL}" | awk '$1=="http_access" && $2=="deny" && $3=="!CONNECT" {print $4" "$5}')
 
         if [ -z "${BYPASS}" ]; then
-            pass_test "TC-3.4d Bypass invariant holds: every '!CONNECT' deny is backed by an ssl_bump bump rule."
+            pass_test "TC-3.4d Bypass invariant holds: every '!CONNECT' deny is backed by an SNI-aware ssl_bump rule."
         else
-            fail_test "TC-3.4d BYPASS HOLE — '!CONNECT' deny with no matching bump rule; these sites are fully reachable over HTTPS:${BYPASS}"
+            fail_test "TC-3.4d BYPASS HOLE — '!CONNECT' deny with no matching SNI bump rule; these sites are fully reachable over transparent HTTPS:${BYPASS}"
+        fi
+
+        # A dstdomain category ACL happens to work on explicit proxy port 3128,
+        # where CONNECT contains the hostname, but misses transparent port 3130,
+        # where the hostname comes from TLS SNI after ClientHello peek.
+        NON_SNI_BUMPS=""
+        while read -r bump_acl; do
+            [ -z "${bump_acl}" ] && continue
+            case "${bump_acl}" in
+                sni_list_*|sni_path_dom_*)
+                    if ! echo "${RULES_ACL}" | grep -qE "^acl ${bump_acl}[[:space:]]+ssl::server_name([[:space:]]|$)"; then
+                        NON_SNI_BUMPS="${NON_SNI_BUMPS} ${bump_acl}(wrong-type-or-undefined)"
+                    fi
+                    ;;
+                *) NON_SNI_BUMPS="${NON_SNI_BUMPS} ${bump_acl}" ;;
+            esac
+        done < <(echo "${SSL_BUMP_ACL}" | awk '$1=="ssl_bump" && $2=="bump" && NF==4 {print $4}' | sort -u)
+
+        if [ -z "${NON_SNI_BUMPS}" ]; then
+            pass_test "TC-3.4e Every selective SSL-bump rule uses an ssl::server_name ACL (transparent interception safe)."
+        else
+            fail_test "TC-3.4e Selective SSL-bump rule(s) use non-SNI ACLs and may splice blocked sites during transparent interception:${NON_SNI_BUMPS}"
         fi
 
         # A device with blocked lists but no bump rule can never be shown the block
@@ -871,6 +897,14 @@ run_curl_test "TC-4.1 Allowed HTTP (example.com)" "http://example.com" "allow"
 run_curl_test "TC-4.2 Allowed HTTPS spliced (example.com)" "https://example.com" "allow"
 run_curl_test "TC-4.2b Allowed HTTPS spliced (wikipedia.org)" "https://www.wikipedia.org" "allow"
 
+# Run against the real policy before the lifecycle test mutates it. This catches
+# a transparent-interception bypass that an explicit-proxy test cannot reproduce.
+if echo "${POLICIES_RES}" | tr -d '\n' | grep -qE "\"${TARGET_CLIENT_IP}\"[^}]*\"always_block\"[[:space:]]*:[[:space:]]*\[[^]]*\"adult.txt\""; then
+    run_curl_test "TC-4.3 Adult HTTPS transparent block (Pornhub)" "https://www.pornhub.com/" "block"
+else
+    warn_test "TC-4.3 adult.txt is not in always_block for ${TARGET_CLIENT_IP}; Pornhub policy regression test skipped."
+fi
+
 # ------------------------------------------------------------------------------
 # Policy backup / restore. A trap guarantees the original policies are put back
 # even if the script is interrupted mid-test — the previous version leaked test
@@ -888,14 +922,14 @@ restore_policies() {
         curl -s -o /dev/null -m 10 -X POST "${WEBUI_URL}/api/apply" \
             -H "Content-Type: application/json" 2>/dev/null || true
         sleep 2
-        local now
+        local now saved_canon now_canon
         now=$(curl -s -m 5 "${WEBUI_URL}/api/policies" 2>/dev/null || echo "")
-        if [ "${now}" = "${SAVED_POLICIES_JSON}" ]; then
-            echo "  ${C_PASS}[PASS]${C_RST} Original policies restored and verified byte-identical."
-            TESTS_PASSED=$((TESTS_PASSED + 1))
+        saved_canon=$(printf '%s' "${SAVED_POLICIES_JSON}" | jq -S -c . 2>/dev/null || printf '%s' "${SAVED_POLICIES_JSON}")
+        now_canon=$(printf '%s' "${now}" | jq -S -c . 2>/dev/null || printf '%s' "${now}")
+        if [ "${now_canon}" = "${saved_canon}" ]; then
+            pass_test "TC-4.10 Original policies restored and verified semantically identical."
         else
-            echo "  ${C_FAIL}[FAIL]${C_RST} Policy restore MISMATCH — live policies differ from the pre-test snapshot. Check the Web UI before leaving the system unattended."
-            TESTS_FAILED=$((TESTS_FAILED + 1))
+            fail_test "TC-4.10 Policy restore MISMATCH — live policies differ from the pre-test snapshot. Check the Web UI before leaving the system unattended."
         fi
         POLICY_MODIFIED=false
     fi
@@ -918,7 +952,7 @@ if [ "${CLIENT_REACHABLE}" = true ] && [ "${WEBUI_REACHABLE}" = true ]; then
             -d "{\"ip\": \"${TARGET_CLIENT_IP}\", \"hostname\": \"debug-test-client\", \"always_block\": [], \"default_block\": [], \"ssl_bump_mode\": \"blocked_only\"}"
         curl -s -o /dev/null -m 10 -X POST "${WEBUI_URL}/api/apply" -H "Content-Type: application/json"
         sleep 3
-        run_curl_test "TC-4.8a YouTube HTTPS (videos unblocked)" "https://www.youtube.com" "allow_bumped"
+        run_curl_test "TC-4.8a Vimeo HTTPS (videos unblocked)" "https://vimeo.com/" "allow_bumped"
 
         # Phase 2: Videos BLOCKED
         echo "--> [Phase 2] videos.txt BLOCKED for ${TARGET_CLIENT_IP}..."
@@ -926,13 +960,13 @@ if [ "${CLIENT_REACHABLE}" = true ] && [ "${WEBUI_REACHABLE}" = true ]; then
             -d "{\"ip\": \"${TARGET_CLIENT_IP}\", \"hostname\": \"debug-test-client\", \"always_block\": [\"videos.txt\"], \"default_block\": [], \"ssl_bump_mode\": \"blocked_only\"}"
         curl -s -o /dev/null -m 10 -X POST "${WEBUI_URL}/api/apply" -H "Content-Type: application/json"
         sleep 3
-        run_curl_test "TC-4.8b YouTube HTTPS (videos blocked)" "https://www.youtube.com" "block"
+        run_curl_test "TC-4.8b Vimeo HTTPS (videos blocked)" "https://vimeo.com/" "block"
 
         # TC-4.9: Custom block page content, asserted on the HTTPS (bumped) response
         # as well as HTTP — the original script only checked the HTTP body.
         echo "=== 4c. Custom Block Page Content & HTML Template Verification ==="
-        HTTP_BLOCK_OUT=$(client_curl "http://www.youtube.com" "-k")
-        HTTPS_BLOCK_OUT=$(client_curl "https://www.youtube.com" "-k")
+        HTTP_BLOCK_OUT=$(client_curl "http://vimeo.com/" "-k")
+        HTTPS_BLOCK_OUT=$(client_curl "https://vimeo.com/" "-k")
 
         check_block_page() {
             local label="$1" body="$2"
@@ -977,14 +1011,57 @@ echo ""
 # matched neither branch of run_curl_test and therefore asserted NOTHING while
 # still printing as if it had tested something.
 echo "=== 4d. Deep URL Path Rule Inspection ==="
-PATH_RULE_LINE=$(grep -hE '^[^#].*/' "${BLOCKLIST_DIR}"/*.txt 2>/dev/null | head -1 || true)
+PATH_RULE_LINE=""
+PATH_RULE_FILE=""
+
+domain_covered_by_plain_rule() {
+    local domain="$1" file="$2" line base
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [ -z "${line}" ] && continue
+        [[ "${line}" == */* ]] && continue
+        if [[ "${line}" == .* ]]; then
+            base="${line#.}"
+            if [ "${domain}" = "${base}" ] || [[ "${domain}" == *."${base}" ]]; then
+                return 0
+            fi
+        elif [ "${domain}" = "${line}" ]; then
+            return 0
+        fi
+    done < "${file}"
+    return 1
+}
+
+# Pick a path-only rule from a category that is actually active for the target.
+# A path alongside a plain '.domain' entry cannot have an allowed base domain,
+# and an unselected blocklist should not block anything at all.
+for candidate_file in "${BLOCKLIST_DIR}"/*.txt; do
+    candidate_list=$(basename "${candidate_file}")
+    if ! printf '%s' "${POLICIES_RES}" | jq -e --arg ip "${TARGET_CLIENT_IP}" --arg bl "${candidate_list}" \
+        '.policies[$ip] | ((.always_block // []) + ((.default_block // []) | map(.list))) | index($bl) != null' >/dev/null 2>&1; then
+        continue
+    fi
+    while IFS= read -r candidate_line; do
+        [ -z "${candidate_line}" ] && continue
+        candidate_domain="${candidate_line%%/*}"
+        candidate_domain="${candidate_domain#.}"
+        if ! domain_covered_by_plain_rule "${candidate_domain}" "${candidate_file}"; then
+            PATH_RULE_LINE="${candidate_line}"
+            PATH_RULE_FILE="${candidate_list}"
+            break 2
+        fi
+    done < <(grep -E '^[^#].*/' "${candidate_file}" 2>/dev/null || true)
+done
+
 if [ -z "${PATH_RULE_LINE}" ]; then
-    warn_test "TC-4.4 No blocklist defines a 'domain/path' rule, so deep URL path inspection cannot be tested. Add e.g. 'steamcommunity.com/market' to block-lists/gaming.txt to exercise this feature (bump_domains.acl is empty until then)."
+    warn_test "TC-4.4 No active blocklist for ${TARGET_CLIENT_IP} has a non-redundant 'domain/path' rule; deep path block/base-allow behavior was not tested."
 else
     PATH_DOMAIN="${PATH_RULE_LINE%%/*}"
     PATH_DOMAIN="${PATH_DOMAIN#.}"
     PATH_SUFFIX="/${PATH_RULE_LINE#*/}"
-    info "Path rule under test: ${PATH_DOMAIN}${PATH_SUFFIX}"
+    info "Path rule under test: ${PATH_DOMAIN}${PATH_SUFFIX} (${PATH_RULE_FILE})"
     run_curl_test "TC-4.4a Blocked path (${PATH_DOMAIN}${PATH_SUFFIX})" "https://${PATH_DOMAIN}${PATH_SUFFIX}" "block"
     run_curl_test "TC-4.4b Allowed base domain (${PATH_DOMAIN})"        "https://${PATH_DOMAIN}/"              "allow_bumped"
 fi

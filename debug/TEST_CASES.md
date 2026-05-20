@@ -89,7 +89,8 @@ It validates:
 | **TC-3.4a: `ssl_bump.acl` Present** | Dynamic bump rules generated. | `cat /etc/squid/configs/ssl_bump.acl`. | Contains the `DYNAMIC SSL BUMP RULES` banner. |
 | **TC-3.4b: No Dangling ACL Refs** | `ssl_bump.acl` references names *defined in* `rules.acl`. | Extract every ACL name used by `ssl_bump bump …` and require an `acl <name>` definition in `rules.acl`. | Zero dangling references. A dangling name aborts Squid on reload and takes the proxy down. |
 | **TC-3.4c: Bump Coverage** | A device with blocked lists must have a bump rule. | Compare policies with blocked lists against `ssl_bump bump` lines. | At least one bump rule whenever any device has blocked categories — otherwise the HTTPS block page can never render. |
-| **TC-3.4d: Bypass Invariant** | Every `http_access deny !CONNECT <src> <list>` must have a matching `ssl_bump bump` rule. | Parse both files and cross-reference. | Zero unmatched denies. The `!CONNECT` scoping deliberately lets the CONNECT through so Squid can bump and render the block page on the decrypted request; without the bump rule the CONNECT falls through to `http_access allow localnet` and **the site becomes fully reachable**. This check must never fail. |
+| **TC-3.4d: Bypass Invariant** | Every `http_access deny !CONNECT <src> <list>` must have a matching SNI-aware `ssl_bump bump` rule. | Map each HTTP `list_*` ACL to its `sni_list_*` counterpart and cross-reference both files. | Zero unmatched denies. The `!CONNECT` scoping deliberately lets the CONNECT through so Squid can bump and render the block page on the decrypted request; without the bump rule the CONNECT falls through to `http_access allow localnet` and **the site becomes fully reachable**. This check must never fail. |
+| **TC-3.4e: Transparent SNI Safety** | Selective bump rules can match a transparent TLS connection after ClientHello peek. | Inspect every `ssl_bump bump <src> <category>` rule. | Category ACL is `sni_list_*` or `sni_path_dom_*` and is declared as `ssl::server_name`. Reusing `dstdomain` works through explicit port 3128 but silently splices transparent port 3130. |
 | **TC-3.5a: `bump_domains.acl` ↔ Blocklists** | The generated bump list matches its source. | Derive the expected set from `block-lists/*.txt` lines containing `/`, diff against the container's file. | Exact match; an empty file is correct when no blocklist has a path rule. The previous hardcoded "must contain `steamcommunity.com`" assertion failed on a correct system and hid the fact that the file was stale. |
 | **TC-3.5b: No Plain-Domain Leak** | Selective bumping must stay selective. | Any entry not derivable from a `domain/path` blocklist line is a leak. | No plain blocklist domain in `bump_domains.acl` — a leak would decrypt that domain for **all** devices. |
 | **TC-3.5c: `.conf` ↔ `.acl` Agreement** | `bump_domains.conf` holds the `acl` + `ssl_bump` directives; `squid.conf` includes it rather than declaring them inline. | Check whether the `.conf` declares `acl bump_domains` and compare against the `.acl` entry count. | Declares the ACL when the list is non-empty; declares nothing when it is empty. A declaration over an empty file parses fine but can never match. |
@@ -104,17 +105,18 @@ It validates:
 | **TC-4.0: Client Reachability** | Test client answers over SSH. | `ssh -o BatchMode=yes <client> echo OK` | `OK`. |
 | **TC-4.1: Allowed HTTP** | Unblocked domain over HTTP. | `curl http://example.com` | 200 / 3xx. |
 | **TC-4.2: Allowed HTTPS (spliced)** | Unblocked HTTPS is passed through raw. | `curl -k https://example.com`, `https://www.wikipedia.org` | 200 / 3xx. |
-| **TC-4.4a: Blocked URL Path** | Deep path inspection blocks `domain/path`. | Derived at runtime from the first `domain/path` line in `block-lists/`. | 403 + parental block page. **Skipped with a WARN when no blocklist defines a path rule.** |
-| **TC-4.4b: Base Domain Allowed** | The base domain of a path rule stays reachable. | `curl -k https://<domain>/` | 200 / 3xx with no block page. |
+| **TC-4.3: Adult HTTPS Transparent Block** | Regression for selective SSL bumping on the target's real adult policy. | Before policy mutation, request `https://www.pornhub.com/` when `adult.txt` is in `always_block`. | 403 + parental block page. A tunneled 200 exposes a transparent SNI matching bypass. |
+| **TC-4.4a: Blocked URL Path** | Deep path inspection blocks `domain/path`. | Select a path-only rule from a blocklist active for the target device. | 403 + parental block page. **Skipped with a WARN when no active category has a non-redundant path rule.** |
+| **TC-4.4b: Base Domain Allowed** | The base domain of a path-only rule stays reachable. | `curl -k https://<domain>/` after excluding rules whose domain is also covered by a plain-domain entry. | 200 / 3xx with no block page. |
 | **TC-4.5: Strict CA Trust** | Root CA is installed on the client. | `curl https://example.com` **without** `-k`. | Clean handshake, no `SSL certificate problem`. |
 | **TC-4.6a: Spotify 4070 (router)** | Router marks TCP 4070. | `iptables -t mangle -L SQUID_MARK`. | 4070 covered. |
 | **TC-4.6b: Spotify 4070 (container)** | Container redirects 4070. | Container NAT `PREROUTING`. | `4070 → 3130`. Asserted separately from the router half so a failure names the broken side. |
 | **TC-4.7a: YouTube QUIC Allow** | YouTube keeps using QUIC for playback. | FORWARD `ACCEPT` for the `youtube_quic` ipset (or the CIDR fallback). | Rule present. |
 | **TC-4.7b: QUIC Bypass Prevention** | All *other* UDP/443 is rejected so browsers fall back to TCP and Squid can see the traffic. | FORWARD `REJECT` udp/443 per intercepted host. | Rule present for every host in `proxy-hosts.conf`. Without it, any site bypasses the proxy over QUIC. |
-| **TC-4.8a/b: Video Lifecycle** | Dynamic Web UI policy change takes effect. | `POST /api/policies` unblocked → test → blocked → test → restore. | Unblocked: 200 with no block page. Blocked: 403 + block page. |
+| **TC-4.8a/b: Video Lifecycle** | Dynamic Web UI policy change takes effect. | `POST /api/policies` unblocked → test Vimeo → blocked → test Vimeo → restore. | Unblocked: 200 with no block page. Blocked: 403 + block page. |
 | **TC-4.9a: Block Page over HTTP** | Block page payload. | Blocked domain over HTTP. | 403, `X-Squid-Error: ERR_ACCESS_DENIED`, `Webpage Blocked` title, parental message. |
 | **TC-4.9b: Block Page over HTTPS** | The page users actually see. | Same domain over HTTPS (bumped). | Same four signatures. Previously only the HTTP body was checked. |
-| **TC-4.10: Policy Restore** | The suite leaves no residue. | Snapshot before mutation; restore via an `EXIT`/`INT`/`TERM` trap; re-`GET` and compare. | Live policies byte-identical to the pre-test snapshot. |
+| **TC-4.10: Policy Restore** | The suite leaves no residue. | Snapshot before mutation; restore via an `EXIT`/`INT`/`TERM` trap; canonicalize with `jq -S -c`, then compare. | Live policies semantically identical to the pre-test snapshot; failures appear in the named summary. |
 
 #### Interpreting a TLS protocol error
 
@@ -170,9 +172,10 @@ The run ends with `exit 1` if any assertion failed.
    block page *are* assertable there — but it still bypasses the router's
    transparent interception. For a true end-to-end test, add the runner host to
    `router/proxy-hosts.conf` and run without `--local`.
-2. **TC-4.4 needs a path rule to exist.** Deep URL path inspection can only be
-   tested when some blocklist contains a `domain/path` entry; otherwise the test
-   reports a WARN and is skipped.
+2. **TC-4.4 needs an active, non-redundant path rule.** Deep URL path inspection
+   can only be tested when the target policy selects a blocklist containing a
+   `domain/path` entry whose base domain is not also covered by a plain-domain
+   entry. Otherwise the test reports a WARN and is skipped.
 3. **Suite 2 assumes open API access.** Once `is_authenticated()` in
    `webui/app.py` is restored to a real session check (which TC-2.7 exists to
    force), the suite will need a login step (`POST /api/login` + cookie jar)
