@@ -279,6 +279,10 @@ the site becomes fully reachable. Two things enforce this:
    destination IP; reusing `dstdomain` here works for explicit proxying but
    silently splices blocked traffic on port 3130. Any other mode keeps the
    CONNECT-level deny (blocked, but with a TLS error rather than a page).
+   For scheduled categories, matching `ssl_bump splice ... time_allow_*` rules
+   precede the fallback bump. Allowed windows therefore use native end-to-end
+   TLS (required by media transports such as YouTube UMP), while the same domain
+   is bumped and denied outside its allow window.
 2. `http_port 3128` carries the `ssl-bump` flag. Any port that handles CONNECT
    must be able to bump, or a client manually configured to use it would tunnel
    straight past the blocklists.

@@ -613,7 +613,7 @@ if require_proxy_up "TC-3.4 ssl_bump.acl inspection"; then
             if ! echo "${RULES_ACL}" | grep -qE "^acl ${name}[[:space:]]"; then
                 DANGLING="${DANGLING} ${name}"
             fi
-        done < <(echo "${SSL_BUMP_ACL}" | grep -E '^ssl_bump[[:space:]]+bump[[:space:]]' | awk '{for(i=3;i<=NF;i++) print $i}' | sort -u)
+        done < <(echo "${SSL_BUMP_ACL}" | grep -E '^ssl_bump[[:space:]]+(bump|splice)[[:space:]]' | awk '{for(i=3;i<=NF;i++) print $i}' | sort -u)
 
         if [ -z "${DANGLING}" ]; then
             pass_test "TC-3.4b Every ACL referenced by ssl_bump.acl is defined in rules.acl (no dangling references)."
@@ -667,6 +667,24 @@ if require_proxy_up "TC-3.4 ssl_bump.acl inspection"; then
             pass_test "TC-3.4e Every selective SSL-bump rule uses an ssl::server_name ACL (transparent interception safe)."
         else
             fail_test "TC-3.4e Selective SSL-bump rule(s) use non-SNI ACLs and may splice blocked sites during transparent interception:${NON_SNI_BUMPS}"
+        fi
+
+        # Scheduled http_access allows must splice the same category and time ACL
+        # before its fallback bump. Otherwise the request is technically allowed
+        # but remains decrypted, which can break streaming media transports.
+        MISSING_SCHEDULE_SPLICE=""
+        while read -r src lst tm; do
+            [ -z "${src}" ] && continue
+            sni_lst="sni_${lst}"
+            if ! echo "${SSL_BUMP_ACL}" | grep -qE "^ssl_bump[[:space:]]+splice[[:space:]]+${src}[[:space:]]+${sni_lst}[[:space:]]+${tm}([[:space:]]|$)"; then
+                MISSING_SCHEDULE_SPLICE="${MISSING_SCHEDULE_SPLICE} ${src}/${lst}/${tm}"
+            fi
+        done < <(echo "${RULES_ACL}" | awk '$1=="http_access" && $2=="allow" && $3 ~ /^src_dev_/ && $4 ~ /^list_/ && $5 ~ /^time_allow_/ {print $3" "$4" "$5}')
+
+        if [ -z "${MISSING_SCHEDULE_SPLICE}" ]; then
+            pass_test "TC-3.4f Scheduled category allows have matching native-TLS splice rules."
+        else
+            fail_test "TC-3.4f Scheduled allows remain SSL-bumped and may break media playback:${MISSING_SCHEDULE_SPLICE}"
         fi
 
         # A device with blocked lists but no bump rule can never be shown the block
