@@ -78,7 +78,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - **One-Click Save & Apply Pipeline:**
   - Prominent "Save & Apply" button saves device policies via `POST /api/policies`, compiles per-device conditional ACL rules into `rules.acl`, compiles per-device dynamic SSL bump rules into `ssl_bump.acl`, and triggers Squid reload via Docker Socket SIGHUP signaling (`POST /api/apply`).
 - **Per-Device SSL Bumping & Auto-Bumping Blocked Sites (`ssl_bump.acl`):**
-  - Blocked categories and path rules configured for a target device are automatically compiled into `ssl_bump.acl` (`ssl_bump bump src_dev_<ip> list_<bl>`).
+  - Blocked categories and path rules configured for a target device are automatically compiled into `ssl_bump.acl` using dedicated TLS SNI ACLs (`ssl_bump bump src_dev_<ip> sni_list_<bl>`). `dstdomain` remains reserved for HTTP access checks; it cannot reliably identify the hostname during transparent TLS interception.
   - Allows Squid to intercept TLS handshakes on blocked domains and render the customized **Parental Control Block Page** (`ERR_ACCESS_DENIED`) over HTTPS without browser protocol or connection reset errors.
   - Traffic to non-blocked domains and all traffic from unrestricted devices is spliced (`ssl_bump splice all`) with raw TLS passthrough (zero certificate overhead, native end-to-end encryption).
 - **Decoupled Global SSL Bumping (`bump_domains.acl`):**

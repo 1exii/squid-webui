@@ -137,7 +137,9 @@ When Web UI compiles rules, `parse_blocklists()` reads each `.txt` blocklist fil
 acl src_dev_192_168_1_50 src 192.168.1.50
 
 acl list_gaming_txt dstdomain "/etc/squid/configs/domains_gaming.txt.acl"
+acl sni_list_gaming_txt ssl::server_name "/etc/squid/configs/domains_gaming.txt.acl"
 acl path_dom_gaming_txt_1 dstdomain .steamcommunity.com
+acl sni_path_dom_gaming_txt_1 ssl::server_name .steamcommunity.com
 acl path_url_gaming_txt_1 urlpath_regex -i ^/market
 
   # Always Block — Child Phone  (note the !CONNECT scoping)
@@ -271,14 +273,18 @@ the site becomes fully reachable. Two things enforce this:
 
 1. `compile_device_policies_acls()` emits the `!CONNECT` form only for
    `ssl_bump_mode` of `blocked_only` or `all` — exactly the modes for which
-   `ssl_bump.acl` emits a matching bump rule. Any other mode keeps the
+   `ssl_bump.acl` emits a matching bump rule. Selective rules use dedicated
+   `ssl::server_name` ACLs (`sni_list_*` / `sni_path_dom_*`), because a
+   transparently intercepted CONNECT initially identifies the original
+   destination IP; reusing `dstdomain` here works for explicit proxying but
+   silently splices blocked traffic on port 3130. Any other mode keeps the
    CONNECT-level deny (blocked, but with a TLS error rather than a page).
 2. `http_port 3128` carries the `ssl-bump` flag. Any port that handles CONNECT
    must be able to bump, or a client manually configured to use it would tunnel
    straight past the blocklists.
 
-**TC-3.4d** in the test suite cross-references both generated files and fails if
-any `!CONNECT` deny lacks a bump rule.
+**TC-3.4d/e** in the test suite cross-reference both generated files and fail if
+any `!CONNECT` deny lacks a correctly typed SNI bump rule.
 
 ### Client CA trust is still required
 

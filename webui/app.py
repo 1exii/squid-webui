@@ -641,6 +641,7 @@ def _build_policy_acls(policies, parsed_blocklists):
         for bl in all_lists:
             bl_id = bl.replace('.', '_').replace('-', '_')
             bl_acl_name = f"list_{bl_id}"
+            sni_bl_acl_name = f"sni_list_{bl_id}"
 
             if bl_acl_name not in declared_blocklists:
                 if bl in parsed_blocklists:
@@ -650,13 +651,20 @@ def _build_policy_acls(policies, parsed_blocklists):
                 acl_lines.append(f"acl {bl_acl_name} dstdomain \"{dom_file}\"")
                 declared_blocklists.add(bl_acl_name)
 
+                # A transparently intercepted TLS connection initially exposes
+                # its original destination IP, not a CONNECT hostname. Match the
+                # ClientHello SNI for ssl_bump decisions; keep dstdomain above for
+                # decrypted HTTP requests and explicit-proxy CONNECT requests.
+                acl_lines.append(f"acl {sni_bl_acl_name} ssl::server_name \"{dom_file}\"")
                 if bl in parsed_blocklists:
                     path_rules = parsed_blocklists[bl].get("path_rules", [])
                     for idx, rule in enumerate(path_rules, 1):
                         p_dom_acl = f"path_dom_{bl_id}_{idx}"
+                        p_sni_acl = f"sni_path_dom_{bl_id}_{idx}"
                         p_url_acl = f"path_url_{bl_id}_{idx}"
                         if p_dom_acl not in declared_path_rules:
                             acl_lines.append(f"acl {p_dom_acl} dstdomain {rule['bump_domain']}")
+                            acl_lines.append(f"acl {p_sni_acl} ssl::server_name {rule['bump_domain']}")
                             acl_lines.append(f"acl {p_url_acl} urlpath_regex -i ^{ere_escape(rule['path'])}")
                             declared_path_rules.add(p_dom_acl)
         acl_lines.append("")
@@ -669,13 +677,13 @@ def _build_policy_acls(policies, parsed_blocklists):
             # Bump only the blocked category domains & path domains for this device
             for bl in all_lists:
                 bl_id = bl.replace('.', '_').replace('-', '_')
-                bl_acl_name = f"list_{bl_id}"
-                ssl_bump_lines.append(f"ssl_bump bump {src_acl_name} {bl_acl_name}")
+                sni_bl_acl_name = f"sni_list_{bl_id}"
+                ssl_bump_lines.append(f"ssl_bump bump {src_acl_name} {sni_bl_acl_name}")
                 if bl in parsed_blocklists:
                     path_rules = parsed_blocklists[bl].get("path_rules", [])
                     for idx in range(1, len(path_rules) + 1):
-                        p_dom_acl = f"path_dom_{bl_id}_{idx}"
-                        ssl_bump_lines.append(f"ssl_bump bump {src_acl_name} {p_dom_acl}")
+                        p_sni_acl = f"sni_path_dom_{bl_id}_{idx}"
+                        ssl_bump_lines.append(f"ssl_bump bump {src_acl_name} {p_sni_acl}")
         # Note: If ssl_bump_mode == "splice_all" / "none", no bump rules are added so traffic falls through to splice all.
         ssl_bump_lines.append("")
 
