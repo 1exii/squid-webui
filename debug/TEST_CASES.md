@@ -71,7 +71,9 @@ It validates:
 | **TC-2.3: Policy Retrieval** | Device policy store. | `GET /api/policies` | JSON containing `"policies"`. |
 | **TC-2.4: Blocklists List** | Blocklist directory listing. | `GET /api/blocklists` | JSON array of `.txt` category files. |
 | **TC-2.5: CA Downloads** | Root CA download endpoints. | `GET /download/cert.crt`<br>`GET /download/cert.pem` | Both 200 **and** the payload parses as X.509 (DER and PEM respectively). A 200 carrying a JSON error body is a FAIL. |
-| **TC-2.6: Ubuntu Installer** | Client onboarding script. | `GET /download/install-ubuntu.sh` | 200 with a `#!/bin/bash` script that calls `update-ca-certificates`. |
+| **TC-2.6a: PAC Endpoint** | Browser auto-configuration uses the explicit proxy without failing open. | `GET /proxy.pac` | PAC MIME type; Internet return is `PROXY 192.168.1.90:3128`; private LAN is `DIRECT`; no `PROXY …; DIRECT` fallback. |
+| **TC-2.6b: Ubuntu Installer** | Linux client onboarding configures CA trust and PAC. | `GET /download/install-ubuntu.sh` | Bash script calls `update-ca-certificates`, installs managed Chrome PAC policy, and points at the WebUI PAC URL. |
+| **TC-2.6c: Windows Installer** | Windows client onboarding configures CA trust and PAC. | `GET /download/install-windows.ps1` | Elevated PowerShell script imports the CA and sets the current user's `AutoConfigURL`. |
 | **TC-2.7: Unauthenticated Write** | **Security regression check.** Policy writes must require a session. | `POST /api/policies` with no cookie | HTTP 401/403. A 200 is a FAIL — it means `is_authenticated()` in `webui/app.py` is still stubbed to `return True`, leaving every filtered device able to rewrite its own parental controls. |
 | **TC-2.8a: Apply Pipeline** | Hot reload via the Docker socket. | `POST /api/apply` | JSON `"success": true`. |
 | **TC-2.8b: Survives Reload** | Squid must not die on SIGHUP. | Re-check `docker ps` 3s after apply. | `squid-proxy` still `Up`. A dead proxy means the intercepted hosts lose all web access, because the router policy-routes 80/443/4070 at it. |
@@ -103,7 +105,7 @@ It validates:
 
 | Test Case | Description | Execution | Expected Outcome |
 | :--- | :--- | :--- | :--- |
-| **TC-4.0: Client Reachability** | Test client answers over SSH. | `ssh -o BatchMode=yes <client> echo OK` | `OK`. |
+| **TC-4.0: Remote Ubuntu Client** | Test client answers over SSH and is Ubuntu Linux. | Read `ID` from the remote client's `/etc/os-release` using non-interactive SSH. | SSH succeeds and `ID=ubuntu`; no local-client fallback is available. |
 | **TC-4.1: Allowed HTTP** | Unblocked domain over HTTP. | `curl http://example.com` | 200 / 3xx. |
 | **TC-4.2: Allowed HTTPS (spliced)** | Unblocked HTTPS is passed through raw. | `curl -k https://example.com`, `https://www.wikipedia.org` | 200 / 3xx. |
 | **TC-4.3: Adult HTTPS Transparent Block** | Regression for selective SSL bumping on the target's real adult policy. | Before policy mutation, request `https://www.pornhub.com/` when `adult.txt` is in `always_block`. | 403 + parental block page. A tunneled 200 exposes a transparent SNI matching bypass. |
@@ -130,25 +132,21 @@ If a "blocked" test reports `wrong version number` / `TLS connect error`, the su
 | Test Case | Description | Verification Logic | Expected Outcome |
 | :--- | :--- | :--- | :--- |
 | **TC-5.1: `dump-config`** | CLI reaches the container and parses the config. | Assert on Squid's own `Processing Configuration File` output, **not** on `squid-mgmt.sh`'s unconditional `Config dumped.` echo. | Real parser output, no `FATAL`. |
-| **TC-5.2: `catlogs`** | CLI retrieves the access log. | Delete `logs/access.log`, run `catlogs`, assert the file was recreated **and** `Saved local log snapshot` was printed. | Log file exists; non-empty ⇒ PASS, empty ⇒ WARN. Asserting on `Displaying Squid Access Logs…` alone always passed, since that line is echoed before any work happens. |
+| **TC-5.2: `catlogs`** | CLI retrieves the access log and reports evidence for the selected test client. | Delete `logs/access.log`, run `catlogs`, assert the file was recreated and `Saved local log snapshot` was printed, then filter Squid's third log field by `TARGET_CLIENT_IP`. | Matching client entries ⇒ PASS and only that client's last 15 lines are printed; non-empty global log with no client match ⇒ WARN; empty log ⇒ WARN. This prevents unrelated workstation traffic from being presented as vm-ubuntu test evidence. |
 
 ---
 
 ## 4. How to Run the Test Suite
 
 ```bash
-# Default run (targets remote client 192.168.8.30 via SSH — full transparent-intercept path)
+# Default run (targets vm-ubuntu at 192.168.8.30 via SSH — full transparent-intercept path)
 ./debug/debug-proxy.sh
 
-# Run using the local host IP as the client target (explicit proxy on :3128)
-./debug/debug-proxy.sh --local
-
-# Run targeting a specific custom client IP
+# Run targeting a different remote Ubuntu client
 ./debug/debug-proxy.sh --client-ip 192.168.1.11
 
 # Run with container redeployment before testing
 ./debug/debug-proxy.sh --redeploy
-./debug/debug-proxy.sh --local --redeploy
 ```
 
 ---
@@ -168,11 +166,10 @@ The run ends with `exit 1` if any assertion failed.
 
 ## 6. Known Limitations
 
-1. **`--local` mode exercises the explicit-proxy path.** It reaches Squid through
-   `http_port 3128`. That port now carries the `ssl-bump` flag, so bumping and the
-   block page *are* assertable there — but it still bypasses the router's
-   transparent interception. For a true end-to-end test, add the runner host to
-   `router/proxy-hosts.conf` and run without `--local`.
+1. **Only remote Ubuntu clients are supported.** The default is vm-ubuntu at
+   `192.168.8.30`. A `--client-ip` override must also identify an Ubuntu host with
+   working key-based SSH. This keeps every traffic assertion on the router's
+   transparent-interception path.
 2. **TC-4.4 needs an active, non-redundant path rule.** Deep URL path inspection
    can only be tested when the target policy selects a blocklist containing a
    `domain/path` entry whose base domain is not also covered by a plain-domain

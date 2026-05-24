@@ -9,10 +9,10 @@
 
 ## 1. Product Overview & Objectives
 
-**Squid Proxy Center Web UI** is a lightweight, responsive web management interface for managing transparent network proxying, SSL/TLS interception onboarding, and domain/category access control rules powered by a Squid Proxy container and an ASUS Router firewall daemon.
+**Squid Proxy Center Web UI** is a lightweight, responsive web management interface for managing proxy auto-configuration, transparent network fallback, SSL/TLS interception onboarding, and domain/category access control rules powered by a Squid Proxy container and an ASUS Router firewall daemon.
 
 ### Key Objectives
-1. **Client Onboarding & CA Trust:** Provide zero-friction download of the internal Root CA certificate (`squid-ca.crt` / `squid-ca.pem`) alongside step-by-step setup guides for Windows and Ubuntu Linux clients to prevent HSTS and SSL warnings.
+1. **Client Onboarding, PAC & CA Trust:** Provide a fail-closed browser PAC file, automated Windows/Ubuntu installers, internal Root CA downloads (`squid-ca.crt` / `squid-ca.pem`), and setup guides. Explicit browser proxying avoids the mandatory intercepted-CONNECT destination verification failures that occur with rapidly rotating CDN DNS addresses.
 2. **Access Control Management:** Allow administrators to configure per-device domain blocklists, scheduled access restrictions (e.g., blocking social media during school/work hours), and temporary single-day ("Today Only") rule overrides.
 3. **Seamless Deployment:** Provide one-click compilation of rules into Squid `rules.acl` format and hot-reload the Squid daemon without interrupting general network traffic.
 4. **Secure Administration:** Authenticate admin users directly against QNAP NAS system shadow password hashes or SSH authentication.
@@ -54,8 +54,9 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
   - `squid-ca.crt`: Binary X.509 certificate for Windows / macOS / iOS trust stores.
   - `squid-ca.pem`: PEM ASCII format for Linux trust stores (`/usr/local/share/ca-certificates/`).
 - **Interactive Guides:**
-  - **Windows Guide:** Step-by-step instructions for `Import-Certificate` via PowerShell, `certlm.msc` GUI setup, Edge/Chrome HSTS cache clearing (`chrome://net-internals/#hsts`), and Firefox custom trust settings.
-  - **Ubuntu Linux Guide:** CLI commands for `update-ca-certificates`, `curl` CA bundle setup, and Chrome/Firefox NSS database import (`certutil`).
+  - **Windows Guide:** Automated PowerShell CA/PAC installation, manual Windows setup-script configuration, and browser trust guidance.
+  - **Ubuntu Linux Guide:** Automated CA/PAC installation, `update-ca-certificates`, a managed Chrome/Chromium `ProxySettings` policy, GNOME PAC configuration, and NSS database import (`certutil`).
+- **Proxy Auto-Config:** Public `/proxy.pac` sends Internet traffic to the explicit Squid proxy at `192.168.1.90:3128`, sends loopback/private/local-name destinations direct, and deliberately omits a `DIRECT` fallback for Internet requests.
 
 ### 3.2 Access Control & Device Policy Manager (Admin Only)
 - **Dynamic Device Tab Navigation (`devices.list`):**
@@ -153,7 +154,9 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 | `/api/policies` | `POST` | Admin | Saves per-device policies (auto-expiring stale today overrides), compiles clean `domains_<bl>.acl` files and `rules.acl`. |
 | `/api/apply` | `POST` | Admin | Triggers Squid reload via Docker daemon Unix socket (`SIGHUP` signal to `squid-proxy`). |
 | `/download/cert.<ext>` | `GET` | Public | Downloads Root CA certificate (`.crt` or `.pem`). |
-| `/download/install-ubuntu.sh` | `GET` | Public | Automated CA installation shell script for Ubuntu Linux clients. |
+| `/proxy.pac` | `GET` | Public | Fail-closed browser PAC file: private/local destinations direct, Internet traffic through explicit Squid port 3128. |
+| `/download/install-ubuntu.sh` | `GET` | Public | Automated CA and PAC installation shell script for Ubuntu Linux clients. |
+| `/download/install-windows.ps1` | `GET` | Public | Automated machine CA trust and current-user Windows PAC installation script. |
 
 ---
 
