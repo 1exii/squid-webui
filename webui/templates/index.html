@@ -40,6 +40,9 @@
                         <a href="/download/cert.pem" class="btn btn-accent" download="squid-ca.pem">
                             <span>⬇️ Download CA Cert (.pem) for Linux</span>
                         </a>
+                        <a href="/proxy.pac" class="btn btn-secondary" download="proxy.pac">
+                            <span>⬇️ Download Proxy Auto-Config (.pac)</span>
+                        </a>
                     </div>
                 </div>
             </div>
@@ -55,31 +58,39 @@
                     <span class="badge">Target Platform: Windows 10/11</span>
                 </div>
                 <section class="guide-section">
-                    <h4>1. Architecture &amp; HSTS Prevention</h4>
-                    <p>This environment uses <strong>Transparent Network Interception</strong>. Windows clients do <em>NOT</em> require manual proxy configurations.</p>
+                    <h4>1. Reliable HTTPS Proxying</h4>
+                    <p>Use the WebUI-hosted <strong>Proxy Auto-Config (PAC)</strong> file for browsers. Transparent HTTPS interception remains available, but CDN hostnames with rapidly rotating DNS addresses can be rejected by Squid's mandatory destination verification.</p>
                     <ul>
-                        <li><strong>Router Redirection:</strong> The ASUS Router detects HTTP (80), HTTPS (443), &amp; Spotify AP (4070) traffic from registered client IPs and redirects it to the Squid proxy.</li>
+                        <li><strong>PAC URL:</strong> <code>http://192.168.1.91:3131/proxy.pac</code> sends Internet traffic through <code>192.168.1.90:3128</code> while keeping LAN destinations direct.</li>
+                        <li><strong>Router Safety Net:</strong> The ASUS Router continues redirecting direct HTTP, HTTPS, and Spotify AP traffic from registered client IPs.</li>
                         <li><strong>SSL Bumping:</strong> Squid inspects TLS traffic and dynamically generates site-specific certificates signed by the internal Root CA (<code>squid.local</code>).</li>
                         <li><strong>HSTS Prevention:</strong> Installing the Root CA into the <strong>Local Machine Trusted Root Store</strong> ensures Edge, Chrome, and system services recognize <code>squid.local</code>.</li>
                     </ul>
                 </section>
                 <section class="guide-section">
-                    <h4>2. Router Registration (Administrator Step)</h4>
-                    <p>Before a Windows client can be proxied, its IP must be registered in <code>proxy-hosts.conf</code> and deployed via router firewall script.</p>
+                    <h4>2. Automated Windows Installation (Recommended)</h4>
+                    <p>Open PowerShell as Administrator, download the installer, and run it in the target user's session. It installs the CA and configures the Windows system PAC setting used by Chrome and Edge.</p>
+                    <div class="download-actions">
+                        <a href="/download/install-windows.ps1" class="btn btn-primary" download="install-windows.ps1">
+                            <span>⬇️ Download Windows Installer (.ps1)</span>
+                        </a>
+                    </div>
+                    <pre><code>Set-ExecutionPolicy -Scope Process Bypass
+&amp; "$HOME\Downloads\install-windows.ps1"</code></pre>
                 </section>
                 <section class="guide-section">
-                    <h4>3. Install Root CA Certificate on Windows Client</h4>
+                    <h4>3. Manual Windows Setup</h4>
                     <div class="method-box">
-                        <h5>Method A: Automated PowerShell Installation (Recommended)</h5>
+                        <h5>Install the Root CA</h5>
                         <pre><code>Import-Certificate -FilePath "$HOME\Downloads\squid-ca.crt" -CertStoreLocation "Cert:\LocalMachine\Root"</code></pre>
                     </div>
                     <div class="method-box">
-                        <h5>Method B: Graphical Interface (GUI) Installation</h5>
+                        <h5>Configure the PAC URL</h5>
                         <ol>
-                            <li>Press <kbd>Win</kbd> + <kbd>R</kbd>, type <code>certlm.msc</code>, press Enter.</li>
-                            <li>Expand <strong>Trusted Root Certification Authorities</strong> &rarr; <strong>Certificates</strong>.</li>
-                            <li>Right-click &rarr; <strong>All Tasks</strong> &rarr; <strong>Import...</strong></li>
-                            <li>Browse to <code>squid-ca.crt</code> and place in Trusted Root store.</li>
+                            <li>Open <strong>Settings &rarr; Network &amp; Internet &rarr; Proxy</strong>.</li>
+                            <li>Under <strong>Use setup script</strong>, select <strong>Set up</strong>.</li>
+                            <li>Enable it and enter <code>http://192.168.1.91:3131/proxy.pac</code>.</li>
+                            <li>Save, then restart Chrome or Edge.</li>
                         </ol>
                     </div>
                 </section>
@@ -98,10 +109,11 @@
                     <span class="badge badge-ubuntu">Target Platform: Ubuntu / Debian</span>
                 </div>
                 <section class="guide-section">
-                    <h4>1. Automated One-Liner Installation (Fastest)</h4>
+                    <h4>1. Automated CA + PAC Installation (Recommended)</h4>
                     <div class="code-banner">
                         <pre><code>curl -sSL http://192.168.1.91:3131/download/install-ubuntu.sh | sudo bash</code></pre>
                     </div>
+                    <p>The installer trusts the Squid CA, installs a managed Chrome/Chromium PAC policy, and configures the active GNOME session when available.</p>
                 </section>
                 <section class="guide-section">
                     <h4>2. Manual Installation Steps</h4>
@@ -116,9 +128,11 @@ sudo update-ca-certificates</code></pre>
 certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt</code></pre>
                     </div>
                     <div class="method-box">
-                        <h5>Step 3: Transparent Proxy Active</h5>
+                        <h5>Step 3: Configure GNOME Proxy Auto-Config</h5>
+                        <pre><code>gsettings set org.gnome.system.proxy autoconfig-url 'http://192.168.1.91:3131/proxy.pac'
+gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                         <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px;">
-                            ✨ All HTTP and HTTPS network traffic is automatically and transparently routed to the proxy by your router. No manual proxy settings or environment variables are required!
+                            Chrome uses the explicit proxy selected by the PAC file; LAN addresses remain direct. The router redirect remains a safety net for applications that ignore desktop proxy settings.
                         </p>
                     </div>
                 </section>

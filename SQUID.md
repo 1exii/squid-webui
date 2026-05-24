@@ -287,6 +287,14 @@ the site becomes fully reachable. Two things enforce this:
    must be able to bump, or a client manually configured to use it would tunnel
    straight past the blocklists.
 
+Browsers should use the Web UI's `http://192.168.1.91:3131/proxy.pac` endpoint.
+The PAC file keeps private LAN destinations direct and sends Internet requests
+through explicit port 3128. Router interception remains a safety net for clients
+that ignore proxy settings, but it is not reliable for CDN-heavy applications:
+Squid must reject an intercepted CONNECT when its independent DNS lookup does not
+contain the packet's original destination IP, even when both CDN addresses are
+valid.
+
 **TC-3.4d/e** in the test suite cross-reference both generated files and fail if
 any `!CONNECT` deny lacks a correctly typed SNI bump rule.
 

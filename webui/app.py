@@ -30,6 +30,10 @@ BUMP_DOMAINS_CONF_PATH = os.path.join(SQUID_CONFIG_DIR, "bump_domains.conf")
 
 QNAP_IP = os.environ.get("QNAP_IP", "192.168.1.2")
 SQUID_CONTAINER_NAME = os.environ.get("SQUID_CONTAINER_NAME", "squid-proxy")
+SQUID_PROXY_HOST = os.environ.get("SQUID_PROXY_HOST", "192.168.1.90")
+SQUID_PROXY_PORT = int(os.environ.get("SQUID_PROXY_PORT", "3128"))
+WEBUI_PUBLIC_URL = os.environ.get("WEBUI_PUBLIC_URL", "http://192.168.1.91:3131").rstrip("/")
+PAC_URL = f"{WEBUI_PUBLIC_URL}/proxy.pac"
 
 
 def _load_or_create_secret_key():
@@ -1205,18 +1209,58 @@ def download_cert_pem():
     return jsonify({"error": "Certificate not found on proxy server"}), 404
 
 
+@app.route("/proxy.pac")
+def proxy_pac():
+    """Public PAC file for reliable explicit proxying of Internet traffic."""
+    pac = f"""function FindProxyForURL(url, host) {{
+    host = host.toLowerCase();
+
+    // Keep loopback, private LAN addresses, and local DNS names off the proxy.
+    if (isPlainHostName(host) ||
+        host === "localhost" ||
+        shExpMatch(host, "127.*") ||
+        host === "::1" || host === "[::1]" ||
+        shExpMatch(host, "fc*:*") || shExpMatch(host, "fd*:*") ||
+        shExpMatch(host, "fe80:*") ||
+        shExpMatch(host, "10.*") ||
+        shExpMatch(host, "192.168.*") ||
+        shExpMatch(host, "172.16.*") || shExpMatch(host, "172.17.*") ||
+        shExpMatch(host, "172.18.*") || shExpMatch(host, "172.19.*") ||
+        shExpMatch(host, "172.2?.*") || shExpMatch(host, "172.30.*") ||
+        shExpMatch(host, "172.31.*") ||
+        dnsDomainIs(host, ".home") || dnsDomainIs(host, ".local")) {{
+        return "DIRECT";
+    }}
+
+    // Do not add DIRECT as a fallback: Internet traffic must remain filtered
+    // when the explicit proxy is temporarily unavailable.
+    return "PROXY {SQUID_PROXY_HOST}:{SQUID_PROXY_PORT}";
+}}
+"""
+    return pac, 200, {
+        "Content-Type": "application/x-ns-proxy-autoconfig; charset=utf-8",
+        "Cache-Control": "no-store, max-age=0",
+    }
+
+
 @app.route("/download/install-ubuntu.sh")
 def download_ubuntu_script():
-    """Public automated installation script for Ubuntu Linux clients."""
-    host = request.host
+    """Public CA and PAC installation script for Ubuntu Linux clients."""
+    chrome_policy = json.dumps({
+        "ProxySettings": {
+            "ProxyMode": "pac_script",
+            "ProxyPacUrl": PAC_URL,
+            "ProxyPacMandatory": True,
+        }
+    }, separators=(",", ":"))
     script = f"""#!/bin/bash
 set -e
 echo "========================================================="
-echo "   Squid Proxy CA Certificate & System Installer (Ubuntu)"
+echo "   Squid Proxy CA Certificate & PAC Installer (Ubuntu)"
 echo "========================================================="
 
-CERT_URL="http://{host}/download/cert.pem"
-PROXY_URL="http://192.168.1.90:3128"
+CERT_URL="{WEBUI_PUBLIC_URL}/download/cert.pem"
+PAC_URL="{PAC_URL}"
 
 echo "[*] Downloading Root CA Certificate..."
 sudo wget -q -O /usr/local/share/ca-certificates/squid-proxy-ca.crt "$CERT_URL"
@@ -1233,14 +1277,74 @@ if command -v certutil > /dev/null 2>&1; then
     done
 fi
 
-echo "[*] Cleaning up any old static proxy profiles (Transparent Routing active)..."
+echo "[*] Installing managed Chrome/Chromium PAC policy..."
+for policy_dir in /etc/opt/chrome/policies/managed /etc/chromium/policies/managed; do
+    sudo install -d -m 0755 "$policy_dir"
+    printf '%s\n' '{chrome_policy}' | sudo tee "$policy_dir/squid-proxy.json" >/dev/null
+done
+
+echo "[*] Configuring the active GNOME desktop to use the PAC file when available..."
+LOGIN_USER="${{SUDO_USER:-}}"
+if [ -n "$LOGIN_USER" ] && command -v gsettings >/dev/null 2>&1; then
+    LOGIN_UID=$(id -u "$LOGIN_USER")
+    USER_BUS="/run/user/$LOGIN_UID/bus"
+    if [ -S "$USER_BUS" ]; then
+        sudo -u "$LOGIN_USER" env DBUS_SESSION_BUS_ADDRESS="unix:path=$USER_BUS" \
+            gsettings set org.gnome.system.proxy autoconfig-url "$PAC_URL"
+        sudo -u "$LOGIN_USER" env DBUS_SESSION_BUS_ADDRESS="unix:path=$USER_BUS" \
+            gsettings set org.gnome.system.proxy mode 'auto'
+    fi
+fi
+
+echo "[*] Cleaning up old environment-variable proxy profiles..."
 sudo rm -f /etc/profile.d/squid-proxy.sh
 
 echo "========================================================="
-echo "   [+] Installation Complete! HTTPS traffic is now trusted."
+echo "   [+] Installation Complete. Restart Chrome if it is open."
+echo "   [+] PAC URL: $PAC_URL"
 echo "========================================================="
 """
     return script, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
+@app.route("/download/install-windows.ps1")
+def download_windows_script():
+    """Public CA and PAC installation script for Windows clients."""
+    script = f'''#Requires -RunAsAdministrator
+$ErrorActionPreference = "Stop"
+$WebUiBase = "{WEBUI_PUBLIC_URL}"
+$PacUrl = "{PAC_URL}"
+$CertFile = Join-Path $env:TEMP "squid-proxy-ca.crt"
+
+Write-Host "Downloading and trusting the Squid Root CA..."
+Invoke-WebRequest -UseBasicParsing -Uri "$WebUiBase/download/cert.crt" -OutFile $CertFile
+Import-Certificate -FilePath $CertFile -CertStoreLocation "Cert:\\LocalMachine\\Root" | Out-Null
+Remove-Item -Force $CertFile
+
+Write-Host "Configuring the current user's Windows proxy to use $PacUrl..."
+$InternetSettings = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"
+New-ItemProperty -Path $InternetSettings -Name AutoConfigURL -PropertyType String -Value $PacUrl -Force | Out-Null
+New-ItemProperty -Path $InternetSettings -Name ProxyEnable -PropertyType DWord -Value 0 -Force | Out-Null
+
+# Notify running WinINet/Chromium applications that proxy settings changed.
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinInetProxyRefresh {{
+    [DllImport("wininet.dll", SetLastError = true)]
+    public static extern bool InternetSetOption(IntPtr h, int option, IntPtr buffer, int length);
+}}
+"@
+[WinInetProxyRefresh]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null
+[WinInetProxyRefresh]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null
+
+Write-Host "Installation complete. Restart Chrome or Edge if it is open."
+Write-Host "PAC URL: $PacUrl"
+'''
+    return script, 200, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Disposition": "attachment; filename=install-windows.ps1",
+    }
 
 
 # --- STARTUP LOGIC & BACKGROUND TASKS ---

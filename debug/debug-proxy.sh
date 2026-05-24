@@ -14,9 +14,8 @@
 #   6. Router advanced   — Spotify 4070, YouTube QUIC allow + global QUIC reject
 #
 # Usage:
-#   ./debug-proxy.sh                     # Default: tests via remote client (192.168.8.30)
-#   ./debug-proxy.sh --local             # Uses local machine IP as client (explicit proxy)
-#   ./debug-proxy.sh --client-ip 1.2.3.4 # Tests with custom client IP
+#   ./debug-proxy.sh                     # Default: tests via vm-ubuntu (192.168.8.30)
+#   ./debug-proxy.sh --client-ip 1.2.3.4 # Tests with a custom remote Ubuntu client
 #   ./debug-proxy.sh --redeploy          # Rebuilds & redeploys before testing
 #
 # Exit code: 0 if no test failed, 1 otherwise.
@@ -40,15 +39,11 @@ SQUID_IP="192.168.1.90"
 WEBUI_IP="192.168.1.91"
 WEBUI_PORT="3131"
 DEFAULT_CLIENT_IP="192.168.8.30"
+DEFAULT_CLIENT_NAME="vm-ubuntu"
 QNAP_USER="admin"
 QNAP_DOCKER="/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker"
 
-# Auto-detect local IP on the network
-AUTO_LOCAL_IP=$(ip -4 route get "${SQUID_IP}" 2>/dev/null | grep -oP 'src \K[0-9.]+' | head -1)
-LOCAL_IP="${AUTO_LOCAL_IP:-192.168.8.8}"
-
 REDEPLOY=false
-USE_LOCAL=false
 CUSTOM_CLIENT_IP=""
 
 # Parse command line options
@@ -56,10 +51,6 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         redeploy|--redeploy|deploy|--deploy)
             REDEPLOY=true
-            shift
-            ;;
-        local|--local|-l)
-            USE_LOCAL=true
             shift
             ;;
         --client-ip|--client|-c)
@@ -80,11 +71,8 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
-            echo "  --local, -l                  Use local host IP (${LOCAL_IP}) as the client IP."
-            echo "                               NOTE: local mode reaches Squid through the EXPLICIT"
-            echo "                               proxy port 3128, which has no 'ssl-bump' flag. SSL-bump"
-            echo "                               dependent assertions are reported as WARN, not FAIL."
-            echo "  --client-ip <IP>, -c <IP>    Specify custom remote client IP (default: ${DEFAULT_CLIENT_IP})"
+            echo "  --client-ip <IP>, -c <IP>    Specify a remote Ubuntu client IP."
+            echo "                               Default: ${DEFAULT_CLIENT_NAME} (${DEFAULT_CLIENT_IP})"
             echo "  --redeploy                   Rebuild and redeploy containers before testing"
             echo "  --help, -h                   Show this help message"
             exit 0
@@ -97,15 +85,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ "${USE_LOCAL}" = true ]; then
-    TARGET_CLIENT_IP="${LOCAL_IP}"
-    IS_LOCAL_CLIENT=true
-elif [ -n "${CUSTOM_CLIENT_IP}" ]; then
+if [ -n "${CUSTOM_CLIENT_IP}" ]; then
     TARGET_CLIENT_IP="${CUSTOM_CLIENT_IP}"
-    IS_LOCAL_CLIENT=false
+    TARGET_CLIENT_NAME="custom Ubuntu client"
 else
     TARGET_CLIENT_IP="${DEFAULT_CLIENT_IP}"
-    IS_LOCAL_CLIENT=false
+    TARGET_CLIENT_NAME="${DEFAULT_CLIENT_NAME}"
 fi
 
 # Exec tee to log files
@@ -122,7 +107,7 @@ fi
 echo "========================================================================"
 echo " SQUID PROXY & WEB UI COMPREHENSIVE TEST & DIAGNOSTIC - ${TIMESTAMP}"
 echo " Log file: ${LOG_FILE}"
-echo " Client Target : ${TARGET_CLIENT_IP} (Local Mode: ${IS_LOCAL_CLIENT})"
+echo " Client Target : ${TARGET_CLIENT_NAME} (${TARGET_CLIENT_IP}, remote Ubuntu via SSH)"
 echo "========================================================================"
 echo ""
 
@@ -465,12 +450,41 @@ else
 fi
 rm -f /tmp/_sq_cert.crt /tmp/_sq_cert.pem
 
-# TC-2.6 GET /download/install-ubuntu.sh
-UBUNTU_SH=$(curl -s -m 5 "${WEBUI_URL}/download/install-ubuntu.sh" 2>&1 || echo "")
-if echo "${UBUNTU_SH}" | grep -q "^#!/bin/bash" && echo "${UBUNTU_SH}" | grep -q "update-ca-certificates"; then
-    pass_test "TC-2.6 Ubuntu installer endpoint returns a valid bash CA-install script."
+# TC-2.6a GET /proxy.pac — explicit Internet proxy, direct private LAN, and the
+# correct PAC MIME type. A DIRECT fallback after PROXY would silently bypass
+# parental controls whenever Squid is unavailable.
+PAC_HEADERS=$(curl -sS -D - -o /tmp/_sq_proxy.pac -m 5 "${WEBUI_URL}/proxy.pac" 2>/dev/null || true)
+PAC_BODY=$(cat /tmp/_sq_proxy.pac 2>/dev/null || true)
+if echo "${PAC_HEADERS}" | grep -qi '^Content-Type: application/x-ns-proxy-autoconfig' && \
+   echo "${PAC_BODY}" | grep -q "return \"PROXY ${SQUID_IP}:3128\";" && \
+   echo "${PAC_BODY}" | grep -q 'shExpMatch(host, "192.168.\*")' && \
+   ! echo "${PAC_BODY}" | grep -qE 'PROXY[^";]*;[[:space:]]*DIRECT'; then
+    pass_test "TC-2.6a PAC endpoint proxies Internet traffic, bypasses the private LAN, and has no DIRECT fail-open fallback."
 else
-    fail_test "TC-2.6 Ubuntu installer script missing or malformed."
+    fail_test "TC-2.6a PAC endpoint is missing, malformed, has the wrong MIME type, or permits a DIRECT fail-open fallback."
+fi
+rm -f /tmp/_sq_proxy.pac
+
+# TC-2.6b GET /download/install-ubuntu.sh
+UBUNTU_SH=$(curl -s -m 5 "${WEBUI_URL}/download/install-ubuntu.sh" 2>&1 || echo "")
+if echo "${UBUNTU_SH}" | grep -q "^#!/bin/bash" && \
+   echo "${UBUNTU_SH}" | grep -q "update-ca-certificates" && \
+   echo "${UBUNTU_SH}" | grep -q '"ProxyMode":"pac_script"' && \
+   echo "${UBUNTU_SH}" | grep -q "${WEBUI_URL}/proxy.pac"; then
+    pass_test "TC-2.6b Ubuntu installer configures both CA trust and the managed PAC URL."
+else
+    fail_test "TC-2.6b Ubuntu installer is missing CA trust or PAC configuration."
+fi
+
+# TC-2.6c GET /download/install-windows.ps1
+WINDOWS_PS1=$(curl -s -m 5 "${WEBUI_URL}/download/install-windows.ps1" 2>&1 || echo "")
+if echo "${WINDOWS_PS1}" | grep -q '^#Requires -RunAsAdministrator' && \
+   echo "${WINDOWS_PS1}" | grep -q 'Import-Certificate' && \
+   echo "${WINDOWS_PS1}" | grep -q 'AutoConfigURL' && \
+   echo "${WINDOWS_PS1}" | grep -q "${WEBUI_URL}/proxy.pac"; then
+    pass_test "TC-2.6c Windows installer configures both machine CA trust and the current-user PAC URL."
+else
+    fail_test "TC-2.6c Windows installer is missing CA trust or PAC configuration."
 fi
 
 # TC-2.7 SECURITY: the API must reject unauthenticated writes.
@@ -804,27 +818,23 @@ echo ">>> 4. TESTING HTTP & HTTPS TRAFFIC INTERCEPTION & SSL BUMPING"
 echo "--------------------------------------------------"
 
 CLIENT_REACHABLE=false
-if [ "${IS_LOCAL_CLIENT}" = true ]; then
-    CLIENT_REACHABLE=true
-    info "Using local machine (${TARGET_CLIENT_IP}) as test client via EXPLICIT proxy ${SQUID_IP}:3128."
-    info "Port 3128 now carries the 'ssl-bump' flag, so CONNECT tunnels ARE bumped and block-page assertions are meaningful in local mode. Note this still exercises the explicit-proxy path, not the router's transparent interception."
-else
-    echo "--> Checking SSH connectivity to remote test client ${TARGET_CLIENT_IP}..."
-    if ssh -o ConnectTimeout=5 -o BatchMode=yes "${TARGET_CLIENT_IP}" "echo OK" 2>/dev/null | grep -q "OK"; then
+echo "--> Checking remote Ubuntu test client ${TARGET_CLIENT_IP}..."
+if CLIENT_OS_ID=$(ssh -o ConnectTimeout=5 -o BatchMode=yes "${TARGET_CLIENT_IP}" \
+        'test -r /etc/os-release || exit 2; . /etc/os-release; printf "%s" "$ID"' 2>/dev/null); then
+    if [ "${CLIENT_OS_ID}" = "ubuntu" ]; then
         CLIENT_REACHABLE=true
-        pass_test "TC-4.0 Remote test client ${TARGET_CLIENT_IP} is reachable via SSH."
+        pass_test "TC-4.0 Remote test client ${TARGET_CLIENT_IP} is reachable via SSH and runs Ubuntu."
     else
-        fail_test "TC-4.0 Remote test client ${TARGET_CLIENT_IP} is NOT reachable via SSH!"
-        info "HINT: Ensure ${TARGET_CLIENT_IP} is powered on and sshd is responsive. '--local' tests a different (explicit-proxy) code path and cannot validate SSL bumping."
+        fail_test "TC-4.0 Remote test client ${TARGET_CLIENT_IP} is not Ubuntu (detected: ${CLIENT_OS_ID:-unknown})."
     fi
+else
+    fail_test "TC-4.0 Remote test client ${TARGET_CLIENT_IP} is not reachable via non-interactive SSH or has no readable /etc/os-release."
+    info "HINT: Ensure the Ubuntu client is powered on, sshd is responsive, and key-based SSH authentication works."
 fi
 echo ""
 
-# Downgrade bump-dependent failures to warnings in local mode.
 bump_assert() {
     # $1 = ok(true/false)  $2 = message
-    # Both 3128 (explicit) and 3130 (intercept) carry 'ssl-bump', so bump-dependent
-    # assertions are enforced in every mode.
     if [ "$1" = true ]; then
         pass_test "$2"
     else
@@ -835,11 +845,8 @@ bump_assert() {
 client_curl() {
     # $1 = url ; extra args in $2 (optional)
     local url="$1"; local extra="${2:-}"
-    if [ "${IS_LOCAL_CLIENT}" = true ]; then
-        curl -siv -4 ${extra} --max-time 10 --noproxy "" --proxy "http://${SQUID_IP}:3128" "${url}" 2>&1 || true
-    else
-        ssh -o ConnectTimeout=8 "${TARGET_CLIENT_IP}" "curl -siv -4 ${extra} --max-time 10 '${url}' 2>&1" || true
-    fi
+    ssh -o ConnectTimeout=8 -o BatchMode=yes "${TARGET_CLIENT_IP}" \
+        "curl -siv -4 ${extra} --max-time 10 '${url}' 2>&1" || true
 }
 
 # Helper to execute curl and print live formatted test results
@@ -1139,15 +1146,22 @@ echo "--> 5b. squid-mgmt.sh catlogs..."
 LOCAL_ACCESS_LOG="${SQUID_DIR}/logs/access.log"
 rm -f "${LOCAL_ACCESS_LOG}"
 CATLOGS_OUT=$(bash "${SQUID_DIR}/squid-mgmt.sh" catlogs 2>&1 || true)
-echo "=== Last 15 lines of catlogs output ==="
-echo "${CATLOGS_OUT}" | tail -n 15
 if [ -f "${LOCAL_ACCESS_LOG}" ] && echo "${CATLOGS_OUT}" | grep -q "Saved local log snapshot"; then
     if [ -s "${LOCAL_ACCESS_LOG}" ]; then
-        pass_test "TC-5.2 squid-mgmt.sh catlogs retrieved a non-empty access log ($(wc -l < "${LOCAL_ACCESS_LOG}") lines)."
+        CLIENT_LOG_LINES=$(awk -v client="${TARGET_CLIENT_IP}" '$3 == client' "${LOCAL_ACCESS_LOG}")
+        echo "=== Last 15 Squid access-log lines for test client ${TARGET_CLIENT_IP} ==="
+        if [ -n "${CLIENT_LOG_LINES}" ]; then
+            echo "${CLIENT_LOG_LINES}" | tail -n 15
+            pass_test "TC-5.2 catlogs retrieved Squid evidence for test client ${TARGET_CLIENT_IP}."
+        else
+            warn_test "TC-5.2 catlogs retrieved a non-empty global access log, but it contains no entries for test client ${TARGET_CLIENT_IP}."
+        fi
     else
         warn_test "TC-5.2 catlogs retrieved the access log but it is empty (0 bytes) — no traffic has been proxied yet."
     fi
 else
+    echo "=== Last 15 lines of catlogs diagnostic output ==="
+    echo "${CATLOGS_OUT}" | tail -n 15
     fail_test "TC-5.2 squid-mgmt.sh catlogs failed to retrieve the access log."
 fi
 echo ""
