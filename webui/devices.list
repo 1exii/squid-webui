@@ -5,6 +5,7 @@
 
 # Testing purpose only.
 192.168.8.30  vm-ubuntu
+192.168.8.21  vm-win11
 
 # daughter and son's primary laptop and pc computer.
 192.168.1.11 pc-daughter
@@ -12,4 +13,3 @@
 192.168.2.1 pc-son
 192.168.2.2 laptop-son
 
-# daughter and son's phones and tablets
