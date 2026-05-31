@@ -19,12 +19,16 @@
             </div>
             <div class="nav-tabs">
                 <button id="nav-tab-onboarding" class="nav-tab-btn active">📖 Client Onboarding &amp; Certs</button>
+                {% if admin_visible %}
                 <button id="nav-tab-admin" class="nav-tab-btn">⚙️ Access Control Admin</button>
+                {% endif %}
             </div>
+            {% if admin_visible %}
             <div class="nav-right">
                 <span id="user-badge" class="user-tag hidden">👤 <span id="current-user"></span></span>
                 <button id="auth-action-btn" class="btn btn-secondary btn-sm">Admin Login</button>
             </div>
+            {% endif %}
         </header>
 
         <!-- Public View: Client Onboarding & Certificate Downloads -->
@@ -143,6 +147,7 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
             </div>
         </main>
 
+        {% if admin_visible %}
         <!-- Admin View: Device Access Control (Protected) -->
         <main id="admin-screen" class="main-content hidden">
 
@@ -366,8 +371,14 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                 </form>
             </div>
         </div>
+        {% endif %}
     </div>
 
+    <script>
+        window.WEBUI_CONTEXT = Object.freeze({
+            adminRequested: {{ admin_requested | tojson }}
+        });
+    </script>
     <script src="/static/app.js"></script>
 </body>
 </html>
