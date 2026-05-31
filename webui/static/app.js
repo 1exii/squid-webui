@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const authModalClose      = document.getElementById('auth-modal-close');
     const loginForm           = document.getElementById('login-form');
     const loginError          = document.getElementById('login-error');
+    const adminRequested      = !!window.WEBUI_CONTEXT?.adminRequested;
 
     const top5DevicesButtons  = document.getElementById('top5-devices-buttons');
     const allDevicesDropdown  = document.getElementById('all-devices-dropdown');
@@ -76,6 +77,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const DAY_LETTERS = ['S', 'M', 'T', 'W', 'H', 'F', 'A'];
 
     let isAuthenticated  = false;
+    let isAdminClient    = false;
     let currentUser      = '';
     let devicesData      = [];
     let blocklistsData   = [];   // raw filenames e.g. ["gaming.txt", ...]
@@ -171,16 +173,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const res  = await fetch('/api/auth/status');
             const data = await res.json();
             isAuthenticated = !!data.authenticated;
+            isAdminClient   = !!data.is_admin_client;
             currentUser     = data.user || '';
-            if (data.is_admin_client) {
-                navTabAdmin && navTabAdmin.classList.add('active');
-                navTabOnboarding && navTabOnboarding.classList.remove('active');
-                adminScreen && adminScreen.classList.remove('hidden');
-                onboardingScreen && onboardingScreen.classList.add('hidden');
-            }
-        } catch (_) { isAuthenticated = false; }
+        } catch (_) {
+            isAuthenticated = false;
+            isAdminClient = false;
+        }
         updateAuthUI();
-        if (isAuthenticated && !adminDataLoaded) loadAdminData();
+
+        // The admin DOM is deliberately absent on / for non-admin clients.
+        if (!navTabAdmin || !adminScreen) return;
+
+        if (isAuthenticated && (isAdminClient || adminRequested)) {
+            switchToAdmin();
+        } else if (adminRequested) {
+            authModal && authModal.classList.remove('hidden');
+        }
     }
 
     function updateAuthUI() {
@@ -192,6 +200,9 @@ document.addEventListener('DOMContentLoaded', () => {
             userBadge && userBadge.classList.add('hidden');
             authActionBtn && (authActionBtn.textContent = 'Admin Login');
         }
+        // An allowlisted client cannot meaningfully log out: its IP remains
+        // trusted, so avoid presenting a misleading Logout action.
+        authActionBtn && authActionBtn.classList.toggle('hidden', isAdminClient);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -199,9 +210,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─────────────────────────────────────────────────────────────
     navTabOnboarding && navTabOnboarding.addEventListener('click', () => {
         navTabOnboarding.classList.add('active');
-        navTabAdmin.classList.remove('active');
-        onboardingScreen.classList.remove('hidden');
-        adminScreen.classList.add('hidden');
+        navTabAdmin && navTabAdmin.classList.remove('active');
+        onboardingScreen && onboardingScreen.classList.remove('hidden');
+        adminScreen && adminScreen.classList.add('hidden');
     });
     navTabAdmin && navTabAdmin.addEventListener('click', () => {
         if (!isAuthenticated) { authModal.classList.remove('hidden'); }
@@ -209,10 +220,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function switchToAdmin() {
-        navTabAdmin.classList.add('active');
-        navTabOnboarding.classList.remove('active');
-        adminScreen.classList.remove('hidden');
-        onboardingScreen.classList.add('hidden');
+        navTabAdmin && navTabAdmin.classList.add('active');
+        navTabOnboarding && navTabOnboarding.classList.remove('active');
+        adminScreen && adminScreen.classList.remove('hidden');
+        onboardingScreen && onboardingScreen.classList.add('hidden');
         if (!adminDataLoaded) loadAdminData();
     }
 

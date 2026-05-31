@@ -96,9 +96,24 @@ DAY_MAP = {
 }
 
 
+def get_client_ip():
+    """Return the peer IP used for trusted-admin access decisions.
+
+    The Web UI is exposed directly on its macvlan address, so accepting a
+    client-supplied X-Forwarded-For header here would let any LAN client spoof
+    an allowlisted address and bypass authentication.
+    """
+    return request.remote_addr or ""
+
+
+def is_admin_client():
+    """Whether this request comes from a password-exempt admin workstation."""
+    return get_client_ip() in ADMIN_CLIENT_IPS
+
+
 def is_authenticated():
-    return True  # AUTH DISABLED FOR TESTING — re-enable before production
-    # return session.get("authenticated", False)
+    """Allow trusted admin workstations or a password-authenticated session."""
+    return is_admin_client() or session.get("authenticated", False)
 
 
 
@@ -1011,26 +1026,36 @@ def reload_squid():
 
 # --- API ENDPOINTS ---
 
-@app.route("/")
-def index():
-    return render_template("index.html")
+@app.route("/", defaults={"admin_requested": False})
+@app.route("/admin", defaults={"admin_requested": True})
+def index(admin_requested):
+    # On the public landing page, do not render any discoverable admin UI for
+    # ordinary clients. /admin is the explicit opt-in entry point for them.
+    admin_visible = is_admin_client() or admin_requested
+    return render_template(
+        "index.html",
+        admin_visible=admin_visible,
+        admin_requested=admin_requested,
+    )
 
 
 @app.route("/blocked")
 def blocked():
     domain = request.args.get("domain", "Unknown Webpage")
-    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+    client_ip = get_client_ip()
     return render_template("blocked.html", domain=domain, client_ip=client_ip)
 
 
 @app.route("/api/auth/status", methods=["GET"])
 def auth_status():
-    client_ip = request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+    client_ip = get_client_ip()
+    admin_client = is_admin_client()
     return jsonify({
         "authenticated": is_authenticated(),
-        "user": session.get("username", ""),
+        "user": session.get("username", "") or ("Trusted admin client" if admin_client else ""),
         "client_ip": client_ip,
-        "is_admin_client": client_ip in ADMIN_CLIENT_IPS
+        "is_admin_client": admin_client,
+        "password_required": not admin_client,
     })
 
 

@@ -74,7 +74,7 @@ It validates:
 | **TC-2.6a: PAC Endpoint** | Browser auto-configuration uses the explicit proxy without failing open. | `GET /proxy.pac` | PAC MIME type; Internet return is `PROXY 192.168.1.90:3128`; private LAN is `DIRECT`; no `PROXY …; DIRECT` fallback. |
 | **TC-2.6b: Ubuntu Installer** | Linux client onboarding configures CA trust and PAC. | `GET /download/install-ubuntu.sh` | Bash script calls `update-ca-certificates`, installs managed Chrome PAC policy, and points at the WebUI PAC URL. |
 | **TC-2.6c: Windows Installer** | Windows client onboarding configures CA trust and PAC. | `GET /download/install-windows.ps1` | Elevated PowerShell script imports the CA and sets the current user's `AutoConfigURL`. |
-| **TC-2.7: Unauthenticated Write** | **Security regression check.** Policy writes must require a session. | `POST /api/policies` with no cookie | HTTP 401/403. A 200 is a FAIL — it means `is_authenticated()` in `webui/app.py` is still stubbed to `return True`, leaving every filtered device able to rewrite its own parental controls. |
+| **TC-2.7: Unauthenticated Write** | **Security regression check.** Outside `ADMIN_CLIENT_IPS`, policy writes must require a session. | `POST /api/policies` with no cookie from a non-admin client IP | HTTP 401/403. A 200 is a FAIL unless the test host is intentionally in `ADMIN_CLIENT_IPS`. |
 | **TC-2.8a: Apply Pipeline** | Hot reload via the Docker socket. | `POST /api/apply` | JSON `"success": true`. |
 | **TC-2.8b: Survives Reload** | Squid must not die on SIGHUP. | Re-check `docker ps` 3s after apply. | `squid-proxy` still `Up`. A dead proxy means the intercepted hosts lose all web access, because the router policy-routes 80/443/4070 at it. |
 

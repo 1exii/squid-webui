@@ -487,9 +487,8 @@ else
     fail_test "TC-2.6c Windows installer is missing CA trust or PAC configuration."
 fi
 
-# TC-2.7 SECURITY: the API must reject unauthenticated writes.
-# app.py currently has `def is_authenticated(): return True`, which leaves every
-# policy endpoint open to the whole LAN — including the devices being filtered.
+# TC-2.7 SECURITY: a client outside ADMIN_CLIENT_IPS must not be able to write
+# policies without an authenticated session.
 echo ""
 echo "=== 2c. Authentication Posture (security regression check) ==="
 UNAUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 5 \
@@ -499,7 +498,7 @@ echo "  POST /api/policies (no session cookie) -> HTTP ${UNAUTH_CODE}"
 if [ "${UNAUTH_CODE}" = "401" ] || [ "${UNAUTH_CODE}" = "403" ]; then
     pass_test "TC-2.7 Unauthenticated policy write correctly rejected (HTTP ${UNAUTH_CODE})."
 else
-    fail_test "TC-2.7 Unauthenticated policy write ACCEPTED (HTTP ${UNAUTH_CODE})! is_authenticated() is stubbed to return True in webui/app.py — any LAN device can rewrite its own parental controls."
+    fail_test "TC-2.7 Unauthenticated policy write ACCEPTED (HTTP ${UNAUTH_CODE})! Verify that this test host is not in ADMIN_CLIENT_IPS and that session authentication is enforced."
     # Clean up the probe entry we just created.
     curl -s -o /dev/null -m 5 -X POST "${WEBUI_URL}/api/policies" \
         -H "Content-Type: application/json" -d "${POLICIES_RES}" 2>/dev/null || true
