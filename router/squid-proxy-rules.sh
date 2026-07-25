@@ -55,7 +55,7 @@ iptables -t mangle -I PREROUTING 1 -j SQUID_MARK
 iptables -t mangle -A SQUID_MARK -s "$SQUID_IP" -j RETURN
 iptables -t mangle -A SQUID_MARK -s 192.168.1.2 -j RETURN
 
-# --- ipset of Google/YouTube ranges allowed to keep using QUIC ---
+# --- Google/YouTube ranges that may use QUIC unless a client opts out ---
 if command -v ipset >/dev/null 2>&1; then
     ipset create youtube_quic hash:net 2>/dev/null || true
     for cidr in 172.217.0.0/16 142.250.0.0/16 173.194.0.0/16 216.58.0.0/16 74.125.0.0/16 \
@@ -66,26 +66,38 @@ fi
 
 add_host() {
     # $1 = source host IP
+    # $2 = optional "no_quic" flag
     #
-    # QUIC handling is deliberately two-sided and BOTH halves are required:
-    #   1. ACCEPT UDP 80/443 toward YouTube ranges — playback stays on QUIC and
-    #      does not degrade.
-    #   2. REJECT all other UDP 443 — without this, any HTTPS site can negotiate
-    #      QUIC and bypass the proxy entirely, since Squid only ever sees TCP.
-    # Rule 1 is inserted at position 1 and rule 2 at position 2, so the YouTube
-    # allow is always evaluated before the blanket reject.
+    # Always remove both possible forms of the YouTube exception first. This
+    # makes changing a client between modes idempotent on an already configured
+    # router and cleans up rules produced by older revisions.
     if command -v ipset >/dev/null 2>&1 && ipset list youtube_quic >/dev/null 2>&1; then
-        iptables -D FORWARD -s "$1" -p udp -m multiport --dports 80,443 -m set --match-set youtube_quic dst -j ACCEPT 2>/dev/null || true
-        iptables -I FORWARD 1 -s "$1" -p udp -m multiport --dports 80,443 -m set --match-set youtube_quic dst -j ACCEPT
-    else
-        for cidr in 172.217.0.0/16 142.250.0.0/16 173.194.0.0/16 216.58.0.0/16 74.125.0.0/16; do
-            iptables -D FORWARD -s "$1" -d "$cidr" -p udp -m multiport --dports 80,443 -j ACCEPT 2>/dev/null || true
-            iptables -I FORWARD 1 -s "$1" -d "$cidr" -p udp -m multiport --dports 80,443 -j ACCEPT
-        done
+        while iptables -D FORWARD -s "$1" -p udp -m multiport --dports 80,443 -m set --match-set youtube_quic dst -j ACCEPT 2>/dev/null; do :; done
     fi
+    for cidr in 172.217.0.0/16 142.250.0.0/16 173.194.0.0/16 216.58.0.0/16 74.125.0.0/16; do
+        while iptables -D FORWARD -s "$1" -d "$cidr" -p udp -m multiport --dports 80,443 -j ACCEPT 2>/dev/null; do :; done
+    done
 
-    iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null || true
-    iptables -I FORWARD 2 -s "$1" -p udp --dport 443 -j REJECT
+    while iptables -D FORWARD -s "$1" -p udp --dport 443 -j REJECT 2>/dev/null; do :; done
+
+    if [ "${2:-}" = "no_quic" ]; then
+        # Squid only handles TCP. Rejecting all UDP/443 makes browsers retry over
+        # TCP/443 so category blocks can render ERR_ACCESS_DENIED over HTTPS.
+        iptables -I FORWARD 1 -s "$1" -p udp --dport 443 -j REJECT
+    else
+        # Default mode preserves YouTube QUIC performance, while the following
+        # catch-all reject prevents every other HTTP/3 destination bypassing Squid.
+        # Insert the reject first, then place every exception above it. This also
+        # keeps all CIDR fallback rules ahead of the reject when ipset is absent.
+        iptables -I FORWARD 1 -s "$1" -p udp --dport 443 -j REJECT
+        if command -v ipset >/dev/null 2>&1 && ipset list youtube_quic >/dev/null 2>&1; then
+            iptables -I FORWARD 1 -s "$1" -p udp -m multiport --dports 80,443 -m set --match-set youtube_quic dst -j ACCEPT
+        else
+            for cidr in 172.217.0.0/16 142.250.0.0/16 173.194.0.0/16 216.58.0.0/16 74.125.0.0/16; do
+                iptables -I FORWARD 1 -s "$1" -d "$cidr" -p udp -m multiport --dports 80,443 -j ACCEPT
+            done
+        fi
+    fi
 
     # Mark TCP 80 / 443 / 4070 (Spotify AP) for policy routing to Squid.
     iptables -t mangle -A SQUID_MARK -s "$1" -p tcp -m multiport --dports 80,443,4070 -j MARK --set-mark 0x5000/0x5000

@@ -11,7 +11,7 @@
 #                          dangling-ACL-reference check, CA certs
 #   4. Traffic           — interception, selective SSL bumping, block page, path rules
 #   5. Management CLI    — squid-mgmt.sh dump-config, catlogs
-#   6. Router advanced   — Spotify 4070, YouTube QUIC allow + global QUIC reject
+#   6. Router advanced   — Spotify 4070 and per-client QUIC policy
 #
 # Usage:
 #   ./debug-proxy.sh                     # Default: tests via vm-ubuntu (192.168.8.30)
@@ -1188,19 +1188,45 @@ if require_proxy_up "TC-4.6b Spotify 4070 container REDIRECT"; then
     fi
 fi
 
-# --- TC-4.7: QUIC handling. Two rules must BOTH exist per intercepted host:
-#   (1) ACCEPT UDP 80/443 to the youtube_quic ipset  -> YouTube keeps using QUIC
-#   (2) REJECT all other UDP 443                     -> everything else falls back
-#                                                       to TCP 443 so Squid sees it
-# The old test only checked (1). Without (2), any site can bypass the proxy over QUIC.
+# --- TC-4.7: QUIC handling. A host tagged no_quic must have no Google/YouTube
+# exception; an untagged host retains that exception. Every host also needs the
+# catch-all UDP/443 reject that prevents non-YouTube HTTP/3 bypass.
 ROUTER_FORWARD=$(ssh -o ConnectTimeout=8 "${ROUTER_IP}" "iptables -L FORWARD -n -v" 2>&1 || true)
 
-if echo "${ROUTER_FORWARD}" | grep -q "match-set youtube_quic dst"; then
-    pass_test "TC-4.7a YouTube QUIC allow-list: FORWARD ACCEPT rule for the youtube_quic ipset is active."
-elif echo "${ROUTER_FORWARD}" | grep -qE "142\.250\.|172\.217\.|173\.194\."; then
-    pass_test "TC-4.7a YouTube QUIC allow-list: FORWARD ACCEPT rules for YouTube CIDRs are active (ipset fallback path)."
+QUIC_MODE_OK=true
+QUIC_MODE_HOSTS=0
+if [ -f "${PROXY_HOSTS_CONF}" ]; then
+    while IFS= read -r line; do
+        [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+        line="${line%%#*}"
+        read -r host_ip host_name host_options <<< "${line}"
+        [ -z "${host_ip}" ] && continue
+        QUIC_MODE_HOSTS=$((QUIC_MODE_HOSTS + 1))
+
+        host_forward=$(echo "${ROUTER_FORWARD}" | grep "${host_ip}" || true)
+        has_youtube_quic=false
+        if echo "${host_forward}" | grep -q "youtube_quic" || \
+           echo "${host_forward}" | grep -qE "ACCEPT.*udp.*(142\.250\.0\.0/16|172\.217\.0\.0/16|173\.194\.0\.0/16|216\.58\.0\.0/16|74\.125\.0\.0/16)"; then
+            has_youtube_quic=true
+        fi
+
+        if [[ " ${host_options} " == *" no_quic "* ]]; then
+            if [ "${has_youtube_quic}" = true ]; then
+                QUIC_MODE_OK=false
+                info "${host_name} (${host_ip}) is tagged no_quic but still has a YouTube UDP exception."
+            fi
+        elif [ "${has_youtube_quic}" = false ]; then
+            QUIC_MODE_OK=false
+            info "${host_name} (${host_ip}) is not tagged no_quic but has no YouTube UDP exception."
+        fi
+    done < "${PROXY_HOSTS_CONF}"
+fi
+if [ "${QUIC_MODE_HOSTS}" -eq 0 ]; then
+    warn_test "TC-4.7a No controlled clients configured — per-client QUIC modes not verified."
+elif [ "${QUIC_MODE_OK}" = true ]; then
+    pass_test "TC-4.7a Per-client QUIC mode: all ${QUIC_MODE_HOSTS} controlled client(s) match proxy-hosts.conf."
 else
-    fail_test "TC-4.7a YouTube QUIC allow-list: no FORWARD ACCEPT rule for YouTube QUIC traffic."
+    fail_test "TC-4.7a Per-client QUIC mode: one or more router rules disagree with proxy-hosts.conf."
 fi
 
 QUIC_REJECT_OK=true
@@ -1213,16 +1239,16 @@ if [ -f "${PROXY_HOSTS_CONF}" ]; then
         QUIC_HOSTS=$((QUIC_HOSTS + 1))
         if ! echo "${ROUTER_FORWARD}" | grep -E "REJECT.*udp.*${host_ip}|${host_ip}.*udp.*dpt:443" | grep -qi "reject"; then
             QUIC_REJECT_OK=false
-            info "No global UDP/443 REJECT rule found for ${host_ip} — that host can bypass Squid over QUIC."
+            info "No UDP/443 REJECT rule found for ${host_ip} — that host can bypass Squid over QUIC."
         fi
     done < "${PROXY_HOSTS_CONF}"
 fi
 if [ "${QUIC_HOSTS}" -eq 0 ]; then
-    warn_test "TC-4.7b No intercepted hosts configured — QUIC reject rule not verified."
+    warn_test "TC-4.7b No controlled clients configured — QUIC reject rule not verified."
 elif [ "${QUIC_REJECT_OK}" = true ]; then
-    pass_test "TC-4.7b QUIC bypass prevention: all ${QUIC_HOSTS} intercepted host(s) have a UDP/443 REJECT rule."
+    pass_test "TC-4.7b QUIC bypass prevention: all ${QUIC_HOSTS} controlled client(s) have a catch-all UDP/443 reject."
 else
-    fail_test "TC-4.7b QUIC bypass prevention: one or more intercepted hosts lack the UDP/443 REJECT rule — HTTPS can bypass the proxy over QUIC."
+    fail_test "TC-4.7b QUIC bypass prevention: one or more controlled clients lack the UDP/443 REJECT rule — HTTPS can bypass Squid."
 fi
 echo ""
 
