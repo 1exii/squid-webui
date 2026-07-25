@@ -235,8 +235,17 @@ so YouTube retains native end-to-end TLS.
 
 ```text
 192.168.8.21  vm-win11  no_quic
+192.168.1.12  laptop-daughter  no_quic no_vpn
 192.168.8.30  vm-ubuntu
 ```
+
+The independent `no_vpn` flag blocks Cloudflare WARP's documented consumer,
+WireGuard, MASQUE, FedRAMP, and client-orchestration ingress addresses, plus the
+consumer endpoint observed on this network. The router removes any matching
+established conntrack flows during deployment so hardware acceleration cannot
+keep an old WARP tunnel alive. This is deliberately WARP-specific: arbitrary
+VPNs using general HTTPS endpoints cannot be distinguished safely from normal
+web traffic by port alone.
 
 ---
 

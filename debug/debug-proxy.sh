@@ -11,7 +11,7 @@
 #                          dangling-ACL-reference check, CA certs
 #   4. Traffic           — interception, selective SSL bumping, block page, path rules
 #   5. Management CLI    — squid-mgmt.sh dump-config, catlogs
-#   6. Router advanced   — Spotify 4070 and per-client QUIC policy
+#   6. Router advanced   — Spotify 4070, per-client QUIC, and WARP blocking
 #
 # Usage:
 #   ./debug-proxy.sh                     # Default: tests via vm-ubuntu (192.168.8.30)
@@ -1249,6 +1249,43 @@ elif [ "${QUIC_REJECT_OK}" = true ]; then
     pass_test "TC-4.7b QUIC bypass prevention: all ${QUIC_HOSTS} controlled client(s) have a catch-all UDP/443 reject."
 else
     fail_test "TC-4.7b QUIC bypass prevention: one or more controlled clients lack the UDP/443 REJECT rule — HTTPS can bypass Squid."
+fi
+
+VPN_MODE_OK=true
+VPN_MODE_HOSTS=0
+if [ -f "${PROXY_HOSTS_CONF}" ]; then
+    while IFS= read -r line; do
+        [[ -z "${line}" || "${line}" =~ ^[[:space:]]*# ]] && continue
+        line="${line%%#*}"
+        read -r host_ip host_name host_options <<< "${line}"
+        [ -z "${host_ip}" ] && continue
+        VPN_MODE_HOSTS=$((VPN_MODE_HOSTS + 1))
+
+        host_forward=$(echo "${ROUTER_FORWARD}" | grep "${host_ip}" || true)
+        warp_rules=0
+        for vpn_cidr in 162.159.193.0/24 162.159.197.0/24 162.159.198.0/24; do
+            if echo "${host_forward}" | grep -F "${vpn_cidr}" | grep -q "REJECT"; then
+                warp_rules=$((warp_rules + 1))
+            fi
+        done
+
+        if [[ " ${host_options} " == *" no_vpn "* ]]; then
+            if [ "${warp_rules}" -ne 3 ]; then
+                VPN_MODE_OK=false
+                info "${host_name} (${host_ip}) is tagged no_vpn but lacks one or more WARP ingress rejects."
+            fi
+        elif [ "${warp_rules}" -ne 0 ]; then
+            VPN_MODE_OK=false
+            info "${host_name} (${host_ip}) is not tagged no_vpn but still has WARP ingress rejects."
+        fi
+    done < "${PROXY_HOSTS_CONF}"
+fi
+if [ "${VPN_MODE_HOSTS}" -eq 0 ]; then
+    warn_test "TC-4.7c No controlled clients configured — per-client VPN modes not verified."
+elif [ "${VPN_MODE_OK}" = true ]; then
+    pass_test "TC-4.7c Per-client VPN mode: WARP rules match proxy-hosts.conf for all ${VPN_MODE_HOSTS} controlled client(s)."
+else
+    fail_test "TC-4.7c Per-client VPN mode: one or more router rules disagree with proxy-hosts.conf."
 fi
 echo ""
 

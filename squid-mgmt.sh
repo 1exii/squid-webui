@@ -283,14 +283,16 @@ deploy_router_proxy() {
     while IFS= read -r line; do
         [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
         line="${line%%#*}"
-        local host_ip host_name host_options quic_mode option
+        local host_ip host_name host_options quic_mode vpn_mode option
         read -r host_ip host_name host_options <<< "$line"
         [ -z "$host_ip" ] && continue
 
         quic_mode=""
+        vpn_mode=""
         for option in ${host_options}; do
             case "${option}" in
                 no_quic) quic_mode="no_quic" ;;
+                no_vpn) vpn_mode="no_vpn" ;;
                 *)
                     echo "  [!] ERROR: Unknown option '${option}' for ${host_name} (${host_ip}) in ${PROXY_HOSTS_CONF}."
                     rm -f "${TEMP_SCRIPT}"
@@ -299,7 +301,7 @@ deploy_router_proxy() {
             esac
         done
 
-        echo "add_host \"${host_ip}\" \"${quic_mode}\"   # ${host_name}" >> "${TEMP_SCRIPT}"
+        echo "add_host \"${host_ip}\" \"${quic_mode}\" \"${vpn_mode}\"   # ${host_name}" >> "${TEMP_SCRIPT}"
         host_count=$((host_count + 1))
     done < "${PROXY_HOSTS_CONF}"
 
