@@ -67,6 +67,7 @@ fi
 add_host() {
     # $1 = source host IP
     # $2 = optional "no_quic" flag
+    # $3 = optional "no_vpn" flag (currently blocks Cloudflare WARP)
     #
     # Always remove both possible forms of the YouTube exception first. This
     # makes changing a client between modes idempotent on an already configured
@@ -97,6 +98,39 @@ add_host() {
                 iptables -I FORWARD 1 -s "$1" -d "$cidr" -p udp -m multiport --dports 80,443 -j ACCEPT
             done
         fi
+    fi
+
+    # Remove any prior per-client WARP policy first so toggling no_vpn in
+    # proxy-hosts.conf is idempotent. These are Cloudflare's documented consumer,
+    # WireGuard, MASQUE and FedRAMP ingress ranges, the endpoint observed on this
+    # network, and the two client orchestration API addresses.
+    for vpn_cidr in \
+        162.159.192.0/24 \
+        162.159.193.0/24 \
+        162.159.197.0/24 \
+        162.159.198.0/24 \
+        162.159.239.0/24 \
+        162.159.137.105/32 \
+        162.159.138.105/32; do
+        while iptables -D FORWARD -s "$1" -d "$vpn_cidr" -j REJECT 2>/dev/null; do :; done
+    done
+
+    if [ "${3:-}" = "no_vpn" ]; then
+        for vpn_cidr in \
+            162.159.192.0/24 \
+            162.159.193.0/24 \
+            162.159.197.0/24 \
+            162.159.198.0/24 \
+            162.159.239.0/24 \
+            162.159.137.105/32 \
+            162.159.138.105/32; do
+            iptables -I FORWARD 1 -s "$1" -d "$vpn_cidr" -j REJECT
+            # Drop an already-established/offloaded WARP flow so the new policy
+            # takes effect immediately instead of waiting for tunnel expiry.
+            if [ -x /usr/sbin/conntrack ]; then
+                /usr/sbin/conntrack -D -s "$1" -d "$vpn_cidr" >/dev/null 2>&1 || true
+            fi
+        done
     fi
 
     # Mark TCP 80 / 443 / 4070 (Spotify AP) for policy routing to Squid.
