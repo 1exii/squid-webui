@@ -57,6 +57,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
   - **Windows Guide:** Automated PowerShell CA/PAC installation, manual Windows setup-script configuration, and browser trust guidance.
   - **Ubuntu Linux Guide:** Automated CA/PAC installation, `update-ca-certificates`, a managed Chrome/Chromium `ProxySettings` policy, GNOME PAC configuration, and NSS database import (`certutil`).
 - **Proxy Auto-Config:** Public `/proxy.pac` sends Internet traffic to the explicit Squid proxy at `192.168.1.90:3128`, sends loopback/private/local-name destinations direct, and deliberately omits a `DIRECT` fallback for Internet requests.
+- **Per-Client QUIC Fallback:** Every controlled client rejects general UDP/443 proxy bypass. Clients carrying the optional `no_quic` flag in `proxy-hosts.conf` also reject Google/YouTube QUIC, forcing HTTP/3 traffic onto TCP so Squid can enforce category policies and render the custom HTTPS block page; unflagged clients retain the YouTube QUIC performance exception.
 
 ### 3.2 Access Control & Device Policy Manager (Admin Only)
 - **Dynamic Device Tab Navigation (`devices.list`):**

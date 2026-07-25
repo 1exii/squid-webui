@@ -225,12 +225,18 @@ a single client — filtering appears to work while applying the wrong policy to
 everyone. Preserving the client IP is what makes `acl src_dev_<ip> src <ip>` mean
 anything.
 
-QUIC handling is two-sided and both halves are required:
+Every controlled client gets a catch-all UDP/443 `REJECT`, preventing arbitrary
+HTTP/3 traffic from bypassing Squid. By default, a preceding Google/YouTube UDP
+exception preserves YouTube QUIC performance. Add the optional `no_quic` flag to
+a client in `router/proxy-hosts.conf` to omit that exception and force YouTube to
+fall back to TCP 443 through Squid, allowing category enforcement and the custom
+HTTPS block page. During an allowed schedule, Squid splices that TCP connection
+so YouTube retains native end-to-end TLS.
 
-1. `ACCEPT` UDP 80/443 toward the `youtube_quic` ipset, so YouTube playback stays
-   on QUIC and does not degrade.
-2. `REJECT` all other UDP 443, so no other site can negotiate QUIC and bypass the
-   proxy — Squid only ever sees TCP.
+```text
+192.168.8.21  vm-win11  no_quic
+192.168.8.30  vm-ubuntu
+```
 
 ---
 

@@ -17,7 +17,7 @@ It validates:
 3. **Configuration & ACL integrity** — `squid -k parse`, empty-ACL detection, `rules.acl` / `ssl_bump.acl` / `bump_domains.acl` contents, and cross-file ACL reference consistency.
 4. **Traffic interception & selective SSL bumping** — spliced pass-through, bumped block pages, deep URL path rules, and CA trust.
 5. **Management CLI** — `squid-mgmt.sh dump-config` and `catlogs`.
-6. **Router advanced rules** — Spotify TCP 4070 and QUIC handling (YouTube allow-list **and** the global UDP/443 reject that prevents proxy bypass).
+6. **Router advanced rules** — Spotify TCP 4070 and the optional per-client `no_quic` policy.
 
 **Exit code:** `0` when no assertion failed, `1` otherwise — the suite is safe to wire into CI or a cron check.
 
@@ -114,8 +114,8 @@ It validates:
 | **TC-4.5: Strict CA Trust** | Root CA is installed on the client. | `curl https://example.com` **without** `-k`. | Clean handshake, no `SSL certificate problem`. |
 | **TC-4.6a: Spotify 4070 (router)** | Router marks TCP 4070. | `iptables -t mangle -L SQUID_MARK`. | 4070 covered. |
 | **TC-4.6b: Spotify 4070 (container)** | Container redirects 4070. | Container NAT `PREROUTING`. | `4070 → 3130`. Asserted separately from the router half so a failure names the broken side. |
-| **TC-4.7a: YouTube QUIC Allow** | YouTube keeps using QUIC for playback. | FORWARD `ACCEPT` for the `youtube_quic` ipset (or the CIDR fallback). | Rule present. |
-| **TC-4.7b: QUIC Bypass Prevention** | All *other* UDP/443 is rejected so browsers fall back to TCP and Squid can see the traffic. | FORWARD `REJECT` udp/443 per intercepted host. | Rule present for every host in `proxy-hosts.conf`. Without it, any site bypasses the proxy over QUIC. |
+| **TC-4.7a: Per-Client QUIC Mode** | `no_quic` clients force YouTube through Squid while untagged clients retain YouTube QUIC. | Cross-reference `proxy-hosts.conf` flags with FORWARD rules. | No Google/YouTube UDP exception for tagged clients; exception present for untagged clients. |
+| **TC-4.7b: QUIC Bypass Prevention** | Non-YouTube HTTP/3 must not bypass Squid for any controlled client. | FORWARD `REJECT` udp/443 per controlled client. | Catch-all rule present for every host in `proxy-hosts.conf`; a preceding YouTube exception is allowed only for untagged clients. |
 | **TC-4.8a/b: Video Lifecycle** | Dynamic Web UI policy change takes effect. | `POST /api/policies` unblocked → test Vimeo → blocked → test Vimeo → restore. | Unblocked: 200 with no block page. Blocked: 403 + block page. |
 | **TC-4.9a: Block Page over HTTP** | Block page payload. | Blocked domain over HTTP. | 403, `X-Squid-Error: ERR_ACCESS_DENIED`, `Webpage Blocked` title, parental message. |
 | **TC-4.9b: Block Page over HTTPS** | The page users actually see. | Same domain over HTTPS (bumped). | Same four signatures. Previously only the HTTP body was checked. |
