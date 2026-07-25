@@ -520,6 +520,7 @@ while [ $# -gt 0 ] ; do
         all)
             deploy_proxy
             deploy_webui
+            deploy_router_proxy
             ;;
         *)
             echo "Unknown command: $1"
