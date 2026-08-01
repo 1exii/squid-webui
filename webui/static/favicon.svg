@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Squid Proxy">
+  <defs>
+    <linearGradient id="background" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#0b0f19"/>
+  <rect x="3" y="3" width="58" height="58" rx="12" fill="url(#background)" opacity=".28"/>
+  <text x="32" y="46" text-anchor="middle" font-size="42" font-family="Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif">🦑</text>
+</svg>
