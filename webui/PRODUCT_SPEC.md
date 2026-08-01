@@ -65,9 +65,12 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
   - Reads target devices from `devices.list` (extracted from Pi-hole name lists).
   - Renders horizontal device tabs (with category icons `📱` Phone, `💻` Laptop, `🖥️` PC, `📱` Tablet) and a real-time search box.
   - Automatically updates tabs whenever `devices.list` is edited and the Web UI is redeployed.
-- **Blocker-Lists Checkbox Selection (Before Schedule Matrix):**
-  - Displayed before the schedule table.
-  - Allows selecting which domain blocklists (`socialmedia.txt`, `gaming.txt`, `videos.txt`, `adult.txt`, etc.) will be active for the device during blocked time slots.
+- **Three-State Category Policy (Before Schedule Matrix):**
+  - **Always Block** checkboxes deny selected categories at all times and take highest precedence.
+  - **Always Allow** checkboxes permit selected categories at all times, unless overlapping content is also matched by an Always Block category.
+  - **Default Block** has no selection checkbox. It is automatically the complement of Always Block and Always Allow, so every remaining category is blocked unless its timetable grants an unblock window.
+  - An Always Block category is hidden from Always Allow and Default Block. An Always Allow category is hidden from Default Block but remains visible in Always Block so it can be promoted directly to the higher-priority policy.
+  - Moving a category out of either explicit list automatically returns it to Default Block.
   - Blocklist files (`block-lists/*.txt`) are dynamically parsed by `parse_blocklists()` into clean `dstdomain` ACLs (`domains_<bl>.acl`) and URL path regex ACLs (`urlpath_regex`).
 - **Interactive 30-Minute Dual-Mode Schedule Matrix (Weekly & Today Overwrite):**
   - **Dual Mode Pill Toggle:** Switch seamlessly between `📅 Weekly` (7×48 grid) and `📆 Today Only` (1×48 grid) editing modes.
@@ -118,7 +121,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - **User Goal:** Block entertainment categories (e.g. `gaming.txt`, `socialmedia.txt`) by default, but allow access during specific recurring weekly time windows (e.g. Mon-Fri 16:00 - 20:00).
 - **User Experience & Admin Action:**
   1. Admin selects the device tab (`Child Phone`).
-  2. Under **Default Block (Scheduled Unblock Windows)**, admin selects `gaming.txt` and `socialmedia.txt`.
+  2. Admin leaves `gaming.txt` and `socialmedia.txt` out of both **Always Block** and **Always Allow**, so they appear automatically under **Default Block (Scheduled Unblock Windows)**.
   3. Admin ensures schedule mode is set to **`📅 Weekly`** (7×48 grid).
   4. Admin drags mouse across grid cells for `Mon`–`Fri` between `16:00` and `20:00` to set them as Allowed (translucent cyan), leaving all other time slots Blocked (red gradient).
   5. Admin clicks **Save & Apply**.
@@ -132,7 +135,12 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
     http_access deny src_dev_192_168_1_50 list_gaming_txt
     ```
 
-#### 🎁 CUJ 3: Ad-Hoc Temporary Access Bonus ("Give Kids 30 Min Extra Gaming Time Today")
+#### ✅ CUJ 3: Permanent Access (`Always Allow` Subset)
+- **User Goal:** Keep selected categories available regardless of the Default Block timetable.
+- **User Experience & Admin Action:** Admin checks categories under **Always Allow**, then saves and applies the policy.
+- **System & ACL Behavior:** The category is removed from Default Block and receives an unconditional `http_access allow` rule after Always Block rules but before scheduled Default Block rules.
+
+#### 🎁 CUJ 4: Ad-Hoc Temporary Access Bonus ("Give Kids 30 Min Extra Gaming Time Today")
 - **User Goal:** Give a child an extra 30-minute gaming bonus today (e.g., `20:30 - 21:00`) outside their normal weekly allowed window, without altering their permanent recurring weekly schedule.
 - **User Experience & Admin Action:**
   1. Admin opens the Web UI and selects the child's device tab.
@@ -155,8 +163,8 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 | `/api/auth/logout` | `POST` | Public | Clears admin session. |
 | `/api/devices` | `GET` | Admin | Returns list of devices parsed from `devices.list`. |
 | `/api/blocklists` | `GET` | Admin | Lists available blocklist category files. |
-| `/api/policies` | `GET` | Admin | Returns all saved per-device policies & schedule matrices (including `unblock_weekly`, `unblock_today`, and `today_date`). |
-| `/api/policies` | `POST` | Admin | Saves per-device policies (auto-expiring stale today overrides), compiles clean `domains_<bl>.acl` files and `rules.acl`. |
+| `/api/policies` | `GET` | Admin | Returns `always_block`, `always_allow`, and the automatically materialized `default_block` schedule entries for each device. |
+| `/api/policies` | `POST` | Admin | Normalizes Default Block as the complement of the explicit lists, expires stale today overrides, and compiles Squid ACLs. |
 | `/api/apply` | `POST` | Admin | Triggers Squid reload via Docker daemon Unix socket (`SIGHUP` signal to `squid-proxy`). |
 | `/download/cert.<ext>` | `GET` | Public | Downloads Root CA certificate (`.crt` or `.pem`). |
 | `/proxy.pac` | `GET` | Public | Fail-closed browser PAC file: private/local destinations direct, Internet traffic through explicit Squid port 3128. |
