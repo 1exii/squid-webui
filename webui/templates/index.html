@@ -204,7 +204,25 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                 </div>
 
                 <!-- ══════════════════════════════════════════════
-                     SECTION 2: DEFAULT BLOCK with Unblock Windows
+                     SECTION 2: ALWAYS ALLOW
+                ══════════════════════════════════════════════ -->
+                <div class="policy-section always-allow-card glass-panel">
+                    <div class="section-header">
+                        <div class="section-title-group">
+                            <span class="section-icon section-icon-green">🟢</span>
+                            <div>
+                                <h3 class="section-title">Always Allow</h3>
+                                <p class="section-desc">These lists are <strong>unconditionally allowed</strong>. Always Block retains priority when category contents overlap.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="always-allow-checkboxes" class="blocklist-checkbox-grid always-allow-grid">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
+                <!-- ══════════════════════════════════════════════
+                     SECTION 3: DEFAULT BLOCK with Unblock Windows
                 ══════════════════════════════════════════════ -->
                 <div class="policy-section default-block-card glass-panel">
                     <div class="section-header">
@@ -212,13 +230,13 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                             <span class="section-icon section-icon-amber">🟠</span>
                             <div>
                                 <h3 class="section-title">Default Block <span class="section-title-sub">— with Unblock Windows</span></h3>
-                                <p class="section-desc">These lists are blocked by default. Use the schedule to mark <strong class="allow-text">✅ green allow windows</strong> when access should be permitted.</p>
+                                <p class="section-desc">Every list not selected in Always Block or Always Allow is included automatically. Use the schedule to mark <strong class="allow-text">✅ green allow windows</strong>.</p>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Checklist of lists in default_block -->
-                    <div id="default-block-checkboxes" class="blocklist-checkbox-grid default-block-grid">
+                    <!-- Automatic complement of Always Block and Always Allow -->
+                    <div id="default-block-lists" class="blocklist-checkbox-grid default-block-grid">
                         <!-- Populated dynamically -->
                     </div>
 
@@ -229,11 +247,11 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                             <button id="sched-mode-basic-btn" class="mode-btn active">✏️ Basic</button>
                             <button id="sched-mode-advanced-btn" class="mode-btn">🔬 Advanced</button>
                         </div>
-                        <span class="sched-edit-hint">Basic: one schedule applies to all checked lists</span>
+                        <span class="sched-edit-hint">Basic: one schedule applies to all default lists</span>
                         <span id="advanced-multi-note" class="sched-edit-hint advanced-note hidden">Advanced: click a list tab to select it; <kbd>Ctrl+click</kbd> to multi-select</span>
                     </div>
 
-                    <!-- List Selector Tabs + Schedule (shown when ≥1 list checked) -->
+                    <!-- List Selector Tabs + Schedule (shown when ≥1 default list exists) -->
                     <div id="db-list-tabs-container" class="db-tabs-container hidden">
 
                         <!-- Per-list tab strip -->
@@ -317,10 +335,10 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                         </div>
                     </div>
 
-                    <!-- Empty state when no lists checked -->
+                    <!-- Empty state when every list is explicitly classified -->
                     <div id="db-empty-state" class="db-empty-state">
                         <span class="db-empty-icon">📋</span>
-                        <p>Check a list above to add it to Default Block and configure its unblock schedule.</p>
+                        <p>No Default Block lists remain. Uncheck a category in Always Block or Always Allow to schedule it here.</p>
                     </div>
                 </div>
 

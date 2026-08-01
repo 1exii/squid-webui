@@ -202,6 +202,7 @@ def migrate_legacy_policy(legacy):
         "hostname": legacy.get("hostname", legacy.get("ip", "")),
         "ssl_bump_mode": legacy.get("ssl_bump_mode", "blocked_only"),
         "always_block": legacy.get("blocklists", []),
+        "always_allow": [],
         "default_block": []
     }
 
@@ -214,11 +215,28 @@ def ensure_policy_schema(policy):
 
     policy.setdefault("ssl_bump_mode", "blocked_only")
     policy.setdefault("always_block", [])
+    policy.setdefault("always_allow", [])
     policy.setdefault("default_block", [])
+    for field in ("always_block", "always_allow", "default_block"):
+        if not isinstance(policy[field], list):
+            policy[field] = []
+
+    # Always Block has highest precedence if malformed/external input places a
+    # category in both explicit sets.
+    policy["always_block"] = list(dict.fromkeys(
+        item for item in policy["always_block"] if isinstance(item, str)
+    ))
+    blocked = set(policy["always_block"])
+    policy["always_allow"] = list(dict.fromkeys(
+        item for item in policy["always_allow"]
+        if isinstance(item, str) and item not in blocked
+    ))
+    explicit = blocked | set(policy["always_allow"])
 
     repaired = []
     for entry in policy["default_block"]:
-        if not isinstance(entry, dict) or "list" not in entry:
+        if (not isinstance(entry, dict) or "list" not in entry or
+                entry["list"] in explicit):
             continue
         entry.setdefault("unblock_weekly", make_empty_weekly())
         entry.setdefault("unblock_today", make_empty_today())
@@ -228,16 +246,60 @@ def ensure_policy_schema(policy):
             entry["unblock_today"] = make_empty_today()
             entry["today_date"] = today_str()
         # Ensure correct dimensions
-        if len(entry["unblock_weekly"]) != 7:
+        if (not isinstance(entry["unblock_weekly"], list) or
+                len(entry["unblock_weekly"]) != 7):
             entry["unblock_weekly"] = make_empty_weekly()
         for d in range(7):
-            if len(entry["unblock_weekly"][d]) != 48:
+            if (not isinstance(entry["unblock_weekly"][d], list) or
+                    len(entry["unblock_weekly"][d]) != 48):
                 entry["unblock_weekly"][d] = [False] * 48
-        if len(entry["unblock_today"]) != 48:
+        if (not isinstance(entry["unblock_today"], list) or
+                len(entry["unblock_today"]) != 48):
             entry["unblock_today"] = make_empty_today()
         repaired.append(entry)
     policy["default_block"] = repaired
     return policy
+
+
+def list_blocklist_files():
+    """Return available blocklist filenames, or None when the directory is unavailable."""
+    if not os.path.isdir(SQUID_BLOCKLIST_DIR):
+        return None
+    try:
+        return sorted(
+            filename for filename in os.listdir(SQUID_BLOCKLIST_DIR)
+            if filename.endswith(".txt")
+        )
+    except OSError as e:
+        print(f"Error listing blocklists for policy synchronization: {e}")
+        return None
+
+
+def synchronize_default_block(policy, blocklist_names):
+    """Materialize Default Block as the complement of the two explicit sets.
+
+    Existing timetable entries are retained. Newly discovered/unclassified
+    blocklists start blocked at all times until an unblock window is configured.
+    """
+    policy = ensure_policy_schema(policy)
+    if blocklist_names is None:
+        return policy
+
+    explicit = set(policy["always_block"]) | set(policy["always_allow"])
+    existing = {entry["list"]: entry for entry in policy["default_block"]}
+    synchronized = []
+    for list_name in blocklist_names:
+        if list_name in explicit:
+            continue
+        entry = existing.get(list_name, {
+            "list": list_name,
+            "unblock_weekly": make_empty_weekly(),
+            "unblock_today": make_empty_today(),
+            "today_date": today_str(),
+        })
+        synchronized.append(entry)
+    policy["default_block"] = synchronized
+    return ensure_policy_schema(policy)
 
 
 def load_proxy_hosts_ips():
@@ -309,8 +371,9 @@ def load_device_policies():
             with open(DEVICE_POLICIES_PATH, "r") as f:
                 raw = json.load(f)
             migrated = {}
+            blocklist_names = list_blocklist_files()
             for ip, pol in raw.items():
-                migrated[ip] = ensure_policy_schema(pol)
+                migrated[ip] = synchronize_default_block(pol, blocklist_names)
             return migrated
         except Exception as e:
             print(f"Error loading device_policies.json: {e}")
@@ -320,8 +383,9 @@ def load_device_policies():
 def save_device_policies(policies):
     """Persist policies to disk and recompile the Squid ACLs. Returns (ok, message)."""
     os.makedirs(os.path.dirname(DEVICE_POLICIES_PATH), exist_ok=True)
+    blocklist_names = list_blocklist_files()
     for ip in policies:
-        policies[ip] = ensure_policy_schema(policies[ip])
+        policies[ip] = synchronize_default_block(policies[ip], blocklist_names)
     # Write atomically so a crash mid-write cannot leave unparseable JSON behind,
     # which load_device_policies() would silently swallow as "no policies at all".
     tmp_path = f"{DEVICE_POLICIES_PATH}.tmp"
@@ -583,6 +647,7 @@ def _build_policy_acls(policies, parsed_blocklists):
     """
     Render device policies into the text of rules.acl and ssl_bump.acl.
     - always_block lists  → unconditional http_access deny (domain + path rules)
+    - always_allow lists  → unconditional allow ahead of scheduled defaults
     - default_block lists → allow windows + fallback deny (domain + path rules)
     - ssl_bump.acl        → per-device dynamic SSL bump rules (blocked sites or full device bump)
     Returns (rules_acl_text, ssl_bump_acl_text).
@@ -606,13 +671,16 @@ def _build_policy_acls(policies, parsed_blocklists):
     declared_path_rules = set()
 
     for ip, policy in policies.items():
-        policy = ensure_policy_schema(policy)
+        # Compilation is a second enforcement boundary: callers that bypass the
+        # persistence helpers still get the automatic Default Block complement.
+        policy = synchronize_default_block(policy, sorted(parsed_blocklists))
         hostname = policy.get("hostname", ip)
         always_block = policy.get("always_block", [])
+        always_allow = policy.get("always_allow", [])
         default_block = policy.get("default_block", [])
         ssl_bump_mode = policy.get("ssl_bump_mode", "blocked_only")
 
-        if not always_block and not default_block:
+        if not always_block and not always_allow and not default_block:
             continue
 
         clean_ip_id = ip.replace(".", "_")
@@ -656,7 +724,8 @@ def _build_policy_acls(policies, parsed_blocklists):
         ssl_bump_lines.append(f"# ── Device SSL Bump: {hostname} ({ip}) [Mode: {ssl_bump_mode}] ──")
 
         # Declare all blocklist domain and path ACLs once
-        all_lists = list(always_block) + [e["list"] for e in default_block if "list" in e]
+        all_lists = (list(always_block) + list(always_allow) +
+                     [e["list"] for e in default_block if "list" in e])
         for bl in all_lists:
             bl_id = bl.replace('.', '_').replace('-', '_')
             bl_acl_name = f"list_{bl_id}"
@@ -704,6 +773,20 @@ def _build_policy_acls(policies, parsed_blocklists):
                     for idx in range(1, len(path_rules) + 1):
                         p_sni_acl = f"sni_path_dom_{bl_id}_{idx}"
                         ssl_bump_lines.append(f"ssl_bump bump {src_acl_name} {p_sni_acl}")
+
+            # Always Allow is evaluated after Always Block (which retains highest
+            # precedence) but before scheduled defaults. Splicing here prevents
+            # an overlapping default category from unnecessarily decrypting an
+            # explicitly allowed destination.
+            for bl in always_allow:
+                bl_id = bl.replace('.', '_').replace('-', '_')
+                sni_bl_acl_name = f"sni_list_{bl_id}"
+                ssl_bump_lines.append(f"ssl_bump splice {src_acl_name} {sni_bl_acl_name}")
+                if bl in parsed_blocklists:
+                    path_rules = parsed_blocklists[bl].get("path_rules", [])
+                    for idx in range(1, len(path_rules) + 1):
+                        p_sni_acl = f"sni_path_dom_{bl_id}_{idx}"
+                        ssl_bump_lines.append(f"ssl_bump splice {src_acl_name} {p_sni_acl}")
 
             # A scheduled category must use native end-to-end TLS while it is
             # allowed. Merely adding an http_access allow still leaves the stream
@@ -762,7 +845,23 @@ def _build_policy_acls(policies, parsed_blocklists):
                         acl_lines.append(f"http_access deny {src_acl_name} {p_dom_acl} {p_url_acl}")
             acl_lines.append("")
 
-        # Section B: Default Block with unblock windows
+        # Section B: Always Allow. Always Block is emitted first intentionally,
+        # so it wins if blocklist contents overlap across categories.
+        if always_allow:
+            acl_lines.append(f"  # Always Allow — {hostname}")
+            for bl in always_allow:
+                bl_id = bl.replace('.', '_').replace('-', '_')
+                bl_acl_name = f"list_{bl_id}"
+                acl_lines.append(f"http_access allow {src_acl_name} {bl_acl_name}")
+                if bl in parsed_blocklists:
+                    path_rules = parsed_blocklists[bl].get("path_rules", [])
+                    for idx in range(1, len(path_rules) + 1):
+                        p_dom_acl = f"path_dom_{bl_id}_{idx}"
+                        p_url_acl = f"path_url_{bl_id}_{idx}"
+                        acl_lines.append(f"http_access allow {src_acl_name} {p_dom_acl} {p_url_acl}")
+            acl_lines.append("")
+
+        # Section C: Default Block with unblock windows
         time_acl_idx = 0
         for entry in default_block:
             bl = entry.get("list", "")
@@ -1169,6 +1268,7 @@ def update_policies():
                 "hostname": data.get("hostname", ip),
                 "ssl_bump_mode": data.get("ssl_bump_mode", "blocked_only"),
                 "always_block": data.get("always_block", []),
+                "always_allow": data.get("always_allow", []),
                 "default_block": data.get("default_block", [])
             }
             policies[ip] = ensure_policy_schema(new_pol)

@@ -1012,6 +1012,20 @@ kbd {
     color: #fca5a5;
 }
 
+/* Always Allow card — green tint */
+.always-allow-card {
+    background: rgba(16, 185, 129, 0.06) !important;
+    border: 1px solid rgba(16, 185, 129, 0.24) !important;
+}
+.always-allow-card .section-title {
+    color: #6ee7b7;
+}
+.always-allow-grid .blocklist-chip:has(input:checked) {
+    background: rgba(16, 185, 129, 0.18);
+    border-color: rgba(16, 185, 129, 0.5);
+    color: #6ee7b7;
+}
+
 /* Default Block card — amber tint */
 .default-block-card {
     background: rgba(245, 158, 11, 0.06) !important;
@@ -1020,10 +1034,11 @@ kbd {
 .default-block-card .section-title {
     color: #fcd34d;
 }
-.default-block-grid .blocklist-chip:has(input:checked) {
+.default-block-grid .blocklist-chip {
     background: rgba(245, 158, 11, 0.18);
     border-color: rgba(245, 158, 11, 0.5);
     color: #fcd34d;
+    cursor: default;
 }
 
 /* ── Default Block: List Tabs & Mode Pill ── */

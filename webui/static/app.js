@@ -1,6 +1,6 @@
 /**
  * Squid Web UI — app.js v3
- * 3-category block model: always_block + default_block w/ unblock windows.
+ * 3-category model: always_block + always_allow + automatic default_block.
  * Schedule mode: Basic (all default_block lists share one matrix) / Advanced (per-list).
  * Timetable: drag = ALLOW (green). Empty = blocked by default.
  * Dual mode: Weekly (7×48) and Today (1×48).
@@ -40,8 +40,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Section 1: Always Block
     const alwaysBlockCheckboxes  = document.getElementById('always-block-checkboxes');
 
-    // Section 2: Default Block
-    const defaultBlockCheckboxes = document.getElementById('default-block-checkboxes');
+    // Section 2: Always Allow
+    const alwaysAllowCheckboxes  = document.getElementById('always-allow-checkboxes');
+
+    // Section 3: Automatic Default Block
+    const defaultBlockLists      = document.getElementById('default-block-lists');
     const dbListTabsContainer    = document.getElementById('db-list-tabs-container');
     const dbListTabs             = document.getElementById('db-list-tabs');
     const dbEmptyState           = document.getElementById('db-empty-state');
@@ -128,22 +131,46 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─────────────────────────────────────────────────────────────
     const makeEmptyWeekly = () => Array.from({ length: 7 }, () => Array(48).fill(false));
     const makeEmptyToday  = () => Array(48).fill(false);
+    const localToday = () => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
 
     function ensurePolicy(ip) {
         if (!devicePolicies[ip]) {
             const dev = devicesData.find(d => d.ip === ip) || { ip, hostname: ip };
-            devicePolicies[ip] = { ip, hostname: dev.hostname, always_block: [], default_block: [] };
+            devicePolicies[ip] = { ip, hostname: dev.hostname, always_block: [], always_allow: [], default_block: [] };
         }
         const pol = devicePolicies[ip];
         pol.always_block  = pol.always_block  || [];
+        pol.always_allow  = pol.always_allow  || [];
         pol.default_block = pol.default_block || [];
+        // Always Block wins malformed conflicts. Everything else is Default Block.
+        pol.always_block = [...new Set(pol.always_block)];
+        pol.always_allow = [...new Set(pol.always_allow)].filter(bl => !pol.always_block.includes(bl));
+        reconcileDefaultBlock(pol);
         return pol;
+    }
+
+    function reconcileDefaultBlock(pol) {
+        const explicit = new Set([...(pol.always_block || []), ...(pol.always_allow || [])]);
+        const existing = new Map((pol.default_block || []).map(entry => [entry.list, entry]));
+        // Before blocklist metadata loads, retain existing scheduled entries.
+        const names = blocklistsData.length ? blocklistsData : [...existing.keys()];
+        pol.default_block = names
+            .filter(name => !explicit.has(name))
+            .map(name => existing.get(name) || {
+                list: name,
+                unblock_weekly: makeEmptyWeekly(),
+                unblock_today: makeEmptyToday(),
+                today_date: localToday()
+            });
     }
 
     function getOrCreateDbEntry(pol, listName) {
         let entry = pol.default_block.find(e => e.list === listName);
         if (!entry) {
-            entry = { list: listName, unblock_weekly: makeEmptyWeekly(), unblock_today: makeEmptyToday(), today_date: '' };
+            entry = { list: listName, unblock_weekly: makeEmptyWeekly(), unblock_today: makeEmptyToday(), today_date: localToday() };
             pol.default_block.push(entry);
         }
         entry.unblock_weekly = entry.unblock_weekly || makeEmptyWeekly();
@@ -380,8 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const pol = ensurePolicy(ip);
-        syncAlwaysBlockCheckboxes(pol);
-        syncDefaultBlockCheckboxes(pol);
+        syncCategoryControls(pol);
         refreshDbTabsUI();
         updateRulesPreview();
 
@@ -393,7 +419,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─────────────────────────────────────────────────────────────
     function renderAllBlocklistCheckboxes() {
         buildSectionCheckboxes(alwaysBlockCheckboxes, 'ab-', onAlwaysBlockChange);
-        buildSectionCheckboxes(defaultBlockCheckboxes, 'db-', onDefaultBlockChange);
+        buildSectionCheckboxes(alwaysAllowCheckboxes, 'aa-', onAlwaysAllowChange);
+        if (currentDeviceIp) renderDefaultBlockLists(ensurePolicy(currentDeviceIp));
     }
 
     function buildSectionCheckboxes(container, idPrefix, onChange) {
@@ -418,78 +445,65 @@ document.addEventListener('DOMContentLoaded', () => {
         const pol = ensurePolicy(currentDeviceIp);
         if (checked) {
             if (!pol.always_block.includes(bl)) pol.always_block.push(bl);
-            // Remove from default_block + uncheck in that grid
-            pol.default_block = pol.default_block.filter(e => e.list !== bl);
-            const dbChk = defaultBlockCheckboxes && defaultBlockCheckboxes.querySelector(`input[value="${bl}"]`);
-            if (dbChk) dbChk.checked = false;
-            // Hide the chip in default_block grid
-            refreshDefaultBlockChipVisibility(pol);
-            refreshDbTabsUI();
+            pol.always_allow = pol.always_allow.filter(x => x !== bl);
         } else {
             pol.always_block = pol.always_block.filter(x => x !== bl);
-            refreshDefaultBlockChipVisibility(pol);
         }
-        updateRulesPreview();
-        scheduleAutoSave();
-    }
-
-    function onDefaultBlockChange(bl, checked) {
-        if (!currentDeviceIp) return;
-        const pol = ensurePolicy(currentDeviceIp);
-        if (checked) {
-            // Remove from always_block if it was there
-            pol.always_block = pol.always_block.filter(x => x !== bl);
-            const abChk = alwaysBlockCheckboxes && alwaysBlockCheckboxes.querySelector(`input[value="${bl}"]`);
-            if (abChk) abChk.checked = false;
-            refreshAlwaysBlockChipVisibility(pol);
-            getOrCreateDbEntry(pol, bl);
-            // Select this list in advanced mode
-            if (schedEditMode === 'advanced' && !activeListNames.includes(bl)) {
-                activeListNames.push(bl);
-            }
-        } else {
-            pol.default_block = pol.default_block.filter(e => e.list !== bl);
-            activeListNames = activeListNames.filter(n => n !== bl);
-        }
+        reconcileDefaultBlock(pol);
+        syncCategoryControls(pol);
         refreshDbTabsUI();
         updateRulesPreview();
         scheduleAutoSave();
     }
 
-    /**
-     * In the Always Block grid, hide chips for lists already in always_block.
-     * In the Default Block grid, hide chips for lists already in always_block.
-     */
-    function refreshDefaultBlockChipVisibility(pol) {
-        if (!defaultBlockCheckboxes) return;
-        defaultBlockCheckboxes.querySelectorAll('label.blocklist-chip').forEach(label => {
-            const bl = label.dataset.list;
-            const inAlways = pol.always_block.includes(bl);
-            label.style.display = inAlways ? 'none' : '';
-        });
+    function onAlwaysAllowChange(bl, checked) {
+        if (!currentDeviceIp) return;
+        const pol = ensurePolicy(currentDeviceIp);
+        if (checked) {
+            if (!pol.always_allow.includes(bl)) pol.always_allow.push(bl);
+            pol.always_block = pol.always_block.filter(x => x !== bl);
+        } else {
+            pol.always_allow = pol.always_allow.filter(x => x !== bl);
+        }
+        reconcileDefaultBlock(pol);
+        syncCategoryControls(pol);
+        refreshDbTabsUI();
+        updateRulesPreview();
+        scheduleAutoSave();
     }
 
-    function refreshAlwaysBlockChipVisibility(pol) {
-        // Always block chips are always shown — no hiding needed there.
-        // But we should ensure default_block chips for always_block lists are hidden
-        refreshDefaultBlockChipVisibility(pol);
-    }
-
-    function syncAlwaysBlockCheckboxes(pol) {
-        if (!alwaysBlockCheckboxes) return;
-        alwaysBlockCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+    function syncCategoryControls(pol) {
+        alwaysBlockCheckboxes && alwaysBlockCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(chk => {
             chk.checked = pol.always_block.includes(chk.value);
+            // Always Allow categories stay visible here because selecting them
+            // promotes them to the higher-priority Always Block policy.
+            chk.closest('.blocklist-chip').classList.remove('hidden');
         });
-        refreshDefaultBlockChipVisibility(pol);
+        alwaysAllowCheckboxes && alwaysAllowCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(chk => {
+            chk.checked = pol.always_allow.includes(chk.value);
+            // Use the app's !important display utility. The blocklist chip's
+            // author-level display rule can otherwise override HTML [hidden].
+            chk.closest('.blocklist-chip').classList.toggle(
+                'hidden', pol.always_block.includes(chk.value)
+            );
+        });
+        renderDefaultBlockLists(pol);
     }
 
-    function syncDefaultBlockCheckboxes(pol) {
-        if (!defaultBlockCheckboxes) return;
-        const dbLists = pol.default_block.map(e => e.list);
-        defaultBlockCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(chk => {
-            chk.checked = dbLists.includes(chk.value);
+    function renderDefaultBlockLists(pol) {
+        if (!defaultBlockLists) return;
+        defaultBlockLists.innerHTML = '';
+        pol.default_block.forEach(entry => {
+            const bl = entry.list;
+            const chip = document.createElement('div');
+            chip.className = 'blocklist-chip';
+            chip.dataset.list = bl;
+            chip.innerHTML = `
+                <span class="bl-name">🛡️ ${displayName(bl)}</span>
+                <a href="/api/blocklists/${bl}" target="_blank" class="bl-view-btn" title="View content of ${bl}">↗</a>
+            `;
+            defaultBlockLists.appendChild(chip);
         });
-        refreshDefaultBlockChipVisibility(pol);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -526,7 +540,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (schedEditMode === 'basic') {
             // Basic: no tabs, no multi-select — edit all lists together
             if (dbListTabs) {
-                dbListTabs.innerHTML = '<span class="basic-mode-note">All checked lists share this schedule</span>';
+                dbListTabs.innerHTML = '<span class="basic-mode-note">All default lists share this schedule</span>';
             }
         } else {
             // Advanced: show per-list tabs, allow multi-select
@@ -869,7 +883,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─────────────────────────────────────────────────────────────
     function updateRulesPreview() {
         if (!rulesPreviewTextbox) return;
-        const pol = devicePolicies[currentDeviceIp];
+        const pol = currentDeviceIp ? ensurePolicy(currentDeviceIp) : null;
         const dev = devicesData.find(d => d.ip === currentDeviceIp);
         if (!pol || !dev) { rulesPreviewTextbox.value = '# Select a device to see generated rules.'; return; }
 
@@ -882,10 +896,11 @@ document.addEventListener('DOMContentLoaded', () => {
             `acl ${srcAcl} src ${dev.ip}`, ''
         ];
 
-        const allLists = [
+        const allLists = [...new Set([
             ...(pol.always_block || []),
+            ...(pol.always_allow || []),
             ...(pol.default_block || []).map(e => e.list)
-        ];
+        ])];
         allLists.forEach(bl => {
             lines.push(`acl list_${bl.replace(/[.\-]/g,'_')} dstdomain "/etc/squid/block-lists/${bl}"`);
         });
@@ -894,6 +909,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (pol.always_block && pol.always_block.length) {
             lines.push('# ── Always Block (unconditional) ──');
             pol.always_block.forEach(bl => lines.push(`http_access deny ${srcAcl} list_${bl.replace(/[.\-]/g,'_')}`));
+            lines.push('');
+        }
+
+        if (pol.always_allow && pol.always_allow.length) {
+            lines.push('# ── Always Allow (unconditional) ──');
+            pol.always_allow.forEach(bl => lines.push(`http_access allow ${srcAcl} list_${bl.replace(/[.\-]/g,'_')}`));
             lines.push('');
         }
 
@@ -928,9 +949,13 @@ document.addEventListener('DOMContentLoaded', () => {
             lines.push(`http_access deny ${srcAcl} ${blAcl}`, '');
         });
 
-        if (allLists.length) {
+        const bumpedLists = [
+            ...(pol.always_block || []),
+            ...(pol.default_block || []).map(e => e.list)
+        ];
+        if (bumpedLists.length) {
             lines.push('# ── Dynamic SSL Bump (Intercept blocked sites for HTML block page) ──');
-            allLists.forEach(bl => {
+            bumpedLists.forEach(bl => {
                 lines.push(`ssl_bump bump ${srcAcl} list_${bl.replace(/[.\-]/g,'_')}`);
             });
             lines.push('');

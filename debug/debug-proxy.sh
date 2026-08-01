@@ -969,19 +969,25 @@ if [ "${CLIENT_REACHABLE}" = true ] && [ "${WEBUI_REACHABLE}" = true ]; then
         fail_test "TC-4.8 Could not snapshot current policies — refusing to mutate live config."
     else
         POLICY_MODIFIED=true
+        BLOCKLISTS_JSON=$(curl -s -m 5 "${WEBUI_URL}/api/blocklists" | jq -c '.blocklists // []')
+        ALLOW_EXCEPT_VIDEOS_JSON=$(printf '%s' "${BLOCKLISTS_JSON}" | jq -c '[.[] | select(. != "videos.txt")]')
 
         # Phase 1: Videos UNBLOCKED
         echo "--> [Phase 1] videos.txt ALLOWED for ${TARGET_CLIENT_IP}..."
+        PHASE_ONE_POLICY=$(jq -nc --arg ip "${TARGET_CLIENT_IP}" --argjson allow "${BLOCKLISTS_JSON}" \
+            '{ip:$ip, hostname:"debug-test-client", always_block:[], always_allow:$allow, default_block:[], ssl_bump_mode:"blocked_only"}')
         curl -s -o /dev/null -m 10 -X POST "${WEBUI_URL}/api/policies" -H "Content-Type: application/json" \
-            -d "{\"ip\": \"${TARGET_CLIENT_IP}\", \"hostname\": \"debug-test-client\", \"always_block\": [], \"default_block\": [], \"ssl_bump_mode\": \"blocked_only\"}"
+            -d "${PHASE_ONE_POLICY}"
         curl -s -o /dev/null -m 10 -X POST "${WEBUI_URL}/api/apply" -H "Content-Type: application/json"
         sleep 3
         run_curl_test "TC-4.8a Vimeo HTTPS (videos unblocked)" "https://vimeo.com/" "allow_bumped"
 
         # Phase 2: Videos BLOCKED
         echo "--> [Phase 2] videos.txt BLOCKED for ${TARGET_CLIENT_IP}..."
+        PHASE_TWO_POLICY=$(jq -nc --arg ip "${TARGET_CLIENT_IP}" --argjson allow "${ALLOW_EXCEPT_VIDEOS_JSON}" \
+            '{ip:$ip, hostname:"debug-test-client", always_block:["videos.txt"], always_allow:$allow, default_block:[], ssl_bump_mode:"blocked_only"}')
         curl -s -o /dev/null -m 10 -X POST "${WEBUI_URL}/api/policies" -H "Content-Type: application/json" \
-            -d "{\"ip\": \"${TARGET_CLIENT_IP}\", \"hostname\": \"debug-test-client\", \"always_block\": [\"videos.txt\"], \"default_block\": [], \"ssl_bump_mode\": \"blocked_only\"}"
+            -d "${PHASE_TWO_POLICY}"
         curl -s -o /dev/null -m 10 -X POST "${WEBUI_URL}/api/apply" -H "Content-Type: application/json"
         sleep 3
         run_curl_test "TC-4.8b Vimeo HTTPS (videos blocked)" "https://vimeo.com/" "block"
