@@ -617,8 +617,8 @@ input:focus, select:focus {
     border-radius: 20px;
 }
 
-/* Top 5 Devices Quick Selection Bar */
-.top5-devices-card {
+/* Top 7 Devices Quick Selection Bar */
+.top7-devices-card {
     display: flex;
     align-items: center;
     gap: 16px;
@@ -629,7 +629,7 @@ input:focus, select:focus {
     border: 1px solid rgba(99, 102, 241, 0.25);
     flex-wrap: wrap;
 }
-.top5-label {
+.top7-label {
     font-size: 13px;
     font-weight: 700;
     color: var(--accent);
@@ -637,12 +637,12 @@ input:focus, select:focus {
     letter-spacing: 0.5px;
     white-space: nowrap;
 }
-.top5-buttons-group {
+.top7-buttons-group {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
 }
-.top5-btn {
+.top7-btn {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -656,13 +656,13 @@ input:focus, select:focus {
     cursor: pointer;
     transition: all 0.2s ease;
 }
-.top5-btn:hover {
+.top7-btn:hover {
     background: var(--primary);
     color: #ffffff;
     border-color: var(--primary);
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
 }
-.top5-btn.active {
+.top7-btn.active {
     background: linear-gradient(135deg, var(--primary), var(--primary-hover));
     color: #ffffff;
     border-color: rgba(99, 102, 241, 0.6);
