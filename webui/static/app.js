@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginError          = document.getElementById('login-error');
     const adminRequested      = !!window.WEBUI_CONTEXT?.adminRequested;
 
-    const top5DevicesButtons  = document.getElementById('top5-devices-buttons');
+    const top7DevicesButtons  = document.getElementById('top7-devices-buttons');
     const allDevicesDropdown  = document.getElementById('all-devices-dropdown');
     const deviceSearchInput   = document.getElementById('device-search-input');
     const proxyHostsWarning   = document.getElementById('proxy-hosts-warning');
@@ -332,7 +332,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             buildWeeklyGrid();
             buildTodayGrid();
-            renderTop5Buttons();
+            renderTop7Buttons();
             renderDropdown();
             renderAllBlocklistCheckboxes();
 
@@ -348,19 +348,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // TOP 5 / DROPDOWN
+    // TOP 7 / DROPDOWN
     // ─────────────────────────────────────────────────────────────
-    function renderTop5Buttons() {
-        if (!top5DevicesButtons) return;
-        top5DevicesButtons.innerHTML = '';
-        devicesData.slice(0, 5).forEach(dev => {
+    function renderTop7Buttons() {
+        if (!top7DevicesButtons) return;
+        top7DevicesButtons.innerHTML = '';
+        devicesData.slice(0, 7).forEach(dev => {
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = `top5-btn ${dev.ip === currentDeviceIp ? 'active' : ''}`;
+            btn.className = `top7-btn ${dev.ip === currentDeviceIp ? 'active' : ''}`;
             btn.innerHTML = `${getIcon(dev.name)} ${dev.name}`;
             btn.title = `${dev.ip} — ${dev.hostname}`;
             btn.addEventListener('click', () => selectDevice(dev.ip));
-            top5DevicesButtons.appendChild(btn);
+            top7DevicesButtons.appendChild(btn);
         });
     }
 
@@ -393,7 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function selectDevice(ip) {
         if (!ip) return;
         currentDeviceIp = ip;
-        renderTop5Buttons();
+        renderTop7Buttons();
         renderDropdown();
 
         const dev = devicesData.find(d => d.ip === ip) || { ip, hostname: ip, name: ip };
