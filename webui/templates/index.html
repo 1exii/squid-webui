@@ -23,6 +23,7 @@
                 <button id="nav-tab-onboarding" class="nav-tab-btn active">📖 Client Onboarding &amp; Certs</button>
                 {% if admin_visible %}
                 <button id="nav-tab-admin" class="nav-tab-btn">⚙️ Access Control Admin</button>
+                <button id="nav-tab-activity" class="nav-tab-btn">📊 Website Activity</button>
                 {% endif %}
             </div>
             {% if admin_visible %}
@@ -364,6 +365,85 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                     <button id="apply-policy-btn" class="btn btn-primary btn-lg">
                         <span>🚀 Apply Configuration to Squid Proxy</span>
                     </button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Admin View: Daily website activity derived from Squid access logs -->
+        <main id="activity-screen" class="main-content hidden">
+            <div class="activity-toolbar glass-panel">
+                <div class="toolbar-title">
+                    <h2>Daily Website Activity</h2>
+                    <p>Sites and categories observed by Squid. Active time is an estimate from request timing, not foreground screen time.</p>
+                </div>
+                <div class="activity-controls">
+                    <label>
+                        <span>Client</span>
+                        <select id="activity-client-select">
+                            <option value="">-- Select Client --</option>
+                        </select>
+                    </label>
+                    <label>
+                        <span>Date</span>
+                        <input type="date" id="activity-date-input">
+                    </label>
+                    <button id="activity-refresh-btn" class="btn btn-secondary">↻ Refresh</button>
+                </div>
+            </div>
+
+            <div id="activity-error" class="error-banner hidden"></div>
+
+            <div class="activity-summary-grid">
+                <div class="activity-summary-card glass-panel">
+                    <span class="activity-summary-label">Estimated active time</span>
+                    <strong id="activity-total-time">—</strong>
+                </div>
+                <div class="activity-summary-card glass-panel">
+                    <span class="activity-summary-label">Websites observed</span>
+                    <strong id="activity-site-count">—</strong>
+                </div>
+                <div class="activity-summary-card glass-panel">
+                    <span class="activity-summary-label">Website requests</span>
+                    <strong id="activity-request-count">—</strong>
+                </div>
+                <div class="activity-summary-card glass-panel activity-summary-blocked">
+                    <span class="activity-summary-label">Blocked requests</span>
+                    <strong id="activity-blocked-count">—</strong>
+                </div>
+            </div>
+
+            <div class="activity-results glass-panel">
+                <div class="activity-results-header">
+                    <div>
+                        <h3>Websites by category</h3>
+                        <p id="activity-estimate-note">Choose a client to load its activity.</p>
+                    </div>
+                    <div class="activity-filters">
+                        <select id="activity-category-filter">
+                            <option value="">All categories</option>
+                        </select>
+                        <input type="text" id="activity-search-input" placeholder="🔍 Filter websites...">
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="activity-table">
+                        <thead>
+                            <tr>
+                                <th>Website</th>
+                                <th>Category</th>
+                                <th>Estimated time</th>
+                                <th>Requests</th>
+                                <th>Blocked</th>
+                                <th>Last seen</th>
+                            </tr>
+                        </thead>
+                        <tbody id="activity-table-body"></tbody>
+                    </table>
+                </div>
+                <div id="activity-empty-state" class="empty-state">
+                    <div class="empty-icon">📭</div>
+                    <h3>No activity loaded</h3>
+                    <p>Select a client and date above.</p>
                 </div>
             </div>
         </main>

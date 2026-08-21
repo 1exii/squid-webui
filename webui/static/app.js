@@ -12,8 +12,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─────────────────────────────────────────────────────────────
     const navTabOnboarding    = document.getElementById('nav-tab-onboarding');
     const navTabAdmin         = document.getElementById('nav-tab-admin');
+    const navTabActivity      = document.getElementById('nav-tab-activity');
     const onboardingScreen    = document.getElementById('onboarding-screen');
     const adminScreen         = document.getElementById('admin-screen');
+    const activityScreen      = document.getElementById('activity-screen');
     const userBadge           = document.getElementById('user-badge');
     const currentUserSpan     = document.getElementById('current-user');
     const authActionBtn       = document.getElementById('auth-action-btn');
@@ -36,6 +38,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const applyPolicyBtn      = document.getElementById('apply-policy-btn');
     const copyRulesBtn        = document.getElementById('copy-rules-btn');
     const rulesPreviewTextbox = document.getElementById('rules-preview-textbox');
+
+    // Website activity
+    const activityClientSelect  = document.getElementById('activity-client-select');
+    const activityDateInput     = document.getElementById('activity-date-input');
+    const activityRefreshBtn    = document.getElementById('activity-refresh-btn');
+    const activityCategoryFilter = document.getElementById('activity-category-filter');
+    const activitySearchInput   = document.getElementById('activity-search-input');
+    const activityTableBody     = document.getElementById('activity-table-body');
+    const activityEmptyState    = document.getElementById('activity-empty-state');
+    const activityError         = document.getElementById('activity-error');
+    const activityEstimateNote  = document.getElementById('activity-estimate-note');
+    const activityTotalTime     = document.getElementById('activity-total-time');
+    const activitySiteCount     = document.getElementById('activity-site-count');
+    const activityRequestCount  = document.getElementById('activity-request-count');
+    const activityBlockedCount  = document.getElementById('activity-blocked-count');
 
     // Section 1: Always Block
     const alwaysBlockCheckboxes  = document.getElementById('always-block-checkboxes');
@@ -87,6 +104,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let devicePolicies   = {};
     let currentDeviceIp  = '';
     let adminDataLoaded  = false;
+    let activityData     = null;
+    let activityClientsLoaded = false;
+    let requestedProtectedView = 'admin';
 
     // Schedule UI state
     let scheduleMode     = 'today';   // 'weekly' | 'today'
@@ -112,6 +132,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     /** Strip .txt from display names */
     const displayName = bl => bl.replace(/\.txt$/i, '');
+
+    const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+    })[char]);
+
+    function formatDuration(totalSeconds) {
+        const seconds = Math.max(0, Math.round(totalSeconds || 0));
+        if (seconds < 60) return `${seconds}s`;
+        const minutes = Math.round(seconds / 60);
+        if (minutes < 60) return `${minutes}m`;
+        const hours = Math.floor(minutes / 60);
+        return `${hours}h ${minutes % 60}m`;
+    }
+
+    const formatCategory = value => value.replaceAll('_', ' ').replace(/\b\w/g, char => char.toUpperCase());
 
     function getIcon(name) {
         const n = (name || '').toLowerCase();
@@ -238,21 +273,169 @@ document.addEventListener('DOMContentLoaded', () => {
     navTabOnboarding && navTabOnboarding.addEventListener('click', () => {
         navTabOnboarding.classList.add('active');
         navTabAdmin && navTabAdmin.classList.remove('active');
+        navTabActivity && navTabActivity.classList.remove('active');
         onboardingScreen && onboardingScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
+        activityScreen && activityScreen.classList.add('hidden');
     });
     navTabAdmin && navTabAdmin.addEventListener('click', () => {
+        requestedProtectedView = 'admin';
         if (!isAuthenticated) { authModal.classList.remove('hidden'); }
         else { switchToAdmin(); }
+    });
+    navTabActivity && navTabActivity.addEventListener('click', () => {
+        requestedProtectedView = 'activity';
+        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        else { switchToActivity(); }
     });
 
     function switchToAdmin() {
         navTabAdmin && navTabAdmin.classList.add('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
+        navTabActivity && navTabActivity.classList.remove('active');
         adminScreen && adminScreen.classList.remove('hidden');
         onboardingScreen && onboardingScreen.classList.add('hidden');
+        activityScreen && activityScreen.classList.add('hidden');
         if (!adminDataLoaded) loadAdminData();
     }
+
+    function switchToActivity() {
+        navTabActivity && navTabActivity.classList.add('active');
+        navTabAdmin && navTabAdmin.classList.remove('active');
+        navTabOnboarding && navTabOnboarding.classList.remove('active');
+        activityScreen && activityScreen.classList.remove('hidden');
+        adminScreen && adminScreen.classList.add('hidden');
+        onboardingScreen && onboardingScreen.classList.add('hidden');
+        if (activityDateInput && !activityDateInput.value) {
+            activityDateInput.value = localToday();
+            activityDateInput.max = localToday();
+        }
+        loadActivityClients();
+    }
+
+    async function loadActivityClients() {
+        if (!activityClientSelect) return;
+        if (!activityClientsLoaded) {
+            try {
+                if (!devicesData.length) {
+                    const response = await fetch('/api/devices');
+                    if (!response.ok) throw new Error('Could not load clients.');
+                    devicesData = (await response.json()).devices || [];
+                }
+                const previous = activityClientSelect.value;
+                activityClientSelect.innerHTML = '<option value="">-- Select Client --</option>';
+                devicesData.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.ip;
+                    option.textContent = `${device.hostname || device.ip} (${device.ip})`;
+                    activityClientSelect.appendChild(option);
+                });
+                activityClientSelect.value = previous || currentDeviceIp || devicesData[0]?.ip || '';
+                activityClientsLoaded = true;
+            } catch (error) {
+                showActivityError(error.message);
+                return;
+            }
+        }
+        if (activityClientSelect.value) loadActivity();
+    }
+
+    async function loadActivity() {
+        const clientIp = activityClientSelect?.value;
+        const targetDate = activityDateInput?.value;
+        if (!clientIp || !targetDate) return;
+
+        showActivityError('');
+        activityRefreshBtn && (activityRefreshBtn.disabled = true);
+        activityEstimateNote && (activityEstimateNote.textContent = 'Analyzing Squid access logs…');
+        try {
+            const params = new URLSearchParams({ client_ip: clientIp, date: targetDate });
+            const response = await fetch(`/api/activity?${params}`);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Could not load website activity.');
+            activityData = data;
+            populateActivityCategories();
+            renderActivity();
+        } catch (error) {
+            activityData = null;
+            showActivityError(error.message);
+            renderActivity();
+        } finally {
+            activityRefreshBtn && (activityRefreshBtn.disabled = false);
+        }
+    }
+
+    function showActivityError(message) {
+        if (!activityError) return;
+        activityError.textContent = message;
+        activityError.classList.toggle('hidden', !message);
+    }
+
+    function populateActivityCategories() {
+        if (!activityCategoryFilter) return;
+        const selected = activityCategoryFilter.value;
+        const categories = [...new Set((activityData?.sites || []).flatMap(site => site.categories))].sort();
+        activityCategoryFilter.innerHTML = '<option value="">All categories</option>';
+        categories.forEach(category => {
+            const option = document.createElement('option');
+            option.value = category;
+            option.textContent = formatCategory(category);
+            activityCategoryFilter.appendChild(option);
+        });
+        if (categories.includes(selected)) activityCategoryFilter.value = selected;
+    }
+
+    function renderActivity() {
+        const sites = activityData?.sites || [];
+        const category = activityCategoryFilter?.value || '';
+        const search = (activitySearchInput?.value || '').trim().toLowerCase();
+        const filtered = sites.filter(site =>
+            (!category || site.categories.includes(category)) &&
+            (!search || site.site.toLowerCase().includes(search))
+        );
+
+        activityTotalTime && (activityTotalTime.textContent = activityData ? formatDuration(activityData.estimated_seconds) : '—');
+        activitySiteCount && (activitySiteCount.textContent = activityData ? activityData.unique_sites.toLocaleString() : '—');
+        activityRequestCount && (activityRequestCount.textContent = activityData ? activityData.requests.toLocaleString() : '—');
+        activityBlockedCount && (activityBlockedCount.textContent = activityData ? activityData.blocked_requests.toLocaleString() : '—');
+        if (activityEstimateNote) {
+            activityEstimateNote.textContent = activityData
+                ? `${activityData.estimation.description} Background traffic may be included.`
+                : 'Choose a client to load its activity.';
+        }
+
+        if (activityTableBody) {
+            activityTableBody.innerHTML = filtered.map(site => {
+                const categories = site.categories.map(value =>
+                    `<span class="activity-category-tag ${value === 'uncategorized' ? 'muted' : ''}">${escapeHtml(formatCategory(value))}</span>`
+                ).join('');
+                const lastSeen = new Date(site.last_seen_epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                return `<tr>
+                    <td class="activity-site-cell">${escapeHtml(site.site)}</td>
+                    <td><div class="activity-category-list">${categories}</div></td>
+                    <td><strong>${formatDuration(site.estimated_seconds)}</strong></td>
+                    <td>${site.requests.toLocaleString()}</td>
+                    <td class="${site.blocked_requests ? 'activity-blocked-value' : ''}">${site.blocked_requests.toLocaleString()}</td>
+                    <td>${escapeHtml(lastSeen)}</td>
+                </tr>`;
+            }).join('');
+        }
+        activityEmptyState && activityEmptyState.classList.toggle('hidden', filtered.length > 0);
+        const table = activityTableBody?.closest('table');
+        table && table.classList.toggle('hidden', filtered.length === 0);
+        const emptyTitle = activityEmptyState?.querySelector('h3');
+        const emptyText = activityEmptyState?.querySelector('p');
+        if (activityData && !filtered.length) {
+            emptyTitle && (emptyTitle.textContent = sites.length ? 'No matching websites' : 'No website activity found');
+            emptyText && (emptyText.textContent = sites.length ? 'Try changing the category or search filter.' : 'Squid recorded no website requests for this client and date.');
+        }
+    }
+
+    activityClientSelect && activityClientSelect.addEventListener('change', loadActivity);
+    activityDateInput && activityDateInput.addEventListener('change', loadActivity);
+    activityRefreshBtn && activityRefreshBtn.addEventListener('click', loadActivity);
+    activityCategoryFilter && activityCategoryFilter.addEventListener('change', renderActivity);
+    activitySearchInput && activitySearchInput.addEventListener('input', renderActivity);
 
     if (guideTabWindows && guideTabUbuntu) {
         guideTabWindows.addEventListener('click', () => {
@@ -298,7 +481,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
             if (res.ok && data.success) {
                 isAuthenticated = true; currentUser = username;
-                updateAuthUI(); authModal.classList.add('hidden'); switchToAdmin();
+                updateAuthUI(); authModal.classList.add('hidden');
+                if (requestedProtectedView === 'activity') switchToActivity();
+                else switchToAdmin();
             } else {
                 loginError.textContent = data.error || 'Authentication failed.';
                 loginError.classList.remove('hidden');
