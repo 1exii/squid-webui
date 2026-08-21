@@ -1,7 +1,7 @@
 # Product Specification & Architecture Document: Squid Proxy Center Web UI
 
-> **Document Version:** 1.1.0  
-> **Last Updated:** 2026-08-14  
+> **Document Version:** 1.2.0
+> **Last Updated:** 2026-08-22
 > **Status:** Active / User Editable Specification  
 > **Target Path:** `personal/home-network/squid/webui`
 
@@ -43,6 +43,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - **View Switches:**
   - `📖 Client Onboarding & Certs` (Public Access)
   - `⚙️ Access Control Admin` (shown automatically only to allowlisted admin client IPs; other clients must explicitly visit `/admin`)
+  - `📊 Website Activity` (admin-only daily per-client website and category analysis)
 - **User Status Badge:** Displays current authenticated user (e.g., `👤 admin`) and Login/Logout action button.
 
 ---
@@ -97,9 +98,16 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - **Session Management:** Secure HTTP-only Flask session cookies.
 - **Protected APIs:** Clients outside `ADMIN_CLIENT_IPS` must have an authenticated session to read or modify Admin data.
 
+### 3.4 Daily Website Activity (Admin Only)
+- Reads the active and numbered rotated Squid native `access.log` files from a read-only WebUI container mount.
+- Lets an administrator select a configured client and any retained date from the last 90 days.
+- Lists hostname-visible websites with categories matched from the same domain blocklists used by access-control policies, plus request and blocked-request counts.
+- Estimates active time by assigning the gap until the next proxy request to the current website. Gaps longer than five minutes count as a 30-second tail. This is labeled as an estimate because proxy traffic includes background services and cannot identify foreground screen time.
+- Omits IP-only destinations because they cannot be reliably presented or categorized as websites.
+
 ---
 
-### 3.4 Critical User Journeys (CUJs)
+### 3.5 Critical User Journeys (CUJs)
 
 #### 🎯 CUJ 1: Permanent 24/7 Block (`Always Block` Subset)
 - **User Goal:** Unconditionally block specific high-risk category lists (e.g. `adult.txt`, `gambling.txt`) on a target device 24/7, bypassing any time-based schedule matrices.
@@ -162,6 +170,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 | `/api/auth/login` | `POST` | Public | Authenticates admin using username/password. |
 | `/api/auth/logout` | `POST` | Public | Clears admin session. |
 | `/api/devices` | `GET` | Admin | Returns list of devices parsed from `devices.list`. |
+| `/api/activity?date=<YYYY-MM-DD>&client_ip=<IPv4>` | `GET` | Admin | Returns daily categorized website activity and estimated active time for one client. |
 | `/api/blocklists` | `GET` | Admin | Lists available blocklist category files. |
 | `/api/policies` | `GET` | Admin | Returns `always_block`, `always_allow`, and the automatically materialized `default_block` schedule entries for each device. |
 | `/api/policies` | `POST` | Admin | Normalizes Default Block as the complement of the explicit lists, expires stale today overrides, and compiles Squid ACLs. |
@@ -196,6 +205,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - [ ] **Search & Filter:** Add real-time filtering for rules and onboarding guides.
 
 #### 📊 Feature B: Traffic Monitoring & Analytics
+- [x] **Daily Client Website Activity:** Categorized hostname list with request counts, blocked counts, filters, and estimated active time.
 - [ ] **Live Squid Log Streamer:** Real-time log viewer (`access.log`) showing allowed vs blocked requests via WebSocket or SSE.
 - [ ] **Top Blocked Domains Chart:** Graphical chart showing top 10 blocked domain queries today.
 

@@ -5,10 +5,11 @@ import threading
 import time
 import socket
 import http.client
-from datetime import date
+from datetime import date, datetime, timedelta
 import paramiko
 from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
 from flask import Flask, render_template, request, jsonify, session, send_file
+from traffic_analytics import build_daily_activity
 
 app = Flask(__name__)
 
@@ -17,6 +18,7 @@ SQUID_CONFIG_DIR = os.environ.get("SQUID_CONFIG_DIR", "/etc/squid/configs")
 SQUID_BLOCKLIST_DIR = os.environ.get("SQUID_BLOCKLIST_DIR", "/etc/squid/block-lists")
 SQUID_CERT_DIR = os.environ.get("SQUID_CERT_DIR", "/etc/squid/certs")
 ROUTER_HOSTS_CONF = os.environ.get("ROUTER_HOSTS_CONF", "/etc/squid/router/proxy-hosts.conf")
+SQUID_ACCESS_LOG = os.environ.get("SQUID_ACCESS_LOG", "/var/log/squid/access.log")
 
 RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
 SSL_BUMP_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "ssl_bump.acl")
@@ -80,9 +82,18 @@ app.secret_key = _load_or_create_secret_key()
 # background expiry thread) interleaving writes to rules.acl / ssl_bump.acl.
 COMPILE_LOCK = threading.Lock()
 
-# IPs that get the Admin page as the default landing page
-ADMIN_CLIENT_IPS = {
+# IPs that get the Admin page as the default landing page. The environment
+# override is useful for isolated development without weakening NAS defaults.
+DEFAULT_ADMIN_CLIENT_IPS = {
     "192.168.8.8",   # pc-admin
+}
+ADMIN_CLIENT_IPS = {
+    value.strip()
+    for value in os.environ.get(
+        "ADMIN_CLIENT_IPS",
+        ",".join(sorted(DEFAULT_ADMIN_CLIENT_IPS)),
+    ).split(",")
+    if value.strip()
 }
 
 DAY_MAP = {
@@ -1243,6 +1254,40 @@ def get_devices():
     if not is_authenticated():
         return jsonify({"error": "Unauthorized"}), 401
     return jsonify({"devices": load_devices_list()})
+
+
+@app.route("/api/activity", methods=["GET"])
+def get_activity():
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    date_value = request.args.get("date", today_str()).strip()
+    client_ip = request.args.get("client_ip", "").strip()
+    try:
+        target_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "date must use YYYY-MM-DD format"}), 400
+
+    if target_date > date.today() or target_date < date.today() - timedelta(days=90):
+        return jsonify({"error": "date must be within the last 90 days"}), 400
+    if client_ip:
+        try:
+            socket.inet_pton(socket.AF_INET, client_ip)
+        except OSError:
+            return jsonify({"error": "client_ip must be a valid IPv4 address"}), 400
+    if not os.path.isfile(SQUID_ACCESS_LOG):
+        return jsonify({"error": "Squid access log is not available"}), 503
+
+    try:
+        return jsonify(build_daily_activity(
+            SQUID_ACCESS_LOG,
+            SQUID_BLOCKLIST_DIR,
+            target_date,
+            client_ip,
+        ))
+    except Exception as e:
+        print(f"Error in activity API: {e}")
+        return jsonify({"error": "Could not analyze the Squid access log"}), 500
 
 
 @app.route("/api/policies", methods=["GET"])
