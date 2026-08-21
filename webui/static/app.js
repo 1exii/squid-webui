@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginForm           = document.getElementById('login-form');
     const loginError          = document.getElementById('login-error');
     const adminRequested      = !!window.WEBUI_CONTEXT?.adminRequested;
+    const activityRetentionDays = Number(window.WEBUI_CONTEXT?.activityRetentionDays || 30);
 
     const top7DevicesButtons  = document.getElementById('top7-devices-buttons');
     const allDevicesDropdown  = document.getElementById('all-devices-dropdown');
@@ -166,9 +167,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─────────────────────────────────────────────────────────────
     const makeEmptyWeekly = () => Array.from({ length: 7 }, () => Array(48).fill(false));
     const makeEmptyToday  = () => Array(48).fill(false);
-    const localToday = () => {
-        const d = new Date();
+    const localDateString = d => {
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const localToday = () => localDateString(new Date());
+    const localDaysAgo = days => {
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        return localDateString(d);
     };
 
     function ensurePolicy(ip) {
@@ -309,6 +315,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (activityDateInput && !activityDateInput.value) {
             activityDateInput.value = localToday();
             activityDateInput.max = localToday();
+            activityDateInput.min = localDaysAgo(activityRetentionDays);
         }
         loadActivityClients();
     }

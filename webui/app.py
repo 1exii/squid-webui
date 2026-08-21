@@ -19,6 +19,7 @@ SQUID_BLOCKLIST_DIR = os.environ.get("SQUID_BLOCKLIST_DIR", "/etc/squid/block-li
 SQUID_CERT_DIR = os.environ.get("SQUID_CERT_DIR", "/etc/squid/certs")
 ROUTER_HOSTS_CONF = os.environ.get("ROUTER_HOSTS_CONF", "/etc/squid/router/proxy-hosts.conf")
 SQUID_ACCESS_LOG = os.environ.get("SQUID_ACCESS_LOG", "/var/log/squid/access.log")
+ACTIVITY_RETENTION_DAYS = 30
 
 RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
 SSL_BUMP_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "ssl_bump.acl")
@@ -1146,6 +1147,7 @@ def index(admin_requested):
         "index.html",
         admin_visible=admin_visible,
         admin_requested=admin_requested,
+        activity_retention_days=ACTIVITY_RETENTION_DAYS,
     )
 
 
@@ -1268,8 +1270,11 @@ def get_activity():
     except ValueError:
         return jsonify({"error": "date must use YYYY-MM-DD format"}), 400
 
-    if target_date > date.today() or target_date < date.today() - timedelta(days=90):
-        return jsonify({"error": "date must be within the last 90 days"}), 400
+    if (target_date > date.today() or
+            target_date < date.today() - timedelta(days=ACTIVITY_RETENTION_DAYS)):
+        return jsonify({
+            "error": f"date must be within the last {ACTIVITY_RETENTION_DAYS} days"
+        }), 400
     if client_ip:
         try:
             socket.inet_pton(socket.AF_INET, client_ip)

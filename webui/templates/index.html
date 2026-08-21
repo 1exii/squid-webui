@@ -476,7 +476,8 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
 
     <script>
         window.WEBUI_CONTEXT = Object.freeze({
-            adminRequested: {{ admin_requested | tojson }}
+            adminRequested: {{ admin_requested | tojson }},
+            activityRetentionDays: {{ activity_retention_days | tojson }}
         });
     </script>
     <script src="/static/app.js"></script>

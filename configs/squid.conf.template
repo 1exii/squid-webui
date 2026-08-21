@@ -116,6 +116,10 @@ coredump_dir /var/cache/squid
 # Disable log buffering so access logs are written immediately to disk.
 buffered_logs off
 access_log daemon:/var/log/squid/access.log squid
+# Keep 30 numbered generations when the daily scheduler sends Squid its
+# rotation signal. With one rotation at midnight, this retains 30 full days of
+# history in addition to the active log for the current day.
+logfile_rotate 30
 
 # Add a header to requests to show they went through the proxy.
 via on

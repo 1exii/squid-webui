@@ -101,4 +101,25 @@ iptables-nft -t nat -A PREROUTING -p tcp -m tcp --dport 4070 -j REDIRECT --to-po
 
 echo "[entrypoint] Starting Squid..."
 rm -f /run/squid.pid /var/run/squid.pid
+
+# Squid only rotates logs when explicitly signalled. Run the rotation at local
+# midnight; logfile_rotate in squid.conf controls how many numbered files stay
+# available to the WebUI analytics reader.
+rotate_logs_daily() {
+    while :; do
+        now_epoch=$(date +%s)
+        next_midnight_epoch=$(date -d 'tomorrow 00:00:00' +%s)
+        wait_seconds=$((next_midnight_epoch - now_epoch))
+        [ "${wait_seconds}" -gt 0 ] || wait_seconds=60
+        sleep "${wait_seconds}"
+
+        if squid -k rotate -f /etc/squid/squid.conf; then
+            echo "[entrypoint] Daily Squid log rotation completed."
+        else
+            echo "[entrypoint] WARNING: Daily Squid log rotation failed." >&2
+        fi
+    done
+}
+
+rotate_logs_daily &
 exec squid -NYCd 1 -f /etc/squid/squid.conf
