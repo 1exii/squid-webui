@@ -12,6 +12,7 @@ RUN apt-get update && \
         iproute2 \
         net-tools \
         procps \
+        tini \
         curl \
         netcat-traditional \
         ca-certificates \
@@ -23,4 +24,4 @@ RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 3128 3129 3130
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/docker-entrypoint.sh"]
