@@ -102,7 +102,8 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - Reads the active and numbered rotated Squid native `access.log` files from a read-only WebUI container mount.
 - Lets an administrator select a configured client and any retained date from the last 30 days.
 - Rotates Squid logs automatically at local midnight and keeps 30 numbered daily generations on the persistent log volume.
-- Lists hostname-visible websites with categories matched from the same domain blocklists used by access-control policies, plus request and blocked-request counts.
+- Groups hostname-visible traffic into website/service totals by default. Ordinary subdomains roll up to their registrable domain, while known multi-domain services such as YouTube, Netflix, Roblox, Spotify, Facebook, Instagram, and TikTok also include their first-party CDN/API domains.
+- Each website row can expand into its contributing domain names with per-domain time, category, request, blocked-request, and last-seen details.
 - Estimates active time by assigning the gap until the next proxy request to the current website. Gaps longer than five minutes count as a 30-second tail. This is labeled as an estimate because proxy traffic includes background services and cannot identify foreground screen time.
 - Omits IP-only destinations because they cannot be reliably presented or categorized as websites.
 

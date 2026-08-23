@@ -108,6 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let activityData     = null;
     let activityClientsLoaded = false;
     let requestedProtectedView = 'admin';
+    const expandedActivitySites = new Set();
 
     // Schedule UI state
     let scheduleMode     = 'today';   // 'weekly' | 'today'
@@ -398,7 +399,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const search = (activitySearchInput?.value || '').trim().toLowerCase();
         const filtered = sites.filter(site =>
             (!category || site.categories.includes(category)) &&
-            (!search || site.site.toLowerCase().includes(search))
+            (!search || site.site.toLowerCase().includes(search) ||
+                (site.domains || []).some(domain => domain.domain.toLowerCase().includes(search)))
         );
 
         activityTotalTime && (activityTotalTime.textContent = activityData ? formatDuration(activityData.estimated_seconds) : '—');
@@ -407,24 +409,46 @@ document.addEventListener('DOMContentLoaded', () => {
         activityBlockedCount && (activityBlockedCount.textContent = activityData ? activityData.blocked_requests.toLocaleString() : '—');
         if (activityEstimateNote) {
             activityEstimateNote.textContent = activityData
-                ? `${activityData.estimation.description} Background traffic may be included.`
+                ? `${(activityData.unique_domains || activityData.unique_sites).toLocaleString()} domains grouped into ${activityData.unique_sites.toLocaleString()} websites. ${activityData.estimation.description} Background traffic may be included.`
                 : 'Choose a client to load its activity.';
         }
 
         if (activityTableBody) {
             activityTableBody.innerHTML = filtered.map(site => {
-                const categories = site.categories.map(value =>
+                const categoryTags = values => values.map(value =>
                     `<span class="activity-category-tag ${value === 'uncategorized' ? 'muted' : ''}">${escapeHtml(formatCategory(value))}</span>`
                 ).join('');
+                const categories = categoryTags(site.categories);
                 const lastSeen = new Date(site.last_seen_epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                return `<tr>
-                    <td class="activity-site-cell">${escapeHtml(site.site)}</td>
+                const domains = site.domains || [];
+                const matchedByDomain = search && !site.site.toLowerCase().includes(search) &&
+                    domains.some(domain => domain.domain.toLowerCase().includes(search));
+                const isExpanded = expandedActivitySites.has(site.site_key) || matchedByDomain;
+                const expander = domains.length > 1
+                    ? `<button type="button" class="activity-expand-btn" data-site-key="${escapeHtml(site.site_key)}" aria-expanded="${isExpanded}" title="${isExpanded ? 'Hide' : 'Show'} domain details">${isExpanded ? '▾' : '▸'}</button>`
+                    : '<span class="activity-expand-spacer"></span>';
+                const groupRow = `<tr class="activity-group-row">
+                    <td class="activity-site-cell"><div class="activity-site-name">${expander}<span>${escapeHtml(site.site)}</span><span class="activity-domain-count">${site.domain_count || domains.length} domain${(site.domain_count || domains.length) === 1 ? '' : 's'}</span></div></td>
                     <td><div class="activity-category-list">${categories}</div></td>
                     <td><strong>${formatDuration(site.estimated_seconds)}</strong></td>
                     <td>${site.requests.toLocaleString()}</td>
                     <td class="${site.blocked_requests ? 'activity-blocked-value' : ''}">${site.blocked_requests.toLocaleString()}</td>
                     <td>${escapeHtml(lastSeen)}</td>
                 </tr>`;
+                if (!isExpanded || domains.length <= 1) return groupRow;
+
+                const detailRows = domains.map(domain => {
+                    const domainLastSeen = new Date(domain.last_seen_epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    return `<tr class="activity-domain-row">
+                        <td class="activity-domain-cell"><span>↳</span>${escapeHtml(domain.domain)}</td>
+                        <td><div class="activity-category-list">${categoryTags(domain.categories)}</div></td>
+                        <td>${formatDuration(domain.estimated_seconds)}</td>
+                        <td>${domain.requests.toLocaleString()}</td>
+                        <td class="${domain.blocked_requests ? 'activity-blocked-value' : ''}">${domain.blocked_requests.toLocaleString()}</td>
+                        <td>${escapeHtml(domainLastSeen)}</td>
+                    </tr>`;
+                }).join('');
+                return groupRow + detailRows;
             }).join('');
         }
         activityEmptyState && activityEmptyState.classList.toggle('hidden', filtered.length > 0);
@@ -443,6 +467,14 @@ document.addEventListener('DOMContentLoaded', () => {
     activityRefreshBtn && activityRefreshBtn.addEventListener('click', loadActivity);
     activityCategoryFilter && activityCategoryFilter.addEventListener('change', renderActivity);
     activitySearchInput && activitySearchInput.addEventListener('input', renderActivity);
+    activityTableBody && activityTableBody.addEventListener('click', event => {
+        const button = event.target.closest('.activity-expand-btn');
+        if (!button) return;
+        const siteKey = button.dataset.siteKey;
+        if (expandedActivitySites.has(siteKey)) expandedActivitySites.delete(siteKey);
+        else expandedActivitySites.add(siteKey);
+        renderActivity();
+    });
 
     if (guideTabWindows && guideTabUbuntu) {
         guideTabWindows.addEventListener('click', () => {
