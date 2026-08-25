@@ -1485,16 +1485,27 @@ echo "========================================================="
 @app.route("/download/install-windows.ps1")
 def download_windows_script():
     """Public CA and PAC installation script for Windows clients."""
+    chrome_proxy_policy = json.dumps({
+        "ProxyMode": "pac_script",
+        "ProxyPacUrl": PAC_URL,
+        "ProxyPacMandatory": True,
+    }, separators=(",", ":"))
     script = f'''#Requires -RunAsAdministrator
 $ErrorActionPreference = "Stop"
 $WebUiBase = "{WEBUI_PUBLIC_URL}"
 $PacUrl = "{PAC_URL}"
 $CertFile = Join-Path $env:TEMP "squid-proxy-ca.crt"
+$ChromePolicyPath = "HKLM:\\SOFTWARE\\Policies\\Google\\Chrome"
+$ChromeProxySettings = '{chrome_proxy_policy}'
 
 Write-Host "Downloading and trusting the Squid Root CA..."
 Invoke-WebRequest -UseBasicParsing -Uri "$WebUiBase/download/cert.crt" -OutFile $CertFile
 Import-Certificate -FilePath $CertFile -CertStoreLocation "Cert:\\LocalMachine\\Root" | Out-Null
 Remove-Item -Force $CertFile
+
+Write-Host "Installing the machine-level Chrome PAC policy..."
+New-Item -Path $ChromePolicyPath -Force | Out-Null
+New-ItemProperty -Path $ChromePolicyPath -Name ProxySettings -PropertyType String -Value $ChromeProxySettings -Force | Out-Null
 
 Write-Host "Configuring the current user's Windows proxy to use $PacUrl..."
 $InternetSettings = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"
@@ -1515,6 +1526,7 @@ public static class WinInetProxyRefresh {{
 
 Write-Host "Installation complete. Restart Chrome or Edge if it is open."
 Write-Host "PAC URL: $PacUrl"
+Write-Host "Chrome policy: $ChromePolicyPath\\ProxySettings"
 '''
     return script, 200, {
         "Content-Type": "text/plain; charset=utf-8",
