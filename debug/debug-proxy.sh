@@ -4,7 +4,7 @@
 # SQUID PROXY & WEB UI COMPREHENSIVE AUTOMATED TEST & VERIFICATION SCRIPT
 #
 # Test suites (see debug/TEST_CASES.md for the full specification):
-#   1. Infrastructure    — router policy routing (mangle SQUID_MARK + table 150),
+#   1. Infrastructure    — router policy routing (mangle SQUID_MARK + profile table),
 #                          container state, container NAT REDIRECT rules
 #   2. Web UI            — health, REST API contract, auth posture, apply pipeline
 #   3. Config integrity  — squid -k parse, rules.acl / ssl_bump.acl / bump_domains.acl,
@@ -14,7 +14,7 @@
 #   6. Router advanced   — Spotify 4070, per-client QUIC, and WARP blocking
 #
 # Usage:
-#   ./debug-proxy.sh                     # Default: tests via vm-ubuntu (192.168.8.30)
+#   ./debug-proxy.sh                     # Tests via the profile's default client
 #   ./debug-proxy.sh --client-ip 1.2.3.4 # Tests with a custom remote Ubuntu client
 #   ./debug-proxy.sh --redeploy          # Rebuilds & redeploys before testing
 #
@@ -25,23 +25,16 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SQUID_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=../lib/load-deployment.sh
+source "${SQUID_DIR}/lib/load-deployment.sh"
 DEBUG_DIR="${SQUID_DIR}/debug"
-BLOCKLIST_DIR="${SQUID_DIR}/block-lists"
 TIMESTAMP="$(date +'%Y%m%d_%H%M%S')"
 LOG_FILE="${DEBUG_DIR}/debug_${TIMESTAMP}.log"
 LATEST_LOG="${DEBUG_DIR}/latest_debug.log"
 
 mkdir -p "${DEBUG_DIR}"
 
-ROUTER_IP="192.168.0.1"
-QNAP_IP="192.168.1.2"
-SQUID_IP="192.168.1.90"
-WEBUI_IP="192.168.1.91"
-WEBUI_PORT="3131"
-DEFAULT_CLIENT_IP="192.168.8.30"
-DEFAULT_CLIENT_NAME="vm-ubuntu"
-QNAP_USER="admin"
-QNAP_DOCKER="/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker"
+SQUID_IP="${SQUID_PROXY_IP}"
 
 REDEPLOY=false
 CUSTOM_CLIENT_IP=""
@@ -151,11 +144,11 @@ WEBUI_UP=false
 PROXY_EXEC_RC=0
 
 proxy_exec() {
-    # $* = command to run inside the squid-proxy container.
+    # $* = command to run inside the configured Squid container.
     # Prints combined output; sets PROXY_EXEC_RC.
     local out
     out=$(ssh -o ConnectTimeout=8 "${QNAP_USER}@${QNAP_IP}" \
-            "${QNAP_DOCKER} exec squid-proxy $* 2>&1"; echo "__RC__$?")
+            "${QNAP_DOCKER} exec ${SQUID_CONTAINER_NAME} $* 2>&1"; echo "__RC__$?")
     PROXY_EXEC_RC="${out##*__RC__}"
     out="${out%__RC__*}"
     # Container-level failures that must never be mistaken for command output
@@ -183,8 +176,8 @@ if [ "${REDEPLOY}" = true ]; then
     echo "--> Running squid-mgmt.sh router-deploy..."
     bash "${SQUID_DIR}/squid-mgmt.sh" router-deploy 2>&1
 
-    echo "--> Running deploy-squid-docker.sh create squid-proxy squid-webui..."
-    bash "${SQUID_DIR}/docker/deploy-squid-docker.sh" create squid-proxy squid-webui 2>&1
+    echo "--> Running deploy-squid-docker.sh create ${SQUID_CONTAINER_NAME} ${WEBUI_CONTAINER_NAME}..."
+    bash "${SQUID_DIR}/docker/deploy-squid-docker.sh" create "${SQUID_CONTAINER_NAME}" "${WEBUI_CONTAINER_NAME}" 2>&1
     echo ""
 
     echo "--> Waiting for containers & services to become fully ready..."
@@ -214,24 +207,24 @@ fi
 echo ">>> 1. INFRASTRUCTURE & ROUTING CHECK"
 echo "--------------------------------------------------"
 
-# --- TC-1.1: Router policy routing (fwmark 0x5000 -> table 150 -> Squid) ---
-echo "--> 1a. Router policy rules & routing table 150..."
+# --- TC-1.1: Router policy routing (profile mark -> profile table -> Squid) ---
+echo "--> 1a. Router policy rules & routing table ${ROUTER_ROUTE_TABLE}..."
 ROUTER_IP_RULE=$(ssh -o ConnectTimeout=8 "${ROUTER_IP}" "ip rule show" 2>&1 || true)
-ROUTER_TABLE150=$(ssh -o ConnectTimeout=8 "${ROUTER_IP}" "ip route show table 150" 2>&1 || true)
+ROUTER_TABLE=$(ssh -o ConnectTimeout=8 "${ROUTER_IP}" "ip route show table ${ROUTER_ROUTE_TABLE}" 2>&1 || true)
 echo "${ROUTER_IP_RULE}"
-echo "--- Table 150 ---"
-echo "${ROUTER_TABLE150}"
+echo "--- Table ${ROUTER_ROUTE_TABLE} ---"
+echo "${ROUTER_TABLE}"
 
-if echo "${ROUTER_IP_RULE}" | grep -q "fwmark 0x5000/0x5000 lookup 150"; then
-    pass_test "TC-1.1a Router 'ip rule' has fwmark 0x5000/0x5000 -> table 150."
+if echo "${ROUTER_IP_RULE}" | grep -q "fwmark ${ROUTER_MARK}/${ROUTER_MARK} lookup ${ROUTER_ROUTE_TABLE}"; then
+    pass_test "TC-1.1a Router 'ip rule' has fwmark ${ROUTER_MARK}/${ROUTER_MARK} -> table ${ROUTER_ROUTE_TABLE}."
 else
-    fail_test "TC-1.1a Router 'ip rule' missing fwmark 0x5000/0x5000 -> table 150 (run: squid-mgmt.sh router-deploy)."
+    fail_test "TC-1.1a Router 'ip rule' missing fwmark ${ROUTER_MARK}/${ROUTER_MARK} -> table ${ROUTER_ROUTE_TABLE} (run: squid-mgmt.sh router-deploy)."
 fi
 
-if echo "${ROUTER_TABLE150}" | grep -q "default via ${SQUID_IP}"; then
-    pass_test "TC-1.1b Router table 150 default route points at Squid (${SQUID_IP})."
+if echo "${ROUTER_TABLE}" | grep -q "default via ${SQUID_IP}"; then
+    pass_test "TC-1.1b Router table ${ROUTER_ROUTE_TABLE} default route points at Squid (${SQUID_IP})."
 else
-    fail_test "TC-1.1b Router table 150 has no 'default via ${SQUID_IP}' route."
+    fail_test "TC-1.1b Router table ${ROUTER_ROUTE_TABLE} has no 'default via ${SQUID_IP}' route."
 fi
 echo ""
 
@@ -247,7 +240,6 @@ else
 fi
 
 # Every host in proxy-hosts.conf must have a MARK rule
-PROXY_HOSTS_CONF="${SQUID_DIR}/router/proxy-hosts.conf"
 HOSTS_MARKED=true
 HOSTS_CHECKED=0
 if [ -f "${PROXY_HOSTS_CONF}" ]; then
@@ -276,8 +268,8 @@ echo "--> 1c. QNAP Docker container status..."
 CONTAINERS_PS=$(ssh -o ConnectTimeout=8 "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} ps --format '{{.Names}}\t{{.Status}}'" 2>&1 || true)
 echo "${CONTAINERS_PS}"
 
-if echo "${CONTAINERS_PS}" | grep -qE '^squid-proxy[[:space:]]+Up'; then PROXY_UP=true; fi
-if echo "${CONTAINERS_PS}" | grep -qE '^squid-webui[[:space:]]+Up'; then WEBUI_UP=true; fi
+if echo "${CONTAINERS_PS}" | grep -qE "^${SQUID_CONTAINER_NAME}[[:space:]]+Up"; then PROXY_UP=true; fi
+if echo "${CONTAINERS_PS}" | grep -qE "^${WEBUI_CONTAINER_NAME}[[:space:]]+Up"; then WEBUI_UP=true; fi
 
 if [ "${PROXY_UP}" = true ]; then
     pass_test "TC-1.3a squid-proxy container is UP and running."
@@ -285,7 +277,7 @@ else
     fail_test "TC-1.3a squid-proxy container is NOT running!"
     # Surface why — restart loops and config FATALs are the usual cause.
     echo "=== Last 25 lines of squid-proxy container logs ==="
-    ssh -o ConnectTimeout=8 "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} logs --tail 25 squid-proxy" 2>&1 || true
+    ssh -o ConnectTimeout=8 "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} logs --tail 25 ${SQUID_CONTAINER_NAME}" 2>&1 || true
 fi
 
 if [ "${WEBUI_UP}" = true ]; then
@@ -302,7 +294,7 @@ if require_proxy_up "TC-1.4 Container NAT REDIRECT rules"; then
     CONTAINER_PREROUTING=$(proxy_exec "iptables-legacy -t nat -L PREROUTING -n -v")
     echo "${CONTAINER_PREROUTING}"
     NAT_OK=true
-    for pair in "80:3129" "443:3130" "4070:3130"; do
+    for pair in "80:${SQUID_HTTP_PORT}" "443:${SQUID_HTTPS_PORT}" "4070:${SQUID_HTTPS_PORT}"; do
         dport="${pair%%:*}"; toport="${pair##*:}"
         if ! echo "${CONTAINER_PREROUTING}" | grep -qE "dpt:${dport}\b.*redir ports ${toport}"; then
             NAT_OK=false
@@ -310,7 +302,7 @@ if require_proxy_up "TC-1.4 Container NAT REDIRECT rules"; then
         fi
     done
     if [ "${NAT_OK}" = true ]; then
-        pass_test "TC-1.4 Container NAT REDIRECT rules present (80->3129, 443->3130, 4070->3130)."
+        pass_test "TC-1.4 Container NAT REDIRECT rules match the configured intercept ports."
     else
         fail_test "TC-1.4 Container NAT REDIRECT rules incomplete — see missing rules above."
     fi
@@ -321,14 +313,14 @@ echo ""
 if require_proxy_up "TC-1.5 Squid listening ports"; then
     LISTEN_OUT=$(proxy_exec "netstat -tlnp")
     PORTS_OK=true
-    for p in 3128 3129 3130; do
+    for p in "${SQUID_PROXY_PORT}" "${SQUID_HTTP_PORT}" "${SQUID_HTTPS_PORT}"; do
         if ! echo "${LISTEN_OUT}" | grep -qE ":${p}[[:space:]]"; then
             PORTS_OK=false
             info "Squid is not listening on port ${p}."
         fi
     done
     if [ "${PORTS_OK}" = true ]; then
-        pass_test "TC-1.5 Squid is listening on 3128 (explicit), 3129 (HTTP intercept), 3130 (HTTPS bump)."
+        pass_test "TC-1.5 Squid is listening on all configured proxy ports."
     else
         fail_test "TC-1.5 Squid is not listening on all expected ports — see above."
     fi
@@ -456,7 +448,7 @@ rm -f /tmp/_sq_cert.crt /tmp/_sq_cert.pem
 PAC_HEADERS=$(curl -sS -D - -o /tmp/_sq_proxy.pac -m 5 "${WEBUI_URL}/proxy.pac" 2>/dev/null || true)
 PAC_BODY=$(cat /tmp/_sq_proxy.pac 2>/dev/null || true)
 if echo "${PAC_HEADERS}" | grep -qi '^Content-Type: application/x-ns-proxy-autoconfig' && \
-   echo "${PAC_BODY}" | grep -q "return \"PROXY ${SQUID_IP}:3128\";" && \
+   echo "${PAC_BODY}" | grep -q "return \"PROXY ${SQUID_IP}:${SQUID_PROXY_PORT}\";" && \
    echo "${PAC_BODY}" | grep -q 'shExpMatch(host, "192.168.\*")' && \
    ! echo "${PAC_BODY}" | grep -qE 'PROXY[^";]*;[[:space:]]*DIRECT'; then
     pass_test "TC-2.6a PAC endpoint proxies Internet traffic, bypasses the private LAN, and has no DIRECT fail-open fallback."
@@ -521,13 +513,13 @@ fi
 # intercepted hosts. Verify the container survived the SIGHUP.
 sleep 3
 POST_APPLY_PS=$(ssh -o ConnectTimeout=8 "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} ps --format '{{.Names}}\t{{.Status}}'" 2>&1 || true)
-if echo "${POST_APPLY_PS}" | grep -qE '^squid-proxy[[:space:]]+Up'; then
+if echo "${POST_APPLY_PS}" | grep -qE "^${SQUID_CONTAINER_NAME}[[:space:]]+Up"; then
     pass_test "TC-2.8b squid-proxy survived the SIGHUP reload (still Up)."
 else
     PROXY_UP=false
     fail_test "TC-2.8b squid-proxy is DOWN after /api/apply — the generated ACLs likely contain a fatal error."
     echo "=== Last 25 lines of squid-proxy container logs ==="
-    ssh -o ConnectTimeout=8 "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} logs --tail 25 squid-proxy" 2>&1 || true
+    ssh -o ConnectTimeout=8 "${QNAP_USER}@${QNAP_IP}" "${QNAP_DOCKER} logs --tail 25 ${SQUID_CONTAINER_NAME}" 2>&1 || true
 fi
 echo ""
 
@@ -798,10 +790,10 @@ echo ""
 echo "--> 3e. Local SSL CA Certificates..."
 CA_OK=true
 for f in squid-ca.pem squid-ca.crt; do
-    if [ ! -s "${SQUID_DIR}/certs/${f}" ]; then CA_OK=false; info "Missing or empty: certs/${f}"; fi
+    if [ ! -s "${CERT_DIR}/${f}" ]; then CA_OK=false; info "Missing or empty: ${CERT_DIR}/${f}"; fi
 done
-if [ "${CA_OK}" = true ] && openssl x509 -in "${SQUID_DIR}/certs/squid-ca.pem" -noout -checkend 2592000 >/dev/null 2>&1; then
-    CA_EXPIRY=$(openssl x509 -in "${SQUID_DIR}/certs/squid-ca.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+if [ "${CA_OK}" = true ] && openssl x509 -in "${CERT_DIR}/squid-ca.pem" -noout -checkend 2592000 >/dev/null 2>&1; then
+    CA_EXPIRY=$(openssl x509 -in "${CERT_DIR}/squid-ca.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
     pass_test "TC-3.6 Local CA certificates exist and are valid for >30 days (expires: ${CA_EXPIRY})."
 elif [ "${CA_OK}" = true ]; then
     fail_test "TC-3.6 Local CA certificate exists but expires within 30 days (or is unparseable). Regenerate with: squid-mgmt.sh cert"
@@ -1187,10 +1179,10 @@ else
 fi
 
 if require_proxy_up "TC-4.6b Spotify 4070 container REDIRECT"; then
-    if echo "${CONTAINER_PREROUTING}" | grep -qE "dpt:4070\b.*redir ports 3130"; then
-        pass_test "TC-4.6b Spotify 4070: container NAT REDIRECT 4070 -> 3130 active."
+    if echo "${CONTAINER_PREROUTING}" | grep -qE "dpt:4070\b.*redir ports ${SQUID_HTTPS_PORT}"; then
+        pass_test "TC-4.6b Spotify 4070: container NAT REDIRECT targets ${SQUID_HTTPS_PORT}."
     else
-        fail_test "TC-4.6b Spotify 4070: container NAT REDIRECT 4070 -> 3130 is missing."
+        fail_test "TC-4.6b Spotify 4070: container NAT REDIRECT to ${SQUID_HTTPS_PORT} is missing."
     fi
 fi
 

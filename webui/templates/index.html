@@ -68,10 +68,10 @@
                     <h4>1. Reliable HTTPS Proxying</h4>
                     <p>Use the WebUI-hosted <strong>Proxy Auto-Config (PAC)</strong> file for browsers. Transparent HTTPS interception remains available, but CDN hostnames with rapidly rotating DNS addresses can be rejected by Squid's mandatory destination verification.</p>
                     <ul>
-                        <li><strong>PAC URL:</strong> <code>http://192.168.1.91:3131/proxy.pac</code> sends Internet traffic through <code>192.168.1.90:3128</code> while keeping LAN destinations direct.</li>
-                        <li><strong>Router Safety Net:</strong> The ASUS Router continues redirecting direct HTTP, HTTPS, and Spotify AP traffic from registered client IPs.</li>
-                        <li><strong>SSL Bumping:</strong> Squid inspects TLS traffic and dynamically generates site-specific certificates signed by the internal Root CA (<code>squid.local</code>).</li>
-                        <li><strong>HSTS Prevention:</strong> Installing the Root CA into the <strong>Local Machine Trusted Root Store</strong> ensures Edge, Chrome, and system services recognize <code>squid.local</code>.</li>
+                        <li><strong>PAC URL:</strong> <code>{{ pac_url }}</code> sends Internet traffic through <code>{{ squid_proxy_host }}:{{ squid_proxy_port }}</code> while keeping LAN destinations direct.</li>
+                        <li><strong>Router Safety Net:</strong> The configured router continues redirecting direct HTTP, HTTPS, and Spotify AP traffic from registered client IPs.</li>
+                        <li><strong>SSL Bumping:</strong> Squid inspects TLS traffic and dynamically generates site-specific certificates signed by the internal Root CA (<code>{{ cert_name }}</code>).</li>
+                        <li><strong>HSTS Prevention:</strong> Installing the Root CA into the <strong>Local Machine Trusted Root Store</strong> ensures Edge, Chrome, and system services recognize <code>{{ cert_name }}</code>.</li>
                     </ul>
                 </section>
                 <section class="guide-section">
@@ -96,7 +96,7 @@
                         <ol>
                             <li>Open <strong>Settings &rarr; Network &amp; Internet &rarr; Proxy</strong>.</li>
                             <li>Under <strong>Use setup script</strong>, select <strong>Set up</strong>.</li>
-                            <li>Enable it and enter <code>http://192.168.1.91:3131/proxy.pac</code>.</li>
+                            <li>Enable it and enter <code>{{ pac_url }}</code>.</li>
                             <li>Save, then restart Chrome or Edge.</li>
                         </ol>
                     </div>
@@ -118,7 +118,7 @@
                 <section class="guide-section">
                     <h4>1. Automated CA + PAC Installation (Recommended)</h4>
                     <div class="code-banner">
-                        <pre><code>curl -sSL http://192.168.1.91:3131/download/install-ubuntu.sh | sudo bash</code></pre>
+                        <pre><code>curl -sSL {{ webui_public_url }}/download/install-ubuntu.sh | sudo bash</code></pre>
                     </div>
                     <p>The installer trusts the Squid CA, installs a managed Chrome/Chromium PAC policy, and configures the active GNOME session when available.</p>
                 </section>
@@ -126,17 +126,17 @@
                     <h4>2. Manual Installation Steps</h4>
                     <div class="method-box">
                         <h5>Step 1: Download &amp; Install System Root CA</h5>
-                        <pre><code>sudo wget -O /usr/local/share/ca-certificates/squid-proxy-ca.crt http://192.168.1.91:3131/download/cert.pem
+                        <pre><code>sudo wget -O /usr/local/share/ca-certificates/squid-proxy-ca.crt {{ webui_public_url }}/download/cert.pem
 sudo update-ca-certificates</code></pre>
                     </div>
                     <div class="method-box">
                         <h5>Step 2: Import into Chrome / NSS Certificate Database</h5>
                         <pre><code>sudo apt-get install -y libnss3-tools
-certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt</code></pre>
+certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n "{{ cert_name }}" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt</code></pre>
                     </div>
                     <div class="method-box">
                         <h5>Step 3: Configure GNOME Proxy Auto-Config</h5>
-                        <pre><code>gsettings set org.gnome.system.proxy autoconfig-url 'http://192.168.1.91:3131/proxy.pac'
+                        <pre><code>gsettings set org.gnome.system.proxy autoconfig-url '{{ pac_url }}'
 gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                         <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px;">
                             Chrome uses the explicit proxy selected by the PAC file; LAN addresses remain direct. The router redirect remains a safety net for applications that ignore desktop proxy settings.

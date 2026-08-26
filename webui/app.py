@@ -31,12 +31,13 @@ BUMP_DOMAINS_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "bump_domains.acl")
 # but can never match — a silently dead rule.
 BUMP_DOMAINS_CONF_PATH = os.path.join(SQUID_CONFIG_DIR, "bump_domains.conf")
 
-QNAP_IP = os.environ.get("QNAP_IP", "192.168.1.2")
+QNAP_IP = os.environ.get("QNAP_IP", "127.0.0.1")
 SQUID_CONTAINER_NAME = os.environ.get("SQUID_CONTAINER_NAME", "squid-proxy")
-SQUID_PROXY_HOST = os.environ.get("SQUID_PROXY_HOST", "192.168.1.90")
+SQUID_PROXY_HOST = os.environ.get("SQUID_PROXY_HOST", "127.0.0.1")
 SQUID_PROXY_PORT = int(os.environ.get("SQUID_PROXY_PORT", "3128"))
-WEBUI_PUBLIC_URL = os.environ.get("WEBUI_PUBLIC_URL", "http://192.168.1.91:3131").rstrip("/")
+WEBUI_PUBLIC_URL = os.environ.get("WEBUI_PUBLIC_URL", "http://127.0.0.1:3131").rstrip("/")
 PAC_URL = f"{WEBUI_PUBLIC_URL}/proxy.pac"
+CERT_NAME = os.environ.get("CERT_NAME", "squid.local")
 
 
 def _load_or_create_secret_key():
@@ -83,17 +84,11 @@ app.secret_key = _load_or_create_secret_key()
 # background expiry thread) interleaving writes to rules.acl / ssl_bump.acl.
 COMPILE_LOCK = threading.Lock()
 
-# IPs that get the Admin page as the default landing page. The environment
-# override is useful for isolated development without weakening NAS defaults.
-DEFAULT_ADMIN_CLIENT_IPS = {
-    "192.168.8.8",   # pc-admin
-}
+# IPs that get the Admin page as the default landing page are deployment data.
+# An empty value requires authentication for every client.
 ADMIN_CLIENT_IPS = {
     value.strip()
-    for value in os.environ.get(
-        "ADMIN_CLIENT_IPS",
-        ",".join(sorted(DEFAULT_ADMIN_CLIENT_IPS)),
-    ).split(",")
+    for value in os.environ.get("ADMIN_CLIENT_IPS", "").split(",")
     if value.strip()
 }
 
@@ -1148,6 +1143,11 @@ def index(admin_requested):
         admin_visible=admin_visible,
         admin_requested=admin_requested,
         activity_retention_days=ACTIVITY_RETENTION_DAYS,
+        pac_url=PAC_URL,
+        webui_public_url=WEBUI_PUBLIC_URL,
+        squid_proxy_host=SQUID_PROXY_HOST,
+        squid_proxy_port=SQUID_PROXY_PORT,
+        cert_name=CERT_NAME,
     )
 
 
@@ -1447,7 +1447,7 @@ if command -v certutil > /dev/null 2>&1; then
     echo "[*] Importing into Chrome/NSS Certificate Database..."
     for user_home in /root /home/*; do
         if [ -d "$user_home/.pki/nssdb" ]; then
-            sudo certutil -d "sql:$user_home/.pki/nssdb" -A -t "CT,C,C" -n "squid.local" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt 2>/dev/null || true
+            sudo certutil -d "sql:$user_home/.pki/nssdb" -A -t "CT,C,C" -n "{CERT_NAME}" -i /usr/local/share/ca-certificates/squid-proxy-ca.crt 2>/dev/null || true
         fi
     done
 fi
@@ -1629,4 +1629,4 @@ else:
     print("[startup] Secondary worker — skipping ACL compilation and expiry thread.")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3131, debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("WEBUI_PORT", "3131")), debug=False)

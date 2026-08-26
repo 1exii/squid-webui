@@ -11,10 +11,10 @@
 # (see rules.acl). That scoping means a CONNECT is allowed through to the ssl_bump
 # stage — so any port handling CONNECT must be able to bump, or a client manually
 # configured to use this port would tunnel straight past the blocklists.
-http_port 3128 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
+http_port __SQUID_PROXY_PORT__ ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
 
 # Transparent HTTP proxy port (for router port 80 redirection)
-http_port 3129 intercept
+http_port __SQUID_HTTP_PORT__ intercept
 
 # Disable strict host verification to allow transparent interception with remote router DNAT
 host_verify_strict off
@@ -23,19 +23,18 @@ host_verify_strict off
 error_directory /etc/squid/configs/errors
 
 # Transparent HTTPS interception port using ssl-bump.
-# Container-level iptables REDIRECT from port 443 to 3130 preserves SO_ORIGINAL_DST.
-https_port 3130 intercept ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
+# Container-level iptables REDIRECT from port 443 to this port preserves SO_ORIGINAL_DST.
+https_port __SQUID_HTTPS_PORT__ intercept ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=16MB cert=/etc/squid/certs/squid-ca.pem key=/etc/squid/certs/squid-ca.key
 
-# Define an Access Control List (ACL) for your local network.
-# Adjust this to match your home network's IP range.
-acl localnet src 192.168.0.0/16
+# Define an Access Control List (ACL) for the deployment's local networks.
+acl localnet src __LOCAL_NETWORKS__
 
 # Define standard ports for SSL/TLS and other safe protocols.
-acl SSL_ports port 443 3130 4070
+acl SSL_ports port 443 __SQUID_HTTPS_PORT__ 4070
 acl Safe_ports port 80          # http
 acl Safe_ports port 21          # ftp
 acl Safe_ports port 443         # https
-acl Safe_ports port 3130        # transparent ssl-bump
+acl Safe_ports port __SQUID_HTTPS_PORT__ # transparent ssl-bump
 acl Safe_ports port 4070        # spotify ap
 acl Safe_ports port 70          # gopher
 acl Safe_ports port 210         # wais
@@ -70,7 +69,7 @@ http_access allow localnet
 http_access deny all
 
 # Prevent proxy loop by forcing DNS resolution of Host header/SNI when destination IP is local proxy IP
-acl proxy_self dst 192.168.0.0/16
+acl proxy_self dst __LOCAL_NETWORKS__
 always_direct deny proxy_self
 
 

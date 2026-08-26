@@ -65,18 +65,18 @@ class TrafficAnalyticsTests(unittest.TestCase):
         stamp = datetime(2026, 8, 21, 12, 0).timestamp()
         other_day = datetime(2026, 8, 20, 12, 0).timestamp()
         lines = [
-            f"{stamp} 10 192.168.1.11 TCP_TUNNEL/200 100 CONNECT example.com:443 - HIER_DIRECT/1.2.3.4 -\n",
-            f"{stamp} 10 192.168.1.11 TCP_TUNNEL/200 100 CONNECT 1.2.3.4:443 - HIER_DIRECT/1.2.3.4 -\n",
-            f"{stamp} 10 192.168.1.12 TCP_TUNNEL/200 100 CONNECT other.test:443 - HIER_DIRECT/1.2.3.4 -\n",
-            f"{other_day} 10 192.168.1.11 TCP_TUNNEL/200 100 CONNECT old.test:443 - HIER_DIRECT/1.2.3.4 -\n",
+            f"{stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 CONNECT example.com:443 - HIER_DIRECT/1.2.3.4 -\n",
+            f"{stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 CONNECT 1.2.3.4:443 - HIER_DIRECT/1.2.3.4 -\n",
+            f"{stamp} 10 192.0.2.12 TCP_TUNNEL/200 100 CONNECT other.test:443 - HIER_DIRECT/1.2.3.4 -\n",
+            f"{other_day} 10 192.0.2.11 TCP_TUNNEL/200 100 CONNECT old.test:443 - HIER_DIRECT/1.2.3.4 -\n",
         ]
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "access.log")
             with open(path, "w", encoding="utf-8") as handle:
                 handle.writelines(lines)
-            events = parse_daily_events(path, target, "192.168.1.11")
+            events = parse_daily_events(path, target, "192.0.2.11")
 
-        self.assertEqual([event["host"] for event in events["192.168.1.11"]], ["example.com"])
+        self.assertEqual([event["host"] for event in events["192.0.2.11"]], ["example.com"])
 
     def test_parser_includes_numbered_rotations(self):
         target = date(2026, 8, 21)
@@ -86,13 +86,13 @@ class TrafficAnalyticsTests(unittest.TestCase):
             for filename, host in (("access.log", "current.test"), ("access.log.0", "rotated.test")):
                 with open(os.path.join(directory, filename), "w", encoding="utf-8") as handle:
                     handle.write(
-                        f"{stamp} 10 192.168.1.11 TCP_TUNNEL/200 100 "
+                        f"{stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 "
                         f"CONNECT {host}:443 - HIER_DIRECT/1.2.3.4 -\n"
                     )
-            events = parse_daily_events(path, target, "192.168.1.11")
+            events = parse_daily_events(path, target, "192.0.2.11")
 
         self.assertEqual(
-            sorted(event["host"] for event in events["192.168.1.11"]),
+            sorted(event["host"] for event in events["192.0.2.11"]),
             ["current.test", "rotated.test"],
         )
 

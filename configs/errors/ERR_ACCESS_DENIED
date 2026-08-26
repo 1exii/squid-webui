@@ -249,7 +249,7 @@
             <button class="btn btn-secondary" onclick="window.history.back()">
                 ← Go Back
             </button>
-            <a href="http://192.168.1.91:3131/" class="btn btn-primary">
+            <a href="__WEBUI_PUBLIC_URL__/" class="btn btn-primary">
                 Parent Web UI
             </a>
         </div>
