@@ -57,7 +57,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - **Interactive Guides:**
   - **Windows Guide:** Automated PowerShell machine CA trust, current-user Windows PAC configuration, machine-level Chrome `ProxySettings` policy installation, manual setup-script configuration, and browser trust guidance.
   - **Ubuntu Linux Guide:** Automated CA/PAC installation, `update-ca-certificates`, a managed Chrome/Chromium `ProxySettings` policy, GNOME PAC configuration, and NSS database import (`certutil`).
-- **Proxy Auto-Config:** Public `/proxy.pac` sends Internet traffic to the explicit Squid proxy at `192.168.1.90:3128`, sends loopback/private/local-name destinations direct, and deliberately omits a `DIRECT` fallback for Internet requests.
+- **Proxy Auto-Config:** Public `/proxy.pac` sends Internet traffic to the deployment-configured explicit Squid proxy, sends loopback/private/local-name destinations direct, and deliberately omits a `DIRECT` fallback for Internet requests.
 - **Per-Client QUIC Fallback:** Every controlled client rejects general UDP/443 proxy bypass. Clients carrying the optional `no_quic` flag in `proxy-hosts.conf` also reject Google/YouTube QUIC, forcing HTTP/3 traffic onto TCP so Squid can enforce category policies and render the custom HTTPS block page; unflagged clients retain the YouTube QUIC performance exception.
 - **Per-Client WARP Blocking:** Clients carrying the independent `no_vpn` flag reject Cloudflare WARP ingress endpoints and have existing matching tunnel state removed during router deployment, preventing full-tunnel WARP from hiding destination traffic from Squid. This flag is WARP-specific rather than a claim to detect every possible VPN protocol.
 
@@ -114,7 +114,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 #### 🎯 CUJ 1: Permanent 24/7 Block (`Always Block` Subset)
 - **User Goal:** Unconditionally block specific high-risk category lists (e.g. `adult.txt`, `gambling.txt`) on a target device 24/7, bypassing any time-based schedule matrices.
 - **User Experience & Admin Action:**
-  1. Admin opens Web UI and selects the target device tab (e.g. `Child Phone - 192.168.1.50`).
+  1. Admin opens Web UI and selects the target device tab (e.g. `Child Phone - 192.0.2.50`).
   2. Under the **Always Block** category list, admin checks `adult.txt` and `gambling.txt`.
   3. Admin clicks **Save & Apply**.
 - **System & ACL Behavior:**

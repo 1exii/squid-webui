@@ -1,46 +1,33 @@
 #!/bin/bash
 
 # --- 1. CONFIGURATION ---
-SQUID_INSTANCE_NAME="squid-proxy"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SQUID_DIR="${SCRIPT_DIR}"
+# shellcheck source=lib/load-deployment.sh
+. "${SQUID_DIR}/lib/load-deployment.sh"
 
 # Workstation Paths
-GITDIR="${HOME}/GitHub"
-SQUID_DIR="${GITDIR}/personal/home-network/squid"
-BLOCKLIST_DIR="${SQUID_DIR}/block-lists"
-CERT_DIR="${SQUID_DIR}/certs"
 SQUID_CONF_TEMPLATE="${SQUID_DIR}/configs/squid.conf.template"
 
 # Remote QNAP Settings
-QNAP_IP="192.168.1.2"
-QNAP_SERVER="admin@${QNAP_IP}"
-BINDIR="/share/CACHEDEV1_DATA/.qpkg/container-station/bin"
-DOCKER="${BINDIR}/docker"
+DOCKER="${QNAP_DOCKER}"
 
 # Remote paths on QNAP for Squid
-SQUID_INSTANCE_NAME="squid-proxy"
-SQUID_BASE_DIR="/share/Container/${SQUID_INSTANCE_NAME}"
+SQUID_INSTANCE_NAME="${SQUID_CONTAINER_NAME}"
+SQUID_BASE_DIR="${QNAP_CONTAINER_ROOT}/${SQUID_INSTANCE_NAME}"
 SQUID_CERT_DIR_REMOTE="${SQUID_BASE_DIR}/certs"
 SQUID_BLOCKLIST_DIR_REMOTE="${SQUID_BASE_DIR}/block-lists"
 SQUID_CONF_REMOTE="${SQUID_BASE_DIR}/configs/squid.conf"
 
 # Path for clients to download the certificate
-CERT_DOWNLOAD_DIR="/share/CACHEDEV1_DATA/Web/certs"
+CERT_DOWNLOAD_DIR="${QNAP_CERT_DOWNLOAD_DIR}"
 
 # ASUS Router Settings (Merlin firmware)
-ROUTER_IP="192.168.0.1"
-ROUTER_SERVER="admin@${ROUTER_IP}"
 ROUTER_SSH_OPTS="-o PubkeyAcceptedKeyTypes=+ssh-rsa"
 ROUTER_SCP_OPTS="-O -o PubkeyAcceptedKeyTypes=+ssh-rsa"  # -O forces legacy SCP (Dropbear has no sftp-server)
-ROUTER_FIREWALL_SCRIPT="/jffs/scripts/firewall-start"
-
-# Squid Proxy Settings (used in generated router rules)
-SQUID_PROXY_IP="192.168.1.90"
-SQUID_HTTP_PORT="3129"
-SQUID_HTTPS_PORT="3130"
 
 # Local router config sources
 ROUTER_DIR="${SQUID_DIR}/router"
-PROXY_HOSTS_CONF="${ROUTER_DIR}/proxy-hosts.conf"
 
 mkdir -p "${CERT_DIR}" "${BLOCKLIST_DIR}"
 
@@ -58,7 +45,7 @@ generate_cert() {
         # Generate a self-signed root CA certificate
         openssl req -x509 -new -nodes -key "${CERT_DIR}/squid-ca.key" \
             -sha256 -days 3650 -out "${CERT_DIR}/squid-ca.pem" \
-            -subj "/C=US/ST=California/L=City/O=Home LAN/OU=Proxy/CN=squid.local"
+            -subj "${CERT_SUBJECT}"
         echo "  [+] New certificate generated."
     fi
 
@@ -69,7 +56,7 @@ generate_cert() {
     ssh "${QNAP_SERVER}" "mkdir -p ${SQUID_CERT_DIR_REMOTE} ${CERT_DOWNLOAD_DIR}"
     scp "${CERT_DIR}/squid-ca.pem" "${CERT_DIR}/squid-ca.key" "${QNAP_SERVER}:${SQUID_CERT_DIR_REMOTE}/"
     scp "${CERT_DIR}/squid-ca.crt" "${QNAP_SERVER}:${CERT_DOWNLOAD_DIR}/"
-    echo "  [+] Certificate available for download at http://${QNAP_IP}/certs/squid-ca.crt"
+    echo "  [+] Certificate available for download at ${WEBUI_PUBLIC_URL}/download/cert.crt"
 }
 
 deploy_proxy() {
@@ -83,8 +70,8 @@ deploy_proxy() {
         exit 1
     fi
 
-    echo "  [*] Building and running squid-proxy container on QNAP..."
-    "${DEPLOY_SCRIPT}" remove create squid-proxy
+    echo "  [*] Building and running ${SQUID_CONTAINER_NAME} container on QNAP..."
+    "${DEPLOY_SCRIPT}" remove create "${SQUID_CONTAINER_NAME}"
 
     echo "  [+] Squid Proxy deployed!"
 }
@@ -173,7 +160,7 @@ analyze_logs() {
             --real-os
 
     local HOST_REPORT="${LOCAL_LOG_DIR}/host-domains-report.html"
-    local HOSTS_CONF="${SQUID_DIR}/router/proxy-hosts.conf"
+    local HOSTS_CONF="${PROXY_HOSTS_CONF}"
 
     echo "  [*] Running Standalone Log Analyzer (analyze-squid-logs.py)..."
     python3 "${SQUID_DIR}/logs/analyze-squid-logs.py" \
@@ -275,8 +262,14 @@ deploy_router_proxy() {
         exit 1
     fi
 
-    # Copy the template, pinning SQUID_IP to this script's configured value.
-    sed "s|^SQUID_IP=.*|SQUID_IP=\"${SQUID_PROXY_IP}\"|" "${RULES_TEMPLATE}" > "${TEMP_SCRIPT}"
+    # Copy the template, pinning deployment-specific router values.
+    sed \
+        -e "s|^SQUID_IP=.*|SQUID_IP=\"${SQUID_PROXY_IP}\"|" \
+        -e "s|^NAS_IP=.*|NAS_IP=\"${QNAP_IP}\"|" \
+        -e "s|^LAN_INTERFACE=.*|LAN_INTERFACE=\"${ROUTER_LAN_INTERFACE}\"|" \
+        -e "s|^ROUTE_TABLE=.*|ROUTE_TABLE=\"${ROUTER_ROUTE_TABLE}\"|" \
+        -e "s|^ROUTE_MARK=.*|ROUTE_MARK=\"${ROUTER_MARK}\"|" \
+        "${RULES_TEMPLATE}" > "${TEMP_SCRIPT}"
 
     # ---- Step 2: Append one add_host call per intercepted host ----
     local host_count=0
@@ -388,7 +381,7 @@ deploy_linux_cert() {
 set -e
 CERT_SRC="/tmp/squid-proxy-ca.crt"
 REMOTE_CERT_NAME="squid-proxy-ca.crt"
-PROXY_URL="http://192.168.1.90:3128"
+PROXY_URL="__EXPLICIT_PROXY_URL__"
 
 if command -v update-ca-certificates > /dev/null 2>&1; then
     # Debian / Ubuntu
@@ -418,7 +411,7 @@ fi
 if command -v certutil >/dev/null 2>&1; then
     for user_home in /root /home/*; do
         if [ -d "$user_home/.pki/nssdb" ]; then
-            certutil -d "sql:$user_home/.pki/nssdb" -A -t "C,," -n "squid.local" -i "$CERT_SRC" 2>/dev/null || true
+            certutil -d "sql:$user_home/.pki/nssdb" -A -t "C,," -n "__CERT_NAME__" -i "$CERT_SRC" 2>/dev/null || true
             user_owner=$(stat -c '%U:%G' "$user_home" 2>/dev/null || echo "")
             [ -n "$user_owner" ] && chown -R "$user_owner" "$user_home/.pki/nssdb" 2>/dev/null || true
         fi
@@ -431,14 +424,20 @@ export http_proxy="${PROXY_URL}"
 export https_proxy="${PROXY_URL}"
 export HTTP_PROXY="${PROXY_URL}"
 export HTTPS_PROXY="${PROXY_URL}"
-export no_proxy="localhost,127.0.0.1,192.168.0.0/16,local,.local"
-export NO_PROXY="localhost,127.0.0.1,192.168.0.0/16,local,.local"
+export no_proxy="__NO_PROXY_NETWORKS__"
+export NO_PROXY="__NO_PROXY_NETWORKS__"
 PROXY_EOF
 chmod 755 /etc/profile.d/squid-proxy.sh
 echo "  [+] System-wide proxy profile installed at /etc/profile.d/squid-proxy.sh."
 
 rm -f "$CERT_SRC" "/tmp/squid-install-cert.sh"
 INSTALL_SCRIPT
+
+    sed -i \
+        -e "s|__EXPLICIT_PROXY_URL__|${EXPLICIT_PROXY_URL}|g" \
+        -e "s|__NO_PROXY_NETWORKS__|${NO_PROXY_NETWORKS}|g" \
+        -e "s|__CERT_NAME__|${CERT_NAME}|g" \
+        "${LOCAL_INSTALL_SCRIPT}"
 
     local any_host=false
 
@@ -503,11 +502,11 @@ deploy_webui() {
         exit 1
     fi
 
-    echo "  [*] Building and running squid-webui container on QNAP..."
-    "${DEPLOY_SCRIPT}" create squid-webui
+    echo "  [*] Building and running ${WEBUI_CONTAINER_NAME} container on QNAP..."
+    "${DEPLOY_SCRIPT}" create "${WEBUI_CONTAINER_NAME}"
 
     echo "  [+] Squid Web UI deployed!"
-    echo "  [i] Access Web UI at: http://192.168.1.91:3131 (or http://${QNAP_IP}:3131)"
+    echo "  [i] Access Web UI at: ${WEBUI_PUBLIC_URL}"
 }
 
 # --- 3. EXECUTION ---

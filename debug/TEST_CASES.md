@@ -2,7 +2,7 @@
 
 > **Target Script:** `debug/debug-proxy.sh`
 > **Environment:** QNAP NAS Container Station (`squid-proxy` and `squid-webui` Docker containers)
-> **Execution Location:** Dev machine / host runner (`/home/admin/GitHub/personal/home-network/squid`)
+> **Execution Location:** A host runner with the selected deployment profile
 
 ---
 
@@ -12,7 +12,7 @@
 
 It validates:
 
-1. **Router & container infrastructure** — fwmark policy routing (`0x5000` → table 150 → Squid), the mangle `SQUID_MARK` chain, container state, container NAT `REDIRECT` rules, and Squid's listening ports.
+1. **Router & container infrastructure** — profile-configured fwmark policy routing, the mangle `SQUID_MARK` chain, container state, container NAT `REDIRECT` rules, and Squid's listening ports.
 2. **Web UI REST API** — endpoint contracts, CA certificate downloads, client installer, the policy save/apply pipeline, and the **authentication posture** of the write endpoints.
 3. **Configuration & ACL integrity** — `squid -k parse`, empty-ACL detection, `rules.acl` / `ssl_bump.acl` / `bump_domains.acl` contents, and cross-file ACL reference consistency.
 4. **Traffic interception & selective SSL bumping** — spliced pass-through, bumped block pages, deep URL path rules, and CA trust.
@@ -25,16 +25,15 @@ It validates:
 
 ## 2. Test Environment & Prerequisites
 
-- **Target QNAP Host:** `192.168.1.2` (SSH user: `admin`)
-- **Container Network:** `192.168.1.90` (`squid-proxy`), `192.168.1.91` (`squid-webui`)
-- **Docker Binary:** `/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker`
+- **Target Docker Host, router, and container network:** from `deployment.env`
+- **Docker Binary:** from `QNAP_DOCKER` in `deployment.env`
 - **Proxy Ports:**
-  - `3128`: Explicit HTTP proxy (**no `ssl-bump` flag** — see §6)
+  - `3128`: Explicit HTTP proxy with SSL bump support
   - `3129`: Transparent HTTP interception
   - `3130`: Transparent HTTPS SSL-bump interception
   - `3131`: Web UI Management API (on the container IP only — the webui runs on a
     macvlan network, so `-p 3131:3131` does **not** publish it on the QNAP host IP)
-- **Test client:** must be listed in `router/proxy-hosts.conf` for its traffic to be
+- **Test client:** must be listed in the profile's `proxy-hosts.conf` for its traffic to be
   intercepted, and must be reachable over SSH from the runner.
 
 ---
@@ -45,8 +44,8 @@ It validates:
 
 | Test Case | Description | Verification Logic | Expected Outcome |
 | :--- | :--- | :--- | :--- |
-| **TC-1.1a: Policy Rule** | Router `ip rule` routes marked packets to table 150. | `ip rule show` on the router. | Rule `fwmark 0x5000/0x5000 lookup 150` present. |
-| **TC-1.1b: Table 150 Route** | Table 150 forwards to the Squid container. | `ip route show table 150`. | `default via 192.168.1.90`. |
+| **TC-1.1a: Policy Rule** | Router `ip rule` routes marked packets to the configured table. | `ip rule show` on the router. | The profile's mark and table are present. |
+| **TC-1.1b: Policy Route** | The configured table forwards to the Squid container. | `ip route show table <id>`. | Default route points at the profile's Squid IP. |
 | **TC-1.2a: Mangle Chain** | `SQUID_MARK` chain exists. | `iptables -t mangle -L SQUID_MARK -n -v`. | Chain present. |
 | **TC-1.2b: Per-Host Marking** | Every host in `proxy-hosts.conf` is marked. | Cross-reference `proxy-hosts.conf` against the chain. | A MARK rule per configured host. |
 | **TC-1.3a/b: Container Status** | `squid-proxy` and `squid-webui` are running. | `docker ps --format '{{.Names}}\t{{.Status}}'`; status must start with `Up`. | Both `Up`. On failure the last 25 lines of `docker logs squid-proxy` are printed. |
@@ -71,7 +70,7 @@ It validates:
 | **TC-2.3: Policy Retrieval** | Device policy store. | `GET /api/policies` | JSON containing `"policies"`. |
 | **TC-2.4: Blocklists List** | Blocklist directory listing. | `GET /api/blocklists` | JSON array of `.txt` category files. |
 | **TC-2.5: CA Downloads** | Root CA download endpoints. | `GET /download/cert.crt`<br>`GET /download/cert.pem` | Both 200 **and** the payload parses as X.509 (DER and PEM respectively). A 200 carrying a JSON error body is a FAIL. |
-| **TC-2.6a: PAC Endpoint** | Browser auto-configuration uses the explicit proxy without failing open. | `GET /proxy.pac` | PAC MIME type; Internet return is `PROXY 192.168.1.90:3128`; private LAN is `DIRECT`; no `PROXY …; DIRECT` fallback. |
+| **TC-2.6a: PAC Endpoint** | Browser auto-configuration uses the explicit proxy without failing open. | `GET /proxy.pac` | PAC MIME type; Internet return uses the profile's proxy; private LAN is `DIRECT`; no `PROXY …; DIRECT` fallback. |
 | **TC-2.6b: Ubuntu Installer** | Linux client onboarding configures CA trust and PAC. | `GET /download/install-ubuntu.sh` | Bash script calls `update-ca-certificates`, installs managed Chrome PAC policy, and points at the WebUI PAC URL. |
 | **TC-2.6c: Windows Installer** | Windows client onboarding configures CA trust and PAC. | `GET /download/install-windows.ps1` | Elevated PowerShell script imports the CA and sets the current user's `AutoConfigURL`. |
 | **TC-2.7: Unauthenticated Write** | **Security regression check.** Outside `ADMIN_CLIENT_IPS`, policy writes must require a session. | `POST /api/policies` with no cookie from a non-admin client IP | HTTP 401/403. A 200 is a FAIL unless the test host is intentionally in `ADMIN_CLIENT_IPS`. |
@@ -133,18 +132,18 @@ If a "blocked" test reports `wrong version number` / `TLS connect error`, the su
 | Test Case | Description | Verification Logic | Expected Outcome |
 | :--- | :--- | :--- | :--- |
 | **TC-5.1: `dump-config`** | CLI reaches the container and parses the config. | Assert on Squid's own `Processing Configuration File` output, **not** on `squid-mgmt.sh`'s unconditional `Config dumped.` echo. | Real parser output, no `FATAL`. |
-| **TC-5.2: `catlogs`** | CLI retrieves the access log and reports evidence for the selected test client. | Delete `logs/access.log`, run `catlogs`, assert the file was recreated and `Saved local log snapshot` was printed, then filter Squid's third log field by `TARGET_CLIENT_IP`. | Matching client entries ⇒ PASS and only that client's last 15 lines are printed; non-empty global log with no client match ⇒ WARN; empty log ⇒ WARN. This prevents unrelated workstation traffic from being presented as vm-ubuntu test evidence. |
+| **TC-5.2: `catlogs`** | CLI retrieves the access log and reports evidence for the selected test client. | Delete `logs/access.log`, run `catlogs`, assert the file was recreated and `Saved local log snapshot` was printed, then filter Squid's third log field by `TARGET_CLIENT_IP`. | Matching client entries ⇒ PASS and only that client's last 15 lines are printed; non-empty global log with no client match ⇒ WARN; empty log ⇒ WARN. This prevents unrelated workstation traffic from being presented as client test evidence. |
 
 ---
 
 ## 4. How to Run the Test Suite
 
 ```bash
-# Default run (targets vm-ubuntu at 192.168.8.30 via SSH — full transparent-intercept path)
+# Default run (targets DEFAULT_CLIENT_IP from deployment.env)
 ./debug/debug-proxy.sh
 
 # Run targeting a different remote Ubuntu client
-./debug/debug-proxy.sh --client-ip 192.168.1.11
+./debug/debug-proxy.sh --client-ip 192.0.2.20
 
 # Run with container redeployment before testing
 ./debug/debug-proxy.sh --redeploy
@@ -167,8 +166,8 @@ The run ends with `exit 1` if any assertion failed.
 
 ## 6. Known Limitations
 
-1. **Only remote Ubuntu clients are supported.** The default is vm-ubuntu at
-   `192.168.8.30`. A `--client-ip` override must also identify an Ubuntu host with
+1. **Only remote Ubuntu clients are supported.** The default comes from
+   `DEFAULT_CLIENT_IP`. A `--client-ip` override must also identify an Ubuntu host with
    working key-based SSH. This keeps every traffic assertion on the router's
    transparent-interception path.
 2. **TC-4.4 needs an active, non-redundant path rule.** Deep URL path inspection

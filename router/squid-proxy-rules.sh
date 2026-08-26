@@ -5,7 +5,7 @@
 # ==============================================================================
 # SINGLE SOURCE OF TRUTH for the router-side transparent proxy rules.
 #
-# 'squid-mgmt.sh router-deploy' copies this file, substitutes SQUID_IP, appends
+# 'squid-mgmt.sh router-deploy' copies this file, substitutes deployment values, appends
 # one add_host line per entry in router/proxy-hosts.conf, and uploads the result
 # to the router. Do not hand-edit the copy on the router — it is overwritten.
 #
@@ -16,7 +16,7 @@
 # from its own iptables REDIRECT rules. This is required for correctness:
 #
 #   * A DNAT + MASQUERADE approach rewrites the SOURCE address to the router's,
-#     so every request reaches Squid from 192.168.0.1. All per-device 'src' ACLs
+#     so every request reaches Squid from the router. All per-device 'src' ACLs
 #     then collapse to a single client and parental controls silently stop
 #     distinguishing between devices — filtering appears to work while applying
 #     the wrong policy to everyone.
@@ -24,7 +24,11 @@
 #     'acl src_dev_<ip> src <ip>' lines meaningful.
 # ==============================================================================
 
-SQUID_IP="192.168.1.90"
+SQUID_IP="192.0.2.90"
+NAS_IP="192.0.2.2"
+LAN_INTERFACE="br0"
+ROUTE_TABLE="150"
+ROUTE_MARK="0x5000"
 
 # --- Clean up the legacy DNAT chain, if an older revision left one behind ---
 iptables -t nat -D PREROUTING -j SQUID_REDIRECT 2>/dev/null || true
@@ -36,14 +40,14 @@ iptables -t nat -D POSTROUTING -d "$SQUID_IP" -p tcp -m multiport --dports 80,44
 
 # --- Disable rp_filter so asymmetric return packets are not dropped ---
 echo 0 > /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null || true
-echo 0 > /proc/sys/net/ipv4/conf/br0/rp_filter 2>/dev/null || true
+echo 0 > "/proc/sys/net/ipv4/conf/${LAN_INTERFACE}/rp_filter" 2>/dev/null || true
 
-# --- Policy routing table 150: send marked packets to Squid, destination intact ---
+# --- Policy routing: send marked packets to Squid, destination intact ---
 ip rule del pref 10 2>/dev/null || true
-ip rule del fwmark 0x5000/0x5000 2>/dev/null || true
-ip rule add pref 10 fwmark 0x5000/0x5000 table 150 2>/dev/null || true
-ip route flush table 150 2>/dev/null || true
-ip route add default via "$SQUID_IP" dev br0 table 150 2>/dev/null || true
+ip rule del fwmark "${ROUTE_MARK}/${ROUTE_MARK}" 2>/dev/null || true
+ip rule add pref 10 fwmark "${ROUTE_MARK}/${ROUTE_MARK}" table "${ROUTE_TABLE}" 2>/dev/null || true
+ip route flush table "${ROUTE_TABLE}" 2>/dev/null || true
+ip route add default via "$SQUID_IP" dev "${LAN_INTERFACE}" table "${ROUTE_TABLE}" 2>/dev/null || true
 
 # --- mangle chain SQUID_MARK: flush/recreate ours only, leave other chains alone ---
 iptables -t mangle -N SQUID_MARK 2>/dev/null || true
@@ -53,7 +57,7 @@ iptables -t mangle -I PREROUTING 1 -j SQUID_MARK
 
 # --- Exempt Squid itself and the NAS to prevent forwarding loops ---
 iptables -t mangle -A SQUID_MARK -s "$SQUID_IP" -j RETURN
-iptables -t mangle -A SQUID_MARK -s 192.168.1.2 -j RETURN
+iptables -t mangle -A SQUID_MARK -s "$NAS_IP" -j RETURN
 
 # --- Google/YouTube ranges that may use QUIC unless a client opts out ---
 if command -v ipset >/dev/null 2>&1; then
@@ -134,7 +138,7 @@ add_host() {
     fi
 
     # Mark TCP 80 / 443 / 4070 (Spotify AP) for policy routing to Squid.
-    iptables -t mangle -A SQUID_MARK -s "$1" -p tcp -m multiport --dports 80,443,4070 -j MARK --set-mark 0x5000/0x5000
+    iptables -t mangle -A SQUID_MARK -s "$1" -p tcp -m multiport --dports 80,443,4070 -j MARK --set-mark "${ROUTE_MARK}/${ROUTE_MARK}"
 }
 
 # --- Per-host rules ---

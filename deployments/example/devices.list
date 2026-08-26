@@ -1,0 +1,5 @@
+# Squid WebUI Device Control List
+# Format: IP_ADDRESS HOSTNAME
+
+192.0.2.20 ubuntu-client
+192.0.2.21 windows-client
