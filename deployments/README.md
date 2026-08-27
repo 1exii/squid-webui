@@ -14,7 +14,9 @@ deployment, or diagnostic script.
 
 `deployment.env` owns host addresses, SSH users, Docker paths and network,
 container names and images, proxy/WebUI ports, accepted CIDRs, administrator
-client IPs, remote diagnostic defaults, and the CA identity.
+client IPs, Squid DNS resolvers, remote diagnostic defaults, and the CA identity.
+`SQUID_DNS_SERVERS` defaults to `8.8.8.8` when omitted and accepts multiple
+space-separated resolver IPs.
 
 Keep generated CA files in `deployments/local/certs/`. Never commit the private
 key. Block lists remain shareable defaults under `block-lists/`; set

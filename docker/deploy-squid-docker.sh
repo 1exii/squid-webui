@@ -100,6 +100,7 @@ function create_squid() {
         -e "s|__SQUID_PROXY_PORT__|${SQUID_PROXY_PORT}|g" \
         -e "s|__SQUID_HTTP_PORT__|${SQUID_HTTP_PORT}|g" \
         -e "s|__SQUID_HTTPS_PORT__|${SQUID_HTTPS_PORT}|g" \
+        -e "s|__SQUID_DNS_SERVERS__|${SQUID_DNS_SERVERS}|g" \
         "$LOCAL_CONF_TEMPLATE" > "$rendered_conf"
     scp "$rendered_conf" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
     # DO NOT copy ssl_bump.acl (or rules.acl, or bump_domains.*) from the repo.
