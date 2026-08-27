@@ -29,6 +29,10 @@ https_port __SQUID_HTTPS_PORT__ intercept ssl-bump generate-host-certificates=on
 # Define an Access Control List (ACL) for the deployment's local networks.
 acl localnet src __LOCAL_NETWORKS__
 
+# Use the DNS resolver(s) selected by the deployment profile. Multiple resolver
+# IPs may be separated by spaces.
+dns_nameservers __SQUID_DNS_SERVERS__
+
 # Define standard ports for SSL/TLS and other safe protocols.
 acl SSL_ports port 443 __SQUID_HTTPS_PORT__ 4070
 acl Safe_ports port 80          # http
