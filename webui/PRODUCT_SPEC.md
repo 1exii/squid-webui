@@ -107,9 +107,15 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - Estimates active time by assigning the gap until the next proxy request to the current website. Gaps longer than five minutes count as a 30-second tail. This is labeled as an estimate because proxy traffic includes background services and cannot identify foreground screen time.
 - Omits IP-only destinations because they cannot be reliably presented or categorized as websites.
 
+### 3.5 Configuration Change Audit (Admin Only)
+- Every semantic policy change from `POST /api/policies` is appended to the persistent `configuration_audit.jsonl` file on the shared Squid config volume; identical auto-save requests do not create noise.
+- Each event records the server-local timestamp, NAS username or trusted-admin-client identity, source admin IP, success state, affected devices and fields, and exact before/after policy values.
+- Automatic midnight expiration is recorded as a system actor. Failed ACL compilation is also recorded because `device_policies.json` was changed even when generated ACL files were rolled back.
+- The authenticated Change Log view displays the newest 100 entries with a lazy-rendered, side-by-side JSON comparison. Removed values are highlighted red and added values green while unchanged lines remain aligned. `SQUID_AUDIT_LOG` can override the storage path.
+
 ---
 
-### 3.5 Critical User Journeys (CUJs)
+### 3.6 Critical User Journeys (CUJs)
 
 #### 🎯 CUJ 1: Permanent 24/7 Block (`Always Block` Subset)
 - **User Goal:** Unconditionally block specific high-risk category lists (e.g. `adult.txt`, `gambling.txt`) on a target device 24/7, bypassing any time-based schedule matrices.
@@ -173,6 +179,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 | `/api/auth/logout` | `POST` | Public | Clears admin session. |
 | `/api/devices` | `GET` | Admin | Returns list of devices parsed from `devices.list`. |
 | `/api/activity?date=<YYYY-MM-DD>&client_ip=<IPv4>` | `GET` | Admin | Returns daily categorized website activity and estimated active time for one client. |
+| `/api/audit-log?limit=<1-500>` | `GET` | Admin | Returns newest-first append-only Squid configuration audit events. |
 | `/api/blocklists` | `GET` | Admin | Lists available blocklist category files. |
 | `/api/policies` | `GET` | Admin | Returns `always_block`, `always_allow`, and the automatically materialized `default_block` schedule entries for each device. |
 | `/api/policies` | `POST` | Admin | Normalizes Default Block as the complement of the explicit lists, expires stale today overrides, and compiles Squid ACLs. |

@@ -1,5 +1,6 @@
 import os
 import json
+import copy
 import secrets
 import threading
 import time
@@ -9,6 +10,12 @@ from datetime import date, datetime, timedelta
 import paramiko
 from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
 from flask import Flask, render_template, request, jsonify, session, send_file
+from config_audit import (
+    append_audit_record,
+    make_audit_record,
+    policy_changes,
+    read_audit_records,
+)
 from traffic_analytics import build_daily_activity
 
 app = Flask(__name__)
@@ -19,6 +26,9 @@ SQUID_BLOCKLIST_DIR = os.environ.get("SQUID_BLOCKLIST_DIR", "/etc/squid/block-li
 SQUID_CERT_DIR = os.environ.get("SQUID_CERT_DIR", "/etc/squid/certs")
 ROUTER_HOSTS_CONF = os.environ.get("ROUTER_HOSTS_CONF", "/etc/squid/router/proxy-hosts.conf")
 SQUID_ACCESS_LOG = os.environ.get("SQUID_ACCESS_LOG", "/var/log/squid/access.log")
+SQUID_AUDIT_LOG = os.environ.get(
+    "SQUID_AUDIT_LOG", os.path.join(SQUID_CONFIG_DIR, "configuration_audit.jsonl")
+)
 ACTIVITY_RETENTION_DAYS = 30
 
 RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
@@ -121,6 +131,33 @@ def is_admin_client():
 def is_authenticated():
     """Allow trusted admin workstations or a password-authenticated session."""
     return is_admin_client() or session.get("authenticated", False)
+
+
+def request_audit_actor():
+    """Identify the authenticated user or trusted workstation making a change."""
+    username = session.get("username", "")
+    if username:
+        auth_method = "nas_session"
+        display_name = username
+    else:
+        auth_method = "trusted_admin_client"
+        display_name = "Trusted admin client"
+    return {
+        "display_name": display_name,
+        "username": username,
+        "client_ip": get_client_ip(),
+        "authentication": auth_method,
+    }
+
+
+def record_policy_change(before, after, actor, source, success, message):
+    """Persist an audit event when a policy save made a semantic change."""
+    changes = policy_changes(before, after)
+    if not changes:
+        return False
+    record = make_audit_record(actor, source, changes, success, message)
+    append_audit_record(SQUID_AUDIT_LOG, record)
+    return True
 
 
 
@@ -1302,6 +1339,21 @@ def get_policies():
     return jsonify({"policies": load_device_policies()})
 
 
+@app.route("/api/audit-log", methods=["GET"])
+def get_audit_log():
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        limit = min(max(int(request.args.get("limit", "100")), 1), 500)
+    except ValueError:
+        return jsonify({"error": "limit must be an integer"}), 400
+    try:
+        return jsonify({"events": read_audit_records(SQUID_AUDIT_LOG, limit), "limit": limit})
+    except Exception as e:
+        print(f"Error reading configuration audit log: {e}")
+        return jsonify({"error": "Could not read the configuration audit log"}), 500
+
+
 @app.route("/api/policies", methods=["POST"])
 def update_policies():
     if not is_authenticated():
@@ -1309,7 +1361,8 @@ def update_policies():
 
     try:
         data = request.json or {}
-        policies = load_device_policies()
+        previous_policies = load_device_policies()
+        policies = copy.deepcopy(previous_policies)
 
         if "ip" in data:
             ip = data["ip"]
@@ -1332,11 +1385,21 @@ def update_policies():
                         policies[ip] = ensure_policy_schema(pol)
 
         ok, message = save_device_policies(policies)
+        audited = record_policy_change(
+            previous_policies,
+            policies,
+            request_audit_actor(),
+            "admin_api",
+            ok,
+            message,
+        )
         if not ok:
             # Policies are saved, but Squid rejected the generated config and the
             # previous ACLs were restored. Surface it instead of reporting success.
-            return jsonify({"success": False, "error": message, "policies": policies}), 500
-        return jsonify({"success": True, "message": message, "policies": policies})
+            return jsonify({"success": False, "error": message, "policies": policies,
+                            "audited": audited}), 500
+        return jsonify({"success": True, "message": message, "policies": policies,
+                        "audited": audited})
     except Exception as e:
         print(f"Error in update_policies API: {e}")
         import traceback
@@ -1582,7 +1645,23 @@ def daily_expiration_task():
             print("[expiry] Stale 'Today Only' unblock window detected — recompiling ACLs.")
             # load_device_policies() clears the stale slots via ensure_policy_schema;
             # saving persists the cleared state and regenerates rules.acl.
-            ok, message = save_device_policies(load_device_policies())
+            with open(DEVICE_POLICIES_PATH, "r") as f:
+                before = json.load(f)
+            expired = load_device_policies()
+            ok, message = save_device_policies(expired)
+            record_policy_change(
+                before,
+                expired,
+                {
+                    "display_name": "Automatic policy expiry",
+                    "username": "",
+                    "client_ip": "",
+                    "authentication": "system",
+                },
+                "daily_expiration_task",
+                ok,
+                message,
+            )
             if not ok:
                 print(f"[expiry] Recompile failed: {message}")
         except Exception as e:

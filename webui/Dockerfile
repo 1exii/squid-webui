@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY app.py .
 COPY traffic_analytics.py .
+COPY config_audit.py .
 COPY templates/ templates/
 COPY static/ static/
 

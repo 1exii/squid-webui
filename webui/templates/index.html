@@ -24,6 +24,7 @@
                 {% if admin_visible %}
                 <button id="nav-tab-admin" class="nav-tab-btn">⚙️ Access Control Admin</button>
                 <button id="nav-tab-activity" class="nav-tab-btn">📊 Website Activity</button>
+                <button id="nav-tab-audit" class="nav-tab-btn">🧾 Change Log</button>
                 {% endif %}
             </div>
             {% if admin_visible %}
@@ -444,6 +445,39 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                     <div class="empty-icon">📭</div>
                     <h3>No activity loaded</h3>
                     <p>Select a client and date above.</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Admin View: append-only Squid configuration audit trail -->
+        <main id="audit-screen" class="main-content hidden">
+            <div class="activity-toolbar glass-panel">
+                <div class="toolbar-title">
+                    <h2>Squid Configuration Change Log</h2>
+                    <p>Exact before-and-after policy changes, the responsible user or trusted admin client, source IP, and server timestamp.</p>
+                </div>
+                <button id="audit-refresh-btn" class="btn btn-secondary">↻ Refresh</button>
+            </div>
+            <div id="audit-error" class="error-banner hidden"></div>
+            <div class="activity-results glass-panel">
+                <div class="table-responsive">
+                    <table class="activity-table audit-table">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Changed by</th>
+                                <th>Admin client</th>
+                                <th>Configuration change</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-table-body"></tbody>
+                    </table>
+                </div>
+                <div id="audit-empty-state" class="empty-state">
+                    <div class="empty-icon">🧾</div>
+                    <h3>No configuration changes recorded</h3>
+                    <p>New policy changes will appear here.</p>
                 </div>
             </div>
         </main>

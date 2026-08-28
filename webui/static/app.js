@@ -13,9 +13,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const navTabOnboarding    = document.getElementById('nav-tab-onboarding');
     const navTabAdmin         = document.getElementById('nav-tab-admin');
     const navTabActivity      = document.getElementById('nav-tab-activity');
+    const navTabAudit         = document.getElementById('nav-tab-audit');
     const onboardingScreen    = document.getElementById('onboarding-screen');
     const adminScreen         = document.getElementById('admin-screen');
     const activityScreen      = document.getElementById('activity-screen');
+    const auditScreen         = document.getElementById('audit-screen');
     const userBadge           = document.getElementById('user-badge');
     const currentUserSpan     = document.getElementById('current-user');
     const authActionBtn       = document.getElementById('auth-action-btn');
@@ -54,6 +56,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const activitySiteCount     = document.getElementById('activity-site-count');
     const activityRequestCount  = document.getElementById('activity-request-count');
     const activityBlockedCount  = document.getElementById('activity-blocked-count');
+
+    // Configuration audit trail
+    const auditRefreshBtn       = document.getElementById('audit-refresh-btn');
+    const auditTableBody        = document.getElementById('audit-table-body');
+    const auditEmptyState       = document.getElementById('audit-empty-state');
+    const auditError            = document.getElementById('audit-error');
 
     // Section 1: Always Block
     const alwaysBlockCheckboxes  = document.getElementById('always-block-checkboxes');
@@ -106,6 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentDeviceIp  = '';
     let adminDataLoaded  = false;
     let activityData     = null;
+    let auditEvents      = [];
     let activityClientsLoaded = false;
     let requestedProtectedView = 'admin';
     const expandedActivitySites = new Set();
@@ -281,9 +290,11 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabOnboarding.classList.add('active');
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
+        navTabAudit && navTabAudit.classList.remove('active');
         onboardingScreen && onboardingScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
         activityScreen && activityScreen.classList.add('hidden');
+        auditScreen && auditScreen.classList.add('hidden');
     });
     navTabAdmin && navTabAdmin.addEventListener('click', () => {
         requestedProtectedView = 'admin';
@@ -295,14 +306,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isAuthenticated) { authModal.classList.remove('hidden'); }
         else { switchToActivity(); }
     });
+    navTabAudit && navTabAudit.addEventListener('click', () => {
+        requestedProtectedView = 'audit';
+        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        else { switchToAudit(); }
+    });
 
     function switchToAdmin() {
         navTabAdmin && navTabAdmin.classList.add('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
+        navTabAudit && navTabAudit.classList.remove('active');
         adminScreen && adminScreen.classList.remove('hidden');
         onboardingScreen && onboardingScreen.classList.add('hidden');
         activityScreen && activityScreen.classList.add('hidden');
+        auditScreen && auditScreen.classList.add('hidden');
         if (!adminDataLoaded) loadAdminData();
     }
 
@@ -310,15 +328,29 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabActivity && navTabActivity.classList.add('active');
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
+        navTabAudit && navTabAudit.classList.remove('active');
         activityScreen && activityScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
         onboardingScreen && onboardingScreen.classList.add('hidden');
+        auditScreen && auditScreen.classList.add('hidden');
         if (activityDateInput && !activityDateInput.value) {
             activityDateInput.value = localToday();
             activityDateInput.max = localToday();
             activityDateInput.min = localDaysAgo(activityRetentionDays);
         }
         loadActivityClients();
+    }
+
+    function switchToAudit() {
+        navTabAudit && navTabAudit.classList.add('active');
+        navTabAdmin && navTabAdmin.classList.remove('active');
+        navTabActivity && navTabActivity.classList.remove('active');
+        navTabOnboarding && navTabOnboarding.classList.remove('active');
+        auditScreen && auditScreen.classList.remove('hidden');
+        adminScreen && adminScreen.classList.add('hidden');
+        activityScreen && activityScreen.classList.add('hidden');
+        onboardingScreen && onboardingScreen.classList.add('hidden');
+        loadAuditLog();
     }
 
     async function loadActivityClients() {
@@ -462,6 +494,175 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    function auditChangeSummary(change) {
+        const target = `${change.hostname || change.device_ip} (${change.device_ip})`;
+        if (change.kind === 'device_added') return `${target}: device policy added`;
+        if (change.kind === 'device_removed') return `${target}: device policy removed`;
+        const labels = {
+            hostname: 'device name',
+            ssl_bump_mode: 'HTTPS inspection mode',
+            always_block: 'Always Block categories',
+            always_allow: 'Always Allow categories',
+            default_block: 'Default Block categories or schedules'
+        };
+        const fields = (change.changed_fields || []).map(field => labels[field] || field);
+        return `${target}: changed ${fields.join(', ') || 'policy settings'}`;
+    }
+
+    function alignJsonLines(before, after) {
+        const beforeLines = JSON.stringify(before, null, 2).split('\n');
+        const afterLines = JSON.stringify(after, null, 2).split('\n');
+        const beforeLength = beforeLines.length;
+        const afterLength = afterLines.length;
+        const matches = [];
+
+        // Most policy edits replace values without changing the JSON shape.
+        // Positional alignment is exact here and avoids ambiguous matching of
+        // repeated schedule values such as hundreds of adjacent `false` lines.
+        if (beforeLength === afterLength) {
+            return beforeLines.map((beforeLine, index) => {
+                const same = beforeLine === afterLines[index];
+                return {
+                    before: beforeLine,
+                    after: afterLines[index],
+                    beforeNumber: index + 1,
+                    afterNumber: index + 1,
+                    beforeClass: same ? 'same' : 'changed',
+                    afterClass: same ? 'same' : 'changed'
+                };
+            });
+        }
+
+        // LCS keeps unchanged JSON lines aligned when fields or array entries move.
+        // Extremely large policies use positional alignment to cap browser memory.
+        if (beforeLength * afterLength <= 1000000) {
+            const lengths = Array.from(
+                { length: beforeLength + 1 },
+                () => new Uint16Array(afterLength + 1)
+            );
+            for (let left = beforeLength - 1; left >= 0; left--) {
+                for (let right = afterLength - 1; right >= 0; right--) {
+                    lengths[left][right] = beforeLines[left] === afterLines[right]
+                        ? lengths[left + 1][right + 1] + 1
+                        : Math.max(lengths[left + 1][right], lengths[left][right + 1]);
+                }
+            }
+            let left = 0, right = 0;
+            while (left < beforeLength && right < afterLength) {
+                if (beforeLines[left] === afterLines[right]) {
+                    matches.push([left, right]);
+                    left++; right++;
+                } else if (lengths[left + 1][right] >= lengths[left][right + 1]) {
+                    left++;
+                } else {
+                    right++;
+                }
+            }
+        }
+
+        const rows = [];
+        let beforeIndex = 0, afterIndex = 0;
+        const appendGap = (beforeEnd, afterEnd) => {
+            const count = Math.max(beforeEnd - beforeIndex, afterEnd - afterIndex);
+            for (let offset = 0; offset < count; offset++) {
+                const hasBefore = beforeIndex + offset < beforeEnd;
+                const hasAfter = afterIndex + offset < afterEnd;
+                rows.push({
+                    before: hasBefore ? beforeLines[beforeIndex + offset] : '',
+                    after: hasAfter ? afterLines[afterIndex + offset] : '',
+                    beforeNumber: hasBefore ? beforeIndex + offset + 1 : '',
+                    afterNumber: hasAfter ? afterIndex + offset + 1 : '',
+                    beforeClass: hasBefore ? (hasAfter ? 'changed' : 'removed') : 'empty',
+                    afterClass: hasAfter ? (hasBefore ? 'changed' : 'added') : 'empty'
+                });
+            }
+            beforeIndex = beforeEnd;
+            afterIndex = afterEnd;
+        };
+
+        matches.forEach(([matchedBefore, matchedAfter]) => {
+            appendGap(matchedBefore, matchedAfter);
+            rows.push({
+                before: beforeLines[matchedBefore],
+                after: afterLines[matchedAfter],
+                beforeNumber: matchedBefore + 1,
+                afterNumber: matchedAfter + 1,
+                beforeClass: 'same',
+                afterClass: 'same'
+            });
+            beforeIndex = matchedBefore + 1;
+            afterIndex = matchedAfter + 1;
+        });
+        appendGap(beforeLength, afterLength);
+        return rows;
+    }
+
+    function renderAuditDiff(eventIndex) {
+        const event = auditEvents[eventIndex];
+        if (!event) return '<p>Audit event is no longer available.</p>';
+        return (event.changes || []).map(change => {
+            const rows = alignJsonLines(change.before, change.after);
+            const target = `${change.hostname || change.device_ip} (${change.device_ip})`;
+            return `<section class="audit-device-diff">
+                <h4>${escapeHtml(target)}</h4>
+                <div class="audit-diff-legend"><span class="removed">Removed</span><span class="added">Added</span></div>
+                <div class="audit-diff-grid">
+                    <div class="audit-diff-heading">Before</div>
+                    <div class="audit-diff-heading">After</div>
+                    ${rows.map(row => `
+                        <div class="audit-diff-line ${row.beforeClass}"><span>${row.beforeNumber}</span><code>${escapeHtml(row.before)}</code></div>
+                        <div class="audit-diff-line ${row.afterClass}"><span>${row.afterNumber}</span><code>${escapeHtml(row.after)}</code></div>
+                    `).join('')}
+                </div>
+            </section>`;
+        }).join('');
+    }
+
+    async function loadAuditLog() {
+        if (!auditTableBody) return;
+        auditRefreshBtn && (auditRefreshBtn.disabled = true);
+        auditError && auditError.classList.add('hidden');
+        try {
+            const response = await fetch('/api/audit-log?limit=100');
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Could not load the change log.');
+            auditEvents = data.events || [];
+            auditTableBody.innerHTML = auditEvents.map((event, eventIndex) => {
+                const actor = event.actor || {};
+                const summaries = (event.changes || []).map(auditChangeSummary);
+                const timestamp = new Date(event.timestamp).toLocaleString();
+                const resultClass = event.success ? 'audit-result-success' : 'audit-result-failed';
+                const resultText = event.success ? 'Saved' : 'Saved; compile failed';
+                return `<tr>
+                    <td class="audit-time">${escapeHtml(timestamp)}</td>
+                    <td class="audit-actor">${escapeHtml(actor.display_name || 'Unknown')}</td>
+                    <td><code>${escapeHtml(actor.client_ip || 'System')}</code></td>
+                    <td class="audit-change-cell">
+                        ${summaries.map(summary => `<div>${escapeHtml(summary)}</div>`).join('')}
+                    </td>
+                    <td><span class="${resultClass}">${escapeHtml(resultText)}</span></td>
+                </tr>
+                <tr class="audit-diff-table-row">
+                    <td colspan="5">
+                        <details class="audit-diff-details" data-audit-index="${eventIndex}">
+                            <summary>Compare before and after</summary>
+                            <div class="audit-diff-content"></div>
+                        </details>
+                    </td>
+                </tr>`;
+            }).join('');
+            auditEmptyState && auditEmptyState.classList.toggle('hidden', auditEvents.length > 0);
+            auditTableBody.closest('table')?.classList.toggle('hidden', auditEvents.length === 0);
+        } catch (error) {
+            if (auditError) {
+                auditError.textContent = error.message;
+                auditError.classList.remove('hidden');
+            }
+        } finally {
+            auditRefreshBtn && (auditRefreshBtn.disabled = false);
+        }
+    }
+
     activityClientSelect && activityClientSelect.addEventListener('change', loadActivity);
     activityDateInput && activityDateInput.addEventListener('change', loadActivity);
     activityRefreshBtn && activityRefreshBtn.addEventListener('click', loadActivity);
@@ -474,6 +675,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (expandedActivitySites.has(siteKey)) expandedActivitySites.delete(siteKey);
         else expandedActivitySites.add(siteKey);
         renderActivity();
+    });
+    auditRefreshBtn && auditRefreshBtn.addEventListener('click', loadAuditLog);
+    auditTableBody && auditTableBody.addEventListener('click', event => {
+        const summary = event.target.closest('.audit-diff-details > summary');
+        if (!summary) return;
+        const details = summary.parentElement;
+        const content = details.querySelector('.audit-diff-content');
+        if (content && !content.dataset.rendered) {
+            content.innerHTML = renderAuditDiff(Number(details.dataset.auditIndex));
+            content.dataset.rendered = 'true';
+        }
     });
 
     if (guideTabWindows && guideTabUbuntu) {
@@ -522,6 +734,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 isAuthenticated = true; currentUser = username;
                 updateAuthUI(); authModal.classList.add('hidden');
                 if (requestedProtectedView === 'activity') switchToActivity();
+                else if (requestedProtectedView === 'audit') switchToAudit();
                 else switchToAdmin();
             } else {
                 loginError.textContent = data.error || 'Authentication failed.';
@@ -1092,13 +1305,19 @@ document.addEventListener('DOMContentLoaded', () => {
         clearTimeout(autoSaveTimer);
         autoSaveTimer = setTimeout(async () => {
             try {
-                await fetch('/api/policies', {
+                const response = await fetch('/api/policies', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ policies: devicePolicies })
                 });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.success === false) {
+                    throw new Error(data.error || 'Auto-save failed.');
+                }
                 if (saveStatusText) saveStatusText.textContent = '💾 Auto-saved.';
-            } catch (_) {}
+            } catch (error) {
+                if (saveStatusText) saveStatusText.textContent = `❌ ${error.message}`;
+            }
         }, 800);
     }
 
