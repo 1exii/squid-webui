@@ -630,22 +630,35 @@ document.addEventListener('DOMContentLoaded', () => {
             auditTableBody.innerHTML = auditEvents.map((event, eventIndex) => {
                 const actor = event.actor || {};
                 const summaries = (event.changes || []).map(auditChangeSummary);
+                const eventCount = Number(event.event_count || 1);
                 const timestamp = new Date(event.timestamp).toLocaleString();
+                const firstTimestamp = new Date(event.first_timestamp || event.timestamp).toLocaleString();
+                const timestampHtml = eventCount > 1
+                    ? `<div>${escapeHtml(firstTimestamp)}</div><div class="audit-time-end">to ${escapeHtml(timestamp)}</div>`
+                    : escapeHtml(timestamp);
+                const combinedNote = eventCount > 1
+                    ? `<span class="audit-combined-badge">${eventCount} changes combined</span>`
+                    : '';
+                const netZeroNote = event.net_zero
+                    ? '<div class="audit-net-zero">Net result returned to the starting configuration.</div>'
+                    : '';
                 const resultClass = event.success ? 'audit-result-success' : 'audit-result-failed';
-                const resultText = event.success ? 'Saved' : 'Saved; compile failed';
+                const resultText = event.success ? 'Saved' : (eventCount > 1 ? 'Includes compile failure' : 'Saved; compile failed');
                 return `<tr>
-                    <td class="audit-time">${escapeHtml(timestamp)}</td>
+                    <td class="audit-time">${timestampHtml}</td>
                     <td class="audit-actor">${escapeHtml(actor.display_name || 'Unknown')}</td>
                     <td><code>${escapeHtml(actor.client_ip || 'System')}</code></td>
                     <td class="audit-change-cell">
+                        ${combinedNote}
                         ${summaries.map(summary => `<div>${escapeHtml(summary)}</div>`).join('')}
+                        ${netZeroNote}
                     </td>
                     <td><span class="${resultClass}">${escapeHtml(resultText)}</span></td>
                 </tr>
                 <tr class="audit-diff-table-row">
                     <td colspan="5">
                         <details class="audit-diff-details" data-audit-index="${eventIndex}">
-                            <summary>Compare before and after</summary>
+                            <summary>${eventCount > 1 ? 'Compare first before and final after' : 'Compare before and after'}</summary>
                             <div class="audit-diff-content"></div>
                         </details>
                     </td>

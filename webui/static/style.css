@@ -659,6 +659,32 @@ select {
     font-weight: 600;
 }
 
+.audit-time-end {
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.audit-combined-badge {
+    display: inline-block;
+    margin-bottom: 7px;
+    padding: 3px 8px;
+    border: 1px solid rgba(99, 102, 241, 0.32);
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.13);
+    color: #c7d2fe;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.audit-net-zero {
+    margin-top: 6px;
+    color: #fcd34d;
+    font-size: 11px;
+    font-style: italic;
+}
+
 .audit-change-cell > div + div {
     margin-top: 5px;
 }
