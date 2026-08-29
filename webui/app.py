@@ -12,6 +12,7 @@ from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
 from flask import Flask, render_template, request, jsonify, session, send_file
 from config_audit import (
     append_audit_record,
+    combine_audit_records,
     make_audit_record,
     policy_changes,
     read_audit_records,
@@ -1348,7 +1349,9 @@ def get_audit_log():
     except ValueError:
         return jsonify({"error": "limit must be an integer"}), 400
     try:
-        return jsonify({"events": read_audit_records(SQUID_AUDIT_LOG, limit), "limit": limit})
+        raw_events = read_audit_records(SQUID_AUDIT_LOG, None)
+        events = combine_audit_records(raw_events)[:limit]
+        return jsonify({"events": events, "limit": limit})
     except Exception as e:
         print(f"Error reading configuration audit log: {e}")
         return jsonify({"error": "Could not read the configuration audit log"}), 500

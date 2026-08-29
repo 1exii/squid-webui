@@ -111,6 +111,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - Every semantic policy change from `POST /api/policies` is appended to the persistent `configuration_audit.jsonl` file on the shared Squid config volume; identical auto-save requests do not create noise.
 - Each event records the server-local timestamp, NAS username or trusted-admin-client identity, source admin IP, success state, affected devices and fields, and exact before/after policy values.
 - Automatic midnight expiration is recorded as a system actor. Failed ACL compilation is also recorded because `device_policies.json` was changed even when generated ACL files were rolled back.
+- The API combines two or more changes into one displayed entry when they have the same authenticated identity, source admin-client IP, and single target device and all occur within two minutes of the first change, even if another device was edited between them. Raw JSONL events remain append-only and unmodified; automatic system events and multi-device changes are never combined.
 - The authenticated Change Log view displays the newest 100 entries with a lazy-rendered, side-by-side JSON comparison. Removed values are highlighted red and added values green while unchanged lines remain aligned. `SQUID_AUDIT_LOG` can override the storage path.
 
 ---
