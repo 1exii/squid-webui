@@ -49,5 +49,6 @@ video-fa.scdn.co
 video4-fa.scdn.co
 canvas-video.scdn.co
 video.spotifycdn.com
+video-cf.spotifycdn.com
 video.scdn.co
 sp-video.scdn.co
