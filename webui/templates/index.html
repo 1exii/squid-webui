@@ -57,7 +57,7 @@
                     </ul>
                 </section>
                 <section class="guide-section">
-                    <h4>Windows and Ubuntu Use the Same CA Differently</h4>
+                    <h4>Platform-Specific CA and Proxy Setup</h4>
                     <div class="onboarding-platform-grid">
                         <div class="method-box">
                             <h5>🪟 Windows 10 / 11 / Server</h5>
@@ -67,6 +67,10 @@
                             <h5>🐧 Ubuntu / Debian</h5>
                             <p>Download the <code>.pem</code> certificate and add it to the system CA store with <code>update-ca-certificates</code>. The Ubuntu installer also imports it into an existing Chrome/NSS database, installs a managed Chrome/Chromium PAC policy, and configures the active GNOME session when available.</p>
                         </div>
+                        <div class="method-box">
+                            <h5>📱 Android Phones &amp; Tablets</h5>
+                            <p>Download the <code>.crt</code> certificate and install it under <strong>Settings &rarr; Security &rarr; Encryption &amp; credentials &rarr; Install a certificate &rarr; CA certificate</strong>. Then configure Wi-Fi <strong>Proxy Auto-Config (PAC)</strong> with the PAC URL, or rely on router transparent redirection.</p>
+                        </div>
                     </div>
                 </section>
                 <section class="guide-section onboarding-download-section">
@@ -74,7 +78,7 @@
                     <p>Choose the certificate format for the client operating system. Both downloads provide this Squid deployment's active Root CA; the platform guides below show the correct trust store and installation steps.</p>
                     <div class="download-actions">
                         <a href="/download/cert.crt" class="btn btn-primary" download="squid-ca.crt">
-                            <span>⬇️ Download CA Cert (.crt) for Windows / macOS / iOS</span>
+                            <span>⬇️ Download CA Cert (.crt) for Android / Windows / macOS / iOS</span>
                         </a>
                         <a href="/download/cert.pem" class="btn btn-accent" download="squid-ca.pem">
                             <span>⬇️ Download CA Cert (.pem) for Linux</span>
@@ -89,6 +93,7 @@
             <div class="platform-nav" role="tablist" aria-label="Client onboarding guides">
                 <button id="guide-tab-windows" class="platform-tab active" type="button" role="tab" aria-selected="true" aria-controls="guide-content-windows" data-guide-target="windows">🪟 Windows Setup Guide</button>
                 <button id="guide-tab-ubuntu" class="platform-tab" type="button" role="tab" aria-selected="false" aria-controls="guide-content-ubuntu" data-guide-target="ubuntu">🐧 Ubuntu Linux Setup Guide</button>
+                <button id="guide-tab-android" class="platform-tab" type="button" role="tab" aria-selected="false" aria-controls="guide-content-android" data-guide-target="android">📱 Android Phone Setup Guide</button>
                 <button id="guide-tab-troubleshooting" class="platform-tab" type="button" role="tab" aria-selected="false" aria-controls="guide-content-troubleshooting" data-guide-target="troubleshooting">🩺 Troubleshooting</button>
             </div>
 
@@ -161,10 +166,64 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                 </section>
             </div>
 
+            <div id="guide-content-android" class="guide-card glass-panel hidden" role="tabpanel" aria-labelledby="guide-tab-android" data-guide-panel="android">
+                <div class="guide-header">
+                    <h3>Android Phone &amp; Tablet Client Onboarding Manual</h3>
+                    <span class="badge badge-android">Target Platform: Android 10+ / Samsung / Pixel</span>
+                </div>
+                <section class="guide-section">
+                    <h4>1. Download &amp; Install Root CA Certificate</h4>
+                    <p>Android requires installing user CA certificates through system security settings to enable HTTPS trust for mobile browsers.</p>
+                    <div class="download-actions">
+                        <a href="/download/cert.crt" class="btn btn-primary" download="squid-ca.crt">
+                            <span>⬇️ Download CA Cert (.crt) to Phone</span>
+                        </a>
+                    </div>
+                    <div class="method-box">
+                        <h5>Step-by-Step Certificate Installation:</h5>
+                        <ol>
+                            <li>Tap the download button above to save <code>squid-ca.crt</code> to your phone's <strong>Downloads</strong> folder.</li>
+                            <li>Open <strong>Settings</strong> on your Android device.</li>
+                            <li>Navigate to <strong>Security &amp; privacy</strong> (or <strong>Biometrics and security</strong> &rarr; <strong>Other security settings</strong> on Samsung Galaxy devices).</li>
+                            <li>Tap <strong>More security settings</strong> &rarr; <strong>Encryption &amp; credentials</strong> &rarr; <strong>Install a certificate</strong> &rarr; <strong>CA certificate</strong>.</li>
+                            <li>If prompted with a system warning (<em>"Your data won't be private"</em>), tap <strong>Install anyway</strong>.</li>
+                            <li>Authenticate with your PIN/Fingerprint, browse to your <strong>Downloads</strong> folder, and select <code>squid-ca.crt</code>.</li>
+                            <li>Confirm installation. The certificate will appear under <strong>User credentials</strong> or <strong>Trusted credentials &rarr; User</strong>.</li>
+                        </ol>
+                    </div>
+                </section>
+                <section class="guide-section">
+                    <h4>2. Configure Proxy Routing (Choose Method A or B)</h4>
+                    <div class="method-box">
+                        <h5>Method A: Wi-Fi Proxy Auto-Config (PAC) (Recommended for Browsers)</h5>
+                        <ol>
+                            <li>Open <strong>Settings &rarr; Network &amp; internet &rarr; Internet</strong> (or <strong>Wi-Fi</strong>).</li>
+                            <li>Tap the <strong>Settings gear</strong> or long-press your connected Home Wi-Fi network &rarr; tap <strong>Edit / Modify network</strong> (pencil icon).</li>
+                            <li>Expand <strong>Advanced options</strong>.</li>
+                            <li>Under <strong>Proxy</strong>, select <strong>Proxy Auto-Config (PAC)</strong>.</li>
+                            <li>In the <strong>PAC URL</strong> field, enter: <code>{{ pac_url }}</code></li>
+                            <li>Tap <strong>Save</strong>. Mobile browsers (Chrome, Edge, Brave, Opera) will now route through Squid while keeping LAN traffic direct.</li>
+                        </ol>
+                    </div>
+                    <div class="method-box">
+                        <h5>Method B: Transparent Router Redirection (Zero Phone Config)</h5>
+                        <p>If your phone's static IP is registered in the router's <code>proxy-hosts.conf</code>, the router automatically intercepts HTTP (80), HTTPS (443), and Spotify (4070) traffic with no manual Wi-Fi proxy configuration required on the phone.</p>
+                    </div>
+                </section>
+                <section class="guide-section">
+                    <h4>3. Important Android Settings &amp; App Behavior</h4>
+                    <ul>
+                        <li><strong>Private DNS (DoT):</strong> Android enables Private DNS by default, which bypasses local DNS resolvers. If using local DNS/Pi-hole rules on your home network, go to <strong>Settings &rarr; Network &amp; internet &rarr; Private DNS</strong> and set it to <strong>Off</strong> while connected to Home Wi-Fi.</li>
+                        <li><strong>Apps with Certificate Pinning:</strong> Android apps (targeting Android 7+) do not trust user-installed CAs by default. Because our Squid proxy is configured for <strong>Selective SSL Bumping (Splice by Default)</strong>, pinned apps like Spotify, banking apps, and Google Play are passed through directly as raw TLS and continue working without SSL handshake errors.</li>
+                        <li><strong>Firefox for Android:</strong> Firefox uses its own internal trust store. To enable user CAs on Firefox Nightly/Beta, navigate to <code>about:config</code> and set <code>security.enterprise_roots.enabled</code> to <code>true</code>.</li>
+                    </ul>
+                </section>
+            </div>
+
             <div id="guide-content-troubleshooting" class="guide-card glass-panel hidden" role="tabpanel" aria-labelledby="guide-tab-troubleshooting" data-guide-panel="troubleshooting">
                 <div class="guide-header">
                     <h3>Client Onboarding Troubleshooting</h3>
-                    <span class="badge">Windows &amp; Ubuntu</span>
+                    <span class="badge">Windows, Ubuntu &amp; Android</span>
                 </div>
                 <section class="guide-section">
                     <h4>Verification &amp; Testing</h4>
@@ -177,12 +236,17 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                         <h5>Ubuntu</h5>
                         <pre><code>curl -v https://google.com</code></pre>
                     </div>
+                    <div class="method-box">
+                        <h5>Android</h5>
+                        <p>Open Chrome or Edge on Android and visit <code>https://google.com</code>. Tap the lock/tune icon in the address bar &rarr; <strong>Connection is secure</strong> &rarr; <strong>Certificate is valid</strong> and verify it is signed by the Squid Root CA.</p>
+                    </div>
                 </section>
                 <section class="guide-section">
                     <h4>Browser Trust &amp; HSTS</h4>
                     <ul>
                         <li><strong>Edge &amp; Chrome:</strong> Restart the browser after installing the Root CA. If a domain's old HSTS state is cached, visit <code>chrome://net-internals/#hsts</code> and delete its domain security policy.</li>
                         <li><strong>Firefox:</strong> In <code>about:config</code>, set <code>security.enterprise_roots.enabled</code> to <code>true</code>, then restart Firefox so it uses the operating system's trusted Root CAs.</li>
+                        <li><strong>Android Private DNS:</strong> If websites fail to resolve or bypass filtering, set <strong>Settings &rarr; Network &amp; internet &rarr; Private DNS</strong> to <strong>Off</strong>.</li>
                         <li><strong>Certificate warnings in every browser:</strong> Reinstall the correct Root CA in the machine or system trust store, not only the current user's personal certificate store.</li>
                     </ul>
                 </section>
