@@ -1,0 +1,46 @@
+# Music & Audio Streaming Platforms for Squid Proxy
+# Matches major music platforms, web players, audio CDNs & client APIs
+
+# Spotify Core Services, Web Player, Client APIs, and Audio CDNs
+.spotify.com
+.spotifycdn.com
+.spotifycdn.net
+.scdn.co
+.spoti.fi
+.spotify.map.fastly.net
+.spotify.map.fastlylb.net
+audio-ak-spotify-com.akamaized.net
+audio-akp-spotify-com.akamaized.net
+audio-akpcw-cdn-spotify-com.akamaized.net
+audio4-ak-spotify-com.akamaized.net
+audio-fa.scdn.co
+audio4-fa.scdn.co
+heads-ak-spotify-com.akamaized.net
+heads4-ak-spotify-com.akamaized.net
+heads-fa.scdn.co
+heads4-fa.scdn.co
+
+# Apple Music
+.music.apple.com
+
+# SoundCloud
+.soundcloud.com
+.sndcdn.com
+
+# Pandora
+.pandora.com
+
+# Tidal
+.tidal.com
+
+# Deezer
+.deezer.com
+
+# Bandcamp
+.bandcamp.com
+
+# Amazon Music
+.music.amazon.com
+
+# Qobuz
+.qobuz.com

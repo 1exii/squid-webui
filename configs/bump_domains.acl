@@ -1,4 +1,5 @@
-# Auto-generated: Domains requiring SSL Bumping for deep URL path rules
+# Auto-generated: domains requiring SSL Bumping for deep URL path rules.
+# Source: block-lists/*.txt entries of the form 'domain/path'.
 .opera.com
 .roblox.com
 .steamcommunity.com
