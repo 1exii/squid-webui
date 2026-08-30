@@ -33,6 +33,11 @@ acl localnet src __LOCAL_NETWORKS__
 # IPs may be separated by spaces.
 dns_nameservers __SQUID_DNS_SERVERS__
 
+# QNAP Container Station stops containers with a 10-second timeout. Do not
+# spend Squid's default 30 seconds draining active connections during shutdown;
+# interrupt them so the proxy exits cleanly before QNAP sends SIGKILL.
+shutdown_lifetime 1 second
+
 # Define standard ports for SSL/TLS and other safe protocols.
 acl SSL_ports port 443 __SQUID_HTTPS_PORT__ 4070
 acl Safe_ports port 80          # http
