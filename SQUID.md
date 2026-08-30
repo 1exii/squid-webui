@@ -186,6 +186,9 @@ When the admin clicks **Save & Apply** in the Web UI:
 | `configs/domains_*.acl` | Auto-Generated ACL | Web UI (`app.py`) | Deduplicated clean domain lists per blocklist category. |
 | `block-lists/*.txt` | Raw Text Files | Administrator | Category domain and URL path blocklists. |
 | `webui/app.py` | Python Application | Git | Flask Web UI backend API and ACL compiler. |
+| `webui/traffic_analytics.py` | Python Application | Web UI | Per-client daily summaries and weekly/monthly aggregation. |
+| `webui/overall_analytics.py` | Python Application | Web UI | GoAccess-style all-client traffic, bandwidth, result, method, and hourly summaries. |
+| `configs/activity-reports/` | Private Runtime Data | Web UI | Per-client and overall daily, weekly, and monthly snapshots retained for 365 days. |
 
 ---
 
@@ -217,6 +220,20 @@ ssh "$QNAP_SERVER" "$QNAP_DOCKER exec $SQUID_CONTAINER_NAME cat /etc/squid/confi
 ```bash
 ./squid-mgmt.sh catlogs
 ```
+
+### 6. View archived website activity
+
+Open the authenticated **Website Activity** tab in the Web UI. Use the Day,
+Week, and Month buttons plus the previous/current/next controls to navigate.
+Completed daily reports are archived before the rotating Squid log expires;
+weekly and monthly reports are generated from those daily snapshots and all
+report types are retained for 365 days. The first deployment can backfill only
+the dates still present in the approximately 30-day Squid log window.
+
+Open **Overall Analytics** for the global counterpart to the former
+`squid-mgmt.sh logs` GoAccess report. It shows all-client request and bandwidth
+totals, cache and block outcomes, top destinations, client traffic, Squid result
+codes, request methods, and hourly volume with the same retained period controls.
 
 ---
 

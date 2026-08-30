@@ -1,9 +1,9 @@
 # Product Specification & Architecture Document: Squid Proxy Center Web UI
 
-> **Document Version:** 1.2.0
-> **Last Updated:** 2026-08-22
+> **Document Version:** 1.4.0
+> **Last Updated:** 2026-08-29
 > **Status:** Active / User Editable Specification  
-> **Target Path:** `personal/home-network/squid/webui`
+> **Target Path:** `squid-webui/webui`
 
 ---
 
@@ -98,17 +98,25 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - **Session Management:** Secure HTTP-only Flask session cookies.
 - **Protected APIs:** Clients outside `ADMIN_CLIENT_IPS` must have an authenticated session to read or modify Admin data.
 
-### 3.4 Daily Website Activity (Admin Only)
+### 3.4 Website Activity Reports (Admin Only)
 - Reads the active and numbered rotated Squid native `access.log` files from a read-only WebUI container mount.
-- Lets an administrator select a configured client and any retained date from the last 100 days, with previous/next-day controls that cannot advance beyond today.
+- Lets an administrator select a configured client and view daily, Monday-through-Sunday weekly, or calendar-month reports from the last 365 days.
+- Provides Day/Week/Month quick selectors and previous/current/next navigation that reloads immediately and cannot advance beyond the current period.
 - Rotates Squid logs automatically at local midnight and keeps 30 numbered daily generations on the persistent log volume.
-- Generates and stores per-client reports for completed days on the persistent configuration volume, backfills days still present in the 30-day log window, and removes saved reports after 100 days.
+- Generates private per-client reports for completed days on the persistent configuration volume, backfills days still present in the 30-day log window, and keeps saved reports for 365 days.
+- Generates completed weekly and monthly snapshots from saved daily reports. Current periods combine saved completed days with today's live log; the UI flags incomplete coverage when an older day was never archived.
 - Groups hostname-visible traffic into website/service totals by default. Ordinary subdomains roll up to their registrable domain, while known multi-domain services such as YouTube, Netflix, Roblox, Spotify, Facebook, Instagram, and TikTok also include their first-party CDN/API domains.
 - Each website row can expand into its contributing domain names with per-domain time, category, request, blocked-request, and last-seen details.
 - Estimates active time by assigning the gap until the next proxy request to the current website. Gaps longer than five minutes count as a 30-second tail. This is labeled as an estimate because proxy traffic includes background services and cannot identify foreground screen time.
 - Omits IP-only destinations because they cannot be reliably presented or categorized as websites.
 
-### 3.5 Configuration Change Audit (Admin Only)
+### 3.5 Overall Squid Analytics (Admin Only)
+- Replaces the former `squid-mgmt.sh logs` GoAccess workflow with an authenticated global WebUI report across all clients.
+- Shows requests, bandwidth, unique clients and destinations, cache hits, blocked requests, average response time, hourly traffic, top destinations, client traffic, Squid result codes, and request methods.
+- Stores a separate private daily source summary containing bandwidth and result-code data not present in per-client activity reports, then generates retained weekly and monthly snapshots from those daily summaries.
+- Uses the same 365-day retention, 30-day initial backfill boundary, incomplete-coverage warning, and Day/Week/Month navigation model as Website Activity.
+
+### 3.6 Configuration Change Audit (Admin Only)
 - Every semantic policy change from `POST /api/policies` is appended to the persistent `configuration_audit.jsonl` file on the shared Squid config volume; identical auto-save requests do not create noise.
 - Each event records the server-local timestamp, NAS username or trusted-admin-client identity, source admin IP, success state, affected devices and fields, and exact before/after policy values.
 - Automatic midnight expiration is recorded as a system actor. Failed ACL compilation is also recorded because `device_policies.json` was changed even when generated ACL files were rolled back.

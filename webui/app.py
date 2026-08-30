@@ -18,12 +18,28 @@ from config_audit import (
     read_audit_records,
 )
 from activity_reports import (
+    load_overall_report,
+    load_period_report,
     load_report,
+    load_reports,
+    overall_report_exists,
+    period_report_exists,
+    prune_overall_reports,
+    prune_period_reports,
     prune_reports,
     report_exists,
+    save_overall_report,
+    save_period_reports,
     save_reports,
 )
+from overall_analytics import (
+    aggregate_overall_reports,
+    build_daily_overall_archive,
+)
 from traffic_analytics import (
+    activity_period_bounds,
+    aggregate_activity_archive,
+    aggregate_activity_reports,
     build_daily_activity,
     build_daily_activity_archive,
     empty_daily_activity,
@@ -43,7 +59,7 @@ SQUID_ACTIVITY_REPORT_DIR = os.environ.get(
 SQUID_AUDIT_LOG = os.environ.get(
     "SQUID_AUDIT_LOG", os.path.join(SQUID_CONFIG_DIR, "configuration_audit.jsonl")
 )
-ACTIVITY_RETENTION_DAYS = 100
+ACTIVITY_RETENTION_DAYS = 365
 ACTIVITY_LOG_BACKFILL_DAYS = 30
 
 RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
@@ -1311,17 +1327,71 @@ def get_devices():
     return jsonify({"devices": load_devices_list()})
 
 
+def _activity_dates(period_start, period_end):
+    return [
+        period_start + timedelta(days=offset)
+        for offset in range((period_end - period_start).days + 1)
+    ]
+
+
+def _load_or_generate_daily_reports(target_dates):
+    """Load saved days and backfill missing dates still available in Squid logs."""
+    today = date.today()
+    reports_by_date = {}
+    missing = []
+    generated = False
+
+    for target_date in target_dates:
+        if target_date == today:
+            if not os.path.isfile(SQUID_ACCESS_LOG):
+                continue
+            live = build_daily_activity_archive(
+                SQUID_ACCESS_LOG, SQUID_BLOCKLIST_DIR, [target_date]
+            )
+            reports_by_date[target_date.isoformat()] = live.get(
+                target_date.isoformat(), {}
+            )
+            continue
+
+        found, reports = load_reports(SQUID_ACTIVITY_REPORT_DIR, target_date)
+        if found:
+            reports_by_date[target_date.isoformat()] = reports
+        elif target_date >= today - timedelta(days=ACTIVITY_LOG_BACKFILL_DAYS):
+            missing.append(target_date)
+
+    if missing and os.path.isfile(SQUID_ACCESS_LOG):
+        archive = build_daily_activity_archive(
+            SQUID_ACCESS_LOG, SQUID_BLOCKLIST_DIR, missing
+        )
+        for target_date in missing:
+            reports = archive.get(target_date.isoformat(), {})
+            save_reports(SQUID_ACTIVITY_REPORT_DIR, target_date, reports)
+            reports_by_date[target_date.isoformat()] = reports
+        generated = True
+
+    unavailable = [
+        target_date.isoformat()
+        for target_date in target_dates
+        if target_date.isoformat() not in reports_by_date
+    ]
+    return reports_by_date, unavailable, generated
+
+
 @app.route("/api/activity", methods=["GET"])
 def get_activity():
     if not is_authenticated():
         return jsonify({"error": "Unauthorized"}), 401
 
     date_value = request.args.get("date", today_str()).strip()
+    period = request.args.get("period", "day").strip().lower()
     client_ip = request.args.get("client_ip", "").strip()
     try:
         target_date = datetime.strptime(date_value, "%Y-%m-%d").date()
     except ValueError:
         return jsonify({"error": "date must use YYYY-MM-DD format"}), 400
+
+    if period not in ("day", "week", "month"):
+        return jsonify({"error": "period must be day, week, or month"}), 400
 
     if (target_date > date.today() or
             target_date < date.today() - timedelta(days=ACTIVITY_RETENTION_DAYS - 1)):
@@ -1334,6 +1404,69 @@ def get_activity():
         except OSError:
             return jsonify({"error": "client_ip must be a valid IPv4 address"}), 400
     try:
+        if period != "day":
+            natural_start, natural_end = activity_period_bounds(period, target_date)
+            period_start = max(
+                natural_start,
+                date.today() - timedelta(days=ACTIVITY_RETENTION_DAYS - 1),
+            )
+            period_end = min(natural_end, date.today())
+            can_cache_period = (
+                period_start == natural_start and
+                period_end == natural_end and
+                period_end < date.today()
+            )
+
+            with ACTIVITY_REPORT_LOCK:
+                if can_cache_period:
+                    cache_found, report = load_period_report(
+                        SQUID_ACTIVITY_REPORT_DIR,
+                        period,
+                        period_start,
+                        period_end,
+                        client_ip,
+                    )
+                    if cache_found:
+                        if report is None:
+                            empty_days = {
+                                day.isoformat(): {}
+                                for day in _activity_dates(period_start, period_end)
+                            }
+                            report = aggregate_activity_reports(
+                                empty_days, period, period_start, period_end, client_ip
+                            )
+                        report["report_source"] = "saved"
+                        report["coverage_complete"] = True
+                        return jsonify(report)
+
+                target_dates = _activity_dates(period_start, period_end)
+                daily_reports, unavailable, generated = (
+                    _load_or_generate_daily_reports(target_dates)
+                )
+                result = aggregate_activity_reports(
+                    daily_reports, period, period_start, period_end, client_ip
+                )
+                result["coverage_complete"] = not unavailable
+                result["unavailable_days"] = len(unavailable)
+                if period_end == date.today():
+                    result["report_source"] = "live"
+                else:
+                    result["report_source"] = "generated" if generated else "saved-daily"
+
+                if can_cache_period and not unavailable:
+                    period_reports = aggregate_activity_archive(
+                        daily_reports, period, period_start, period_end
+                    )
+                    save_period_reports(
+                        SQUID_ACTIVITY_REPORT_DIR,
+                        period,
+                        period_start,
+                        period_end,
+                        period_reports,
+                    )
+                    result["report_source"] = "generated"
+                return jsonify(result)
+
         if target_date < date.today():
             with ACTIVITY_REPORT_LOCK:
                 cache_found, report = load_report(
@@ -1342,8 +1475,13 @@ def get_activity():
                 if cache_found:
                     result = report or empty_daily_activity(target_date, client_ip)
                     result["report_source"] = "saved"
+                    result["coverage_complete"] = True
                     return jsonify(result)
 
+                if target_date < date.today() - timedelta(days=ACTIVITY_LOG_BACKFILL_DAYS):
+                    return jsonify({
+                        "error": "This day was not archived before it left the Squid log window"
+                    }), 404
                 if not os.path.isfile(SQUID_ACCESS_LOG):
                     return jsonify({"error": "Squid access log is not available and this day has not been saved"}), 503
                 archive = build_daily_activity_archive(
@@ -1355,6 +1493,7 @@ def get_activity():
                     target_date, client_ip, sorted(reports)
                 )
                 result["report_source"] = "generated"
+                result["coverage_complete"] = True
                 return jsonify(result)
 
         if not os.path.isfile(SQUID_ACCESS_LOG):
@@ -1363,10 +1502,132 @@ def get_activity():
             SQUID_ACCESS_LOG, SQUID_BLOCKLIST_DIR, target_date, client_ip
         )
         result["report_source"] = "live"
+        result["coverage_complete"] = True
         return jsonify(result)
     except Exception as e:
         print(f"Error in activity API: {e}")
         return jsonify({"error": "Could not analyze the Squid access log"}), 500
+
+
+def _load_or_generate_overall_daily_reports(target_dates):
+    """Load archived overall days and generate dates still present in the log."""
+    today = date.today()
+    reports_by_date = {}
+    missing = []
+    generated = False
+    for target_date in target_dates:
+        if target_date == today:
+            if os.path.isfile(SQUID_ACCESS_LOG):
+                live = build_daily_overall_archive(SQUID_ACCESS_LOG, [target_date])
+                reports_by_date[target_date.isoformat()] = live[target_date.isoformat()]
+            continue
+        found, report = load_overall_report(
+            SQUID_ACTIVITY_REPORT_DIR, "day", target_date, target_date
+        )
+        if found:
+            reports_by_date[target_date.isoformat()] = report
+        elif target_date >= today - timedelta(days=ACTIVITY_LOG_BACKFILL_DAYS):
+            missing.append(target_date)
+
+    if missing and os.path.isfile(SQUID_ACCESS_LOG):
+        archive = build_daily_overall_archive(SQUID_ACCESS_LOG, missing)
+        for target_date in missing:
+            report = archive[target_date.isoformat()]
+            save_overall_report(
+                SQUID_ACTIVITY_REPORT_DIR,
+                "day",
+                target_date,
+                target_date,
+                report,
+            )
+            reports_by_date[target_date.isoformat()] = report
+        generated = True
+
+    unavailable = [
+        target_date.isoformat()
+        for target_date in target_dates
+        if target_date.isoformat() not in reports_by_date
+    ]
+    return reports_by_date, unavailable, generated
+
+
+@app.route("/api/overall-analytics", methods=["GET"])
+def get_overall_analytics():
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    date_value = request.args.get("date", today_str()).strip()
+    period = request.args.get("period", "day").strip().lower()
+    try:
+        target_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "date must use YYYY-MM-DD format"}), 400
+    if period not in ("day", "week", "month"):
+        return jsonify({"error": "period must be day, week, or month"}), 400
+
+    today = date.today()
+    oldest = today - timedelta(days=ACTIVITY_RETENTION_DAYS - 1)
+    if target_date > today or target_date < oldest:
+        return jsonify({
+            "error": f"date must be within the last {ACTIVITY_RETENTION_DAYS} days"
+        }), 400
+
+    natural_start, natural_end = activity_period_bounds(period, target_date)
+    period_start = max(natural_start, oldest)
+    period_end = min(natural_end, today)
+    can_cache = (
+        period_start == natural_start and
+        period_end == natural_end and
+        period_end < today
+    )
+    try:
+        with ACTIVITY_REPORT_LOCK:
+            if can_cache:
+                found, report = load_overall_report(
+                    SQUID_ACTIVITY_REPORT_DIR,
+                    period,
+                    period_start,
+                    period_end,
+                )
+                if found:
+                    report["report_source"] = "saved"
+                    report["coverage_complete"] = True
+                    return jsonify(report)
+
+            target_dates = _activity_dates(period_start, period_end)
+            daily_reports, unavailable, generated = (
+                _load_or_generate_overall_daily_reports(target_dates)
+            )
+            if not daily_reports:
+                if period_end < today:
+                    return jsonify({
+                        "error": "This period was not archived before it left the Squid log window"
+                    }), 404
+                return jsonify({"error": "Squid access log is not available"}), 503
+
+            report = aggregate_overall_reports(
+                daily_reports, period, period_start, period_end
+            )
+            report["coverage_complete"] = not unavailable
+            report["unavailable_days"] = len(unavailable)
+            report["report_source"] = (
+                "live" if period_end == today
+                else "generated" if generated
+                else "saved-daily"
+            )
+            if can_cache and not unavailable:
+                save_overall_report(
+                    SQUID_ACTIVITY_REPORT_DIR,
+                    period,
+                    period_start,
+                    period_end,
+                    report,
+                )
+                report["report_source"] = "generated"
+            return jsonify(report)
+    except Exception as e:
+        print(f"Error in overall analytics API: {e}")
+        return jsonify({"error": "Could not analyze overall Squid traffic"}), 500
 
 
 @app.route("/api/policies", methods=["GET"])
@@ -1709,9 +1970,10 @@ def daily_expiration_task():
 
 def archive_activity_reports():
     """Backfill completed days still present in Squid's rotating logs."""
+    prune_reports(SQUID_ACTIVITY_REPORT_DIR, ACTIVITY_RETENTION_DAYS)
+    prune_period_reports(SQUID_ACTIVITY_REPORT_DIR, ACTIVITY_RETENTION_DAYS)
     if not os.path.isfile(SQUID_ACCESS_LOG):
         return
-    prune_reports(SQUID_ACTIVITY_REPORT_DIR, ACTIVITY_RETENTION_DAYS)
     target_dates = [
         date.today() - timedelta(days=offset)
         for offset in range(1, ACTIVITY_LOG_BACKFILL_DAYS + 1)
@@ -1735,11 +1997,126 @@ def archive_activity_reports():
             )
 
 
+def archive_period_reports():
+    """Generate complete weekly and monthly snapshots from archived daily data."""
+    today = date.today()
+    oldest = today - timedelta(days=ACTIVITY_RETENTION_DAYS - 1)
+    candidates = set()
+    for target_date in _activity_dates(oldest, today - timedelta(days=1)):
+        for period in ("week", "month"):
+            period_start, period_end = activity_period_bounds(period, target_date)
+            if period_start >= oldest and period_end < today:
+                candidates.add((period, period_start, period_end))
+
+    with ACTIVITY_REPORT_LOCK:
+        for period, period_start, period_end in sorted(candidates):
+            if period_report_exists(
+                    SQUID_ACTIVITY_REPORT_DIR, period, period_start):
+                continue
+            daily_reports = {}
+            for target_date in _activity_dates(period_start, period_end):
+                found, reports = load_reports(
+                    SQUID_ACTIVITY_REPORT_DIR, target_date
+                )
+                if not found:
+                    daily_reports = {}
+                    break
+                daily_reports[target_date.isoformat()] = reports
+            if not daily_reports:
+                continue
+            reports = aggregate_activity_archive(
+                daily_reports, period, period_start, period_end
+            )
+            save_period_reports(
+                SQUID_ACTIVITY_REPORT_DIR,
+                period,
+                period_start,
+                period_end,
+                reports,
+            )
+            print(
+                f"[activity] Archived {period} report "
+                f"{period_start.isoformat()} through {period_end.isoformat()}."
+            )
+
+
+def archive_overall_reports():
+    """Archive GoAccess-style all-client day/week/month summaries."""
+    today = date.today()
+    oldest = today - timedelta(days=ACTIVITY_RETENTION_DAYS - 1)
+    prune_overall_reports(SQUID_ACTIVITY_REPORT_DIR, ACTIVITY_RETENTION_DAYS)
+
+    if os.path.isfile(SQUID_ACCESS_LOG):
+        missing_days = [
+            today - timedelta(days=offset)
+            for offset in range(1, ACTIVITY_LOG_BACKFILL_DAYS + 1)
+            if not overall_report_exists(
+                SQUID_ACTIVITY_REPORT_DIR,
+                "day",
+                today - timedelta(days=offset),
+            )
+        ]
+        if missing_days:
+            print(
+                f"[overall] Archiving {len(missing_days)} completed daily report(s)."
+            )
+            archive = build_daily_overall_archive(SQUID_ACCESS_LOG, missing_days)
+            with ACTIVITY_REPORT_LOCK:
+                for target_date in missing_days:
+                    save_overall_report(
+                        SQUID_ACTIVITY_REPORT_DIR,
+                        "day",
+                        target_date,
+                        target_date,
+                        archive[target_date.isoformat()],
+                    )
+
+    candidates = set()
+    for target_date in _activity_dates(oldest, today - timedelta(days=1)):
+        for period in ("week", "month"):
+            period_start, period_end = activity_period_bounds(period, target_date)
+            if period_start >= oldest and period_end < today:
+                candidates.add((period, period_start, period_end))
+
+    with ACTIVITY_REPORT_LOCK:
+        for period, period_start, period_end in sorted(candidates):
+            if overall_report_exists(
+                    SQUID_ACTIVITY_REPORT_DIR, period, period_start):
+                continue
+            daily_reports = {}
+            for target_date in _activity_dates(period_start, period_end):
+                found, report = load_overall_report(
+                    SQUID_ACTIVITY_REPORT_DIR, "day", target_date, target_date
+                )
+                if not found:
+                    daily_reports = {}
+                    break
+                daily_reports[target_date.isoformat()] = report
+            if not daily_reports:
+                continue
+            report = aggregate_overall_reports(
+                daily_reports, period, period_start, period_end
+            )
+            save_overall_report(
+                SQUID_ACTIVITY_REPORT_DIR,
+                period,
+                period_start,
+                period_end,
+                report,
+            )
+            print(
+                f"[overall] Archived {period} report "
+                f"{period_start.isoformat()} through {period_end.isoformat()}."
+            )
+
+
 def activity_archive_task():
-    """Keep yesterday archived and expire reports beyond 100 days."""
+    """Keep day/week/month reports generated and expire them after one year."""
     while True:
         try:
             archive_activity_reports()
+            archive_period_reports()
+            archive_overall_reports()
         except Exception as e:
             print(f"[activity] Error archiving daily reports: {e}")
         time.sleep(3600)

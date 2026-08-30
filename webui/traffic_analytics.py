@@ -1,6 +1,7 @@
-"""Daily, per-client website summaries derived from Squid access logs."""
+"""Per-client website activity summaries derived from Squid access logs."""
 
 from collections import defaultdict
+from calendar import monthrange
 from datetime import datetime, time as datetime_time, timedelta
 import gzip
 import ipaddress
@@ -313,6 +314,11 @@ def summarize_client_events(events, category_domains):
 def _activity_metadata(target_date, client_ip, clients_with_activity=None):
     return {
         "date": target_date.isoformat(),
+        "period": "day",
+        "period_start": target_date.isoformat(),
+        "period_end": target_date.isoformat(),
+        "days_expected": 1,
+        "days_covered": 1,
         "client_ip": client_ip,
         "clients_with_activity": clients_with_activity or [],
         "estimation": {
@@ -355,3 +361,135 @@ def build_daily_activity_archive(access_log_path, blocklist_dir, target_dates):
             reports[client_ip] = summary
         archive[target_date.isoformat()] = reports
     return archive
+
+
+def activity_period_bounds(period, anchor_date):
+    """Return inclusive calendar boundaries for a day, Monday week, or month."""
+    if period == "day":
+        return anchor_date, anchor_date
+    if period == "week":
+        start = anchor_date - timedelta(days=anchor_date.weekday())
+        return start, start + timedelta(days=6)
+    if period == "month":
+        start = anchor_date.replace(day=1)
+        return start, anchor_date.replace(day=monthrange(anchor_date.year, anchor_date.month)[1])
+    raise ValueError("period must be day, week, or month")
+
+
+def _merge_activity_summaries(summaries):
+    sites = {}
+    for summary in summaries:
+        for source_site in summary.get("sites", []):
+            site_key = source_site["site_key"]
+            site = sites.setdefault(site_key, {
+                "site_key": site_key,
+                "site": source_site["site"],
+                "categories": set(),
+                "requests": 0,
+                "blocked_requests": 0,
+                "estimated_seconds": 0,
+                "last_seen_epoch": 0,
+                "domains": {},
+            })
+            site["categories"].update(source_site.get("categories", []))
+            for field in ("requests", "blocked_requests", "estimated_seconds"):
+                site[field] += source_site.get(field, 0)
+            site["last_seen_epoch"] = max(
+                site["last_seen_epoch"], source_site.get("last_seen_epoch", 0)
+            )
+
+            for source_domain in source_site.get("domains", []):
+                domain_name = source_domain["domain"]
+                domain = site["domains"].setdefault(domain_name, {
+                    "domain": domain_name,
+                    "categories": set(),
+                    "requests": 0,
+                    "blocked_requests": 0,
+                    "estimated_seconds": 0,
+                    "last_seen_epoch": 0,
+                })
+                domain["categories"].update(source_domain.get("categories", []))
+                for field in ("requests", "blocked_requests", "estimated_seconds"):
+                    domain[field] += source_domain.get(field, 0)
+                domain["last_seen_epoch"] = max(
+                    domain["last_seen_epoch"], source_domain.get("last_seen_epoch", 0)
+                )
+
+    for site in sites.values():
+        if len(site["categories"]) > 1:
+            site["categories"].discard("uncategorized")
+        site["categories"] = sorted(site["categories"])
+        for domain in site["domains"].values():
+            if len(domain["categories"]) > 1:
+                domain["categories"].discard("uncategorized")
+            domain["categories"] = sorted(domain["categories"])
+        site["domains"] = sorted(
+            site["domains"].values(),
+            key=lambda domain: (
+                -domain["estimated_seconds"], -domain["requests"], domain["domain"]
+            ),
+        )
+        site["domain_count"] = len(site["domains"])
+
+    rows = sorted(
+        sites.values(),
+        key=lambda row: (-row["estimated_seconds"], -row["requests"], row["site"]),
+    )
+    return {
+        "unique_sites": len(rows),
+        "unique_domains": sum(row["domain_count"] for row in rows),
+        "requests": sum(summary.get("requests", 0) for summary in summaries),
+        "blocked_requests": sum(
+            summary.get("blocked_requests", 0) for summary in summaries
+        ),
+        "estimated_seconds": sum(
+            summary.get("estimated_seconds", 0) for summary in summaries
+        ),
+        "sites": rows,
+    }
+
+
+def aggregate_activity_reports(daily_reports, period, period_start, period_end, client_ip):
+    """Aggregate one client's saved daily summaries into a calendar period."""
+    clients = sorted({
+        ip
+        for reports in daily_reports.values()
+        for ip in reports
+    })
+    summaries = [
+        reports[client_ip]
+        for reports in daily_reports.values()
+        if client_ip in reports
+    ]
+    result = _merge_activity_summaries(summaries)
+    result.update({
+        "date": period_start.isoformat(),
+        "period": period,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "days_expected": (period_end - period_start).days + 1,
+        "days_covered": len(daily_reports),
+        "client_ip": client_ip,
+        "clients_with_activity": clients,
+        "estimation": {
+            "idle_cutoff_seconds": IDLE_CUTOFF_SECONDS,
+            "last_event_seconds": LAST_EVENT_SECONDS,
+            "description": "Daily estimates summed across the selected calendar period; gaps over 5 minutes count as 30 seconds.",
+        },
+    })
+    return result
+
+
+def aggregate_activity_archive(daily_reports, period, period_start, period_end):
+    """Build every client's weekly or monthly report from saved daily reports."""
+    clients = sorted({
+        ip
+        for reports in daily_reports.values()
+        for ip in reports
+    })
+    return {
+        client_ip: aggregate_activity_reports(
+            daily_reports, period, period_start, period_end, client_ip
+        )
+        for client_ip in clients
+    }

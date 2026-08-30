@@ -103,100 +103,6 @@ dump_config() {
     return 0
 }
 
-analyze_logs() {
-    echo "-----------------------------------------------"
-    echo ">>> Analyzing Squid Access Logs with GoAccess..."
-
-    # Check that goaccess is available locally
-    if ! command -v goaccess &> /dev/null; then
-        echo "  [!] ERROR: 'goaccess' is not installed. Install it with: sudo apt install goaccess"
-        exit 1
-    fi
-
-    local LOCAL_LOG_DIR="${SQUID_DIR}/logs"
-    local LOCAL_LOG="${LOCAL_LOG_DIR}/access.log"
-    local REPORT="${LOCAL_LOG_DIR}/squid-report.html"
-    local REMOTE_LOG="/var/log/squid/access.log"
-
-    mkdir -p "${LOCAL_LOG_DIR}"
-
-    echo "  [*] Copying access log from container '${SQUID_INSTANCE_NAME}' on QNAP..."
-    # Use 'docker cp' via SSH and pipe the tar stream locally to avoid tmp files on QNAP
-    ssh -T "${QNAP_SERVER}" "${DOCKER} cp ${SQUID_INSTANCE_NAME}:${REMOTE_LOG} -" \
-        | tar -xO > "${LOCAL_LOG}"
-
-    if [ ! -s "${LOCAL_LOG}" ]; then
-        echo "  [!] ERROR: Log file is empty or could not be retrieved."
-        exit 1
-    fi
-
-    local TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    local SNAPSHOT_LOG="${LOCAL_LOG_DIR}/access_${TIMESTAMP}.log"
-    cp "${LOCAL_LOG}" "${SNAPSHOT_LOG}"
-    echo "  [+] Saved local log snapshot: ${SNAPSHOT_LOG}"
-
-    echo "  [*] Running GoAccess to generate HTML report..."
-    awk '{
-        ts = $1; sub(/\.[0-9]+/, "", ts);
-        elapsed = $2;
-        ip = $3;
-        code = $4;
-        size = $5;
-        method = $6;
-        url = $7;
-        domain = url;
-        sub(/^https?:\/\//, "", domain);
-        sub(/\/.*$/, "", domain);
-        sub(/:.*$/, "", domain);
-        if (domain == "") domain = "-";
-        print domain, ts, elapsed, ip, code, size, method, url
-    }' "${LOCAL_LOG}" \
-        | goaccess - \
-            --log-format='%v %x %L %h %^/%s %b %m %U' \
-            --date-format='%s' \
-            --time-format='%s' \
-            --output="${REPORT}" \
-            --ignore-crawlers \
-            --real-os
-
-    local HOST_REPORT="${LOCAL_LOG_DIR}/host-domains-report.html"
-    local HOSTS_CONF="${PROXY_HOSTS_CONF}"
-
-    echo "  [*] Running Standalone Log Analyzer (analyze-squid-logs.py)..."
-    python3 "${SQUID_DIR}/logs/analyze-squid-logs.py" \
-        --log "${LOCAL_LOG}" \
-        --hosts-conf "${HOSTS_CONF}" \
-        --out-host-report "${HOST_REPORT}" \
-        --out-goaccess-report "${REPORT}"
-
-    echo "  [+] Reports generated:"
-    echo "      - Per-Host Activity: ${HOST_REPORT}"
-    echo "      - GoAccess Dashboard: ${REPORT}"
-
-    # Open the report in a web browser if a graphical environment is available
-    if [ -f "${REPORT}" ] && [ -n "${DISPLAY}" ]; then
-        local browser_cmd=""
-        if [ -n "${BROWSER}" ] && command -v "${BROWSER}" &> /dev/null; then
-            browser_cmd="${BROWSER}"
-        elif command -v google-chrome &> /dev/null; then
-            browser_cmd="google-chrome"
-        elif command -v firefox &> /dev/null; then
-            browser_cmd="firefox"
-        elif command -v chromium &> /dev/null; then
-            browser_cmd="chromium"
-        elif command -v x-www-browser &> /dev/null; then
-            browser_cmd="x-www-browser"
-        elif command -v xdg-open &> /dev/null; then
-            browser_cmd="xdg-open"
-        fi
-
-        if [ -n "${browser_cmd}" ]; then
-            echo "  [*] Opening report in browser (${browser_cmd})..."
-            "${browser_cmd}" "${REPORT}" &> /dev/null &
-        fi
-    fi
-}
-
 cat_logs() {
     echo "-----------------------------------------------"
     echo ">>> Displaying Squid Access Logs..."
@@ -512,7 +418,7 @@ deploy_webui() {
 # --- 3. EXECUTION ---
 
 if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 [cert|dump-config|logs|catlogs|proxy-deploy|webui-deploy|router-deploy|linux-deploy|all]"
+    echo "Usage: $0 [cert|dump-config|catlogs|proxy-deploy|webui-deploy|router-deploy|linux-deploy|all]"
     exit 1
 fi
 
@@ -523,7 +429,6 @@ while [ $# -gt 0 ] ; do
 
         # Command line option to dump the config files to the local machine
         dump-config)    dump_config ;;
-        logs)           analyze_logs ;;
         catlogs)        cat_logs ;;
 
         # Command line option to deploy the system to qnap, router, and linux client.
@@ -539,7 +444,7 @@ while [ $# -gt 0 ] ; do
             ;;
         *)
             echo "Unknown command: $1"
-            echo "Usage: $0 [cert|dump-config|logs|catlogs|proxy-deploy|webui-deploy|router-deploy|linux-deploy|all]"
+            echo "Usage: $0 [cert|dump-config|catlogs|proxy-deploy|webui-deploy|router-deploy|linux-deploy|all]"
             ;;
     esac
     shift
