@@ -64,6 +64,37 @@ document.addEventListener('DOMContentLoaded', () => {
     const activityRequestCount  = document.getElementById('activity-request-count');
     const activityBlockedCount  = document.getElementById('activity-blocked-count');
 
+    // Render every device candidate, then keep only the first row visible.
+    // This lets wider layouts expose more shortcuts without a hard-coded limit.
+    function fitQuickDeviceButtons(container) {
+        if (!container) return;
+        const buttons = Array.from(container.querySelectorAll('.top8-btn'));
+        buttons.forEach(button => { button.hidden = false; });
+        if (!buttons.length || container.getBoundingClientRect().width === 0) return;
+
+        const firstRowTop = buttons[0].offsetTop;
+        const firstWrappedIndex = buttons.findIndex(button => button.offsetTop > firstRowTop + 1);
+        const visibleCount = firstWrappedIndex === -1 ? buttons.length : firstWrappedIndex;
+        buttons.forEach((button, index) => { button.hidden = index >= visibleCount; });
+        container.dataset.visibleCount = String(visibleCount);
+    }
+
+    function observeQuickDeviceButtons(container) {
+        if (!container) return;
+        let previousWidth = -1;
+        if ('ResizeObserver' in window) {
+            const observer = new ResizeObserver(entries => {
+                const width = entries[0]?.contentRect.width ?? container.getBoundingClientRect().width;
+                if (Math.abs(width - previousWidth) < 1) return;
+                previousWidth = width;
+                fitQuickDeviceButtons(container);
+            });
+            observer.observe(container);
+        } else {
+            window.addEventListener('resize', () => fitQuickDeviceButtons(container));
+        }
+    }
+
     // Overall analytics
     const overallDateInput      = document.getElementById('overall-date-input');
     const overallDateLabel      = document.getElementById('overall-date-label');
@@ -378,6 +409,7 @@ document.addEventListener('DOMContentLoaded', () => {
         overallScreen && overallScreen.classList.add('hidden');
         auditScreen && auditScreen.classList.add('hidden');
         if (!adminDataLoaded) loadAdminData();
+        else fitQuickDeviceButtons(top8DevicesButtons);
     }
 
     function switchToActivity() {
@@ -398,6 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         updateActivityDateControls();
         loadActivityClients();
+        fitQuickDeviceButtons(activityQuickDevicesButtons);
     }
 
     function switchToOverall() {
@@ -465,7 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderActivityQuickDeviceButtons() {
         if (!activityQuickDevicesButtons) return;
         activityQuickDevicesButtons.innerHTML = '';
-        devicesData.slice(0, 8).forEach(device => {
+        devicesData.forEach(device => {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = `top8-btn ${device.ip === activityClientSelect?.value ? 'active' : ''}`;
@@ -478,6 +511,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             activityQuickDevicesButtons.appendChild(button);
         });
+        fitQuickDeviceButtons(activityQuickDevicesButtons);
     }
 
     function updateActivityDateControls() {
@@ -1159,12 +1193,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // TOP 8 / DROPDOWN
+    // RESPONSIVE QUICK SELECT / DROPDOWN
     // ─────────────────────────────────────────────────────────────
     function renderTop8Buttons() {
         if (!top8DevicesButtons) return;
         top8DevicesButtons.innerHTML = '';
-        devicesData.slice(0, 8).forEach(dev => {
+        devicesData.forEach(dev => {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = `top8-btn ${dev.ip === currentDeviceIp ? 'active' : ''}`;
@@ -1173,6 +1207,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.addEventListener('click', () => selectDevice(dev.ip));
             top8DevicesButtons.appendChild(btn);
         });
+        fitQuickDeviceButtons(top8DevicesButtons);
     }
 
     function renderDropdown() {
@@ -1789,6 +1824,9 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => { copyRulesBtn.textContent = orig; }, 2000);
         });
     });
+
+    observeQuickDeviceButtons(top8DevicesButtons);
+    observeQuickDeviceButtons(activityQuickDevicesButtons);
 
     // ─────────────────────────────────────────────────────────────
     // APPLY

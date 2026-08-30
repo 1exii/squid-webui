@@ -1280,7 +1280,7 @@ input:focus, select:focus {
     border-radius: 20px;
 }
 
-/* Top 8 Devices Quick Selection Bar */
+/* Responsive Device Quick Selection Bar */
 .top8-devices-card {
     display: flex;
     align-items: center;
@@ -1304,6 +1304,8 @@ input:focus, select:focus {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
+    flex: 1 1 0;
+    min-width: 0;
 }
 .top8-btn {
     display: inline-flex;
@@ -1318,6 +1320,9 @@ input:focus, select:focus {
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
+}
+.top8-btn[hidden] {
+    display: none;
 }
 .top8-btn:hover {
     background: var(--primary);
