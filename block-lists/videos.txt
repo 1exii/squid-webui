@@ -39,3 +39,15 @@
 .crunchyroll.com
 
 .kick.com
+
+# Spotify Video & Canvas Streaming
+video-ak-spotify-com.akamaized.net
+video-akp-spotify-com.akamaized.net
+video-akpcw-cdn-spotify-com.akamaized.net
+video4-ak-spotify-com.akamaized.net
+video-fa.scdn.co
+video4-fa.scdn.co
+canvas-video.scdn.co
+video.spotifycdn.com
+video.scdn.co
+sp-video.scdn.co
