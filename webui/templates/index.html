@@ -24,6 +24,7 @@
                 {% if admin_visible %}
                 <button id="nav-tab-admin" class="nav-tab-btn">⚙️ Access Control Admin</button>
                 <button id="nav-tab-activity" class="nav-tab-btn">📊 Website Activity</button>
+                <button id="nav-tab-overall" class="nav-tab-btn">📈 Overall Analytics</button>
                 <button id="nav-tab-audit" class="nav-tab-btn">🧾 Change Log</button>
                 {% endif %}
             </div>
@@ -415,12 +416,12 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
             </div>
         </main>
 
-        <!-- Admin View: Daily website activity derived from Squid access logs -->
+        <!-- Admin View: durable day/week/month activity derived from Squid logs -->
         <main id="activity-screen" class="main-content hidden">
             <div class="activity-toolbar glass-panel">
                 <div class="toolbar-title">
-                    <h2>Daily Website Activity</h2>
-                    <p>Sites and categories observed by Squid. Active time is an estimate from request timing, not foreground screen time.</p>
+                    <h2>Website Activity Reports</h2>
+                    <p>Daily, weekly, and monthly reports retained for one year. Active time is an estimate from request timing, not foreground screen time.</p>
                 </div>
                 <div class="activity-controls">
                     <label>
@@ -430,12 +431,22 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                         </select>
                     </label>
                     <label>
-                        <span>Date</span>
+                        <span id="activity-date-label">Date</span>
                         <input type="date" id="activity-date-input">
                     </label>
                     <button id="activity-previous-day-btn" class="btn btn-secondary" type="button">← Previous day</button>
+                    <button id="activity-current-period-btn" class="btn btn-secondary" type="button">Today</button>
                     <button id="activity-next-day-btn" class="btn btn-secondary" type="button">Next day →</button>
                     <button id="activity-refresh-btn" class="btn btn-secondary">↻ Refresh</button>
+                </div>
+            </div>
+
+            <div class="activity-period-card glass-panel" aria-label="Report period">
+                <span class="top8-label">Report period:</span>
+                <div id="activity-period-buttons" class="activity-period-buttons">
+                    <button class="activity-period-btn active" type="button" data-period="day" aria-pressed="true">Day</button>
+                    <button class="activity-period-btn" type="button" data-period="week" aria-pressed="false">Week</button>
+                    <button class="activity-period-btn" type="button" data-period="month" aria-pressed="false">Month</button>
                 </div>
             </div>
 
@@ -468,7 +479,7 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
             <div class="activity-results glass-panel">
                 <div class="activity-results-header">
                     <div>
-                        <h3>Websites by category</h3>
+                        <h3 id="activity-results-title">Websites by category</h3>
                         <p id="activity-estimate-note">Choose a client to load its activity.</p>
                     </div>
                     <div class="activity-filters">
@@ -498,6 +509,76 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                     <h3>No activity loaded</h3>
                     <p>Select a client and date above.</p>
                 </div>
+            </div>
+        </main>
+
+        <!-- Admin View: GoAccess-style overall statistics across all clients -->
+        <main id="overall-screen" class="main-content hidden">
+            <div class="activity-toolbar glass-panel">
+                <div class="toolbar-title">
+                    <h2>Overall Squid Analytics</h2>
+                    <p>Global request, bandwidth, cache, destination, and response statistics across every client.</p>
+                </div>
+                <div class="activity-controls overall-controls">
+                    <label>
+                        <span id="overall-date-label">Date</span>
+                        <input type="date" id="overall-date-input">
+                    </label>
+                    <button id="overall-previous-btn" class="btn btn-secondary" type="button">← Previous day</button>
+                    <button id="overall-current-btn" class="btn btn-secondary" type="button">Today</button>
+                    <button id="overall-next-btn" class="btn btn-secondary" type="button">Next day →</button>
+                    <button id="overall-refresh-btn" class="btn btn-secondary" type="button">↻ Refresh</button>
+                </div>
+            </div>
+
+            <div class="activity-period-card glass-panel" aria-label="Overall report period">
+                <span class="top8-label">Report period:</span>
+                <div id="overall-period-buttons" class="activity-period-buttons">
+                    <button class="activity-period-btn active" type="button" data-period="day" aria-pressed="true">Day</button>
+                    <button class="activity-period-btn" type="button" data-period="week" aria-pressed="false">Week</button>
+                    <button class="activity-period-btn" type="button" data-period="month" aria-pressed="false">Month</button>
+                </div>
+            </div>
+
+            <div id="overall-error" class="error-banner hidden"></div>
+
+            <div class="overall-summary-grid">
+                <div class="activity-summary-card glass-panel"><span class="activity-summary-label">Total requests</span><strong id="overall-requests">—</strong></div>
+                <div class="activity-summary-card glass-panel"><span class="activity-summary-label">Bandwidth transferred</span><strong id="overall-bandwidth">—</strong></div>
+                <div class="activity-summary-card glass-panel"><span class="activity-summary-label">Active clients</span><strong id="overall-clients">—</strong></div>
+                <div class="activity-summary-card glass-panel"><span class="activity-summary-label">Destinations</span><strong id="overall-domains">—</strong></div>
+                <div class="activity-summary-card glass-panel"><span class="activity-summary-label">Cache hits</span><strong id="overall-cache-hits">—</strong></div>
+                <div class="activity-summary-card glass-panel activity-summary-blocked"><span class="activity-summary-label">Blocked requests</span><strong id="overall-blocked">—</strong></div>
+            </div>
+
+            <div class="activity-results glass-panel overall-hourly-panel">
+                <div class="activity-results-header">
+                    <div>
+                        <h3 id="overall-results-title">Requests by hour</h3>
+                        <p id="overall-report-note">Choose a date or period to load global analytics.</p>
+                    </div>
+                    <span class="overall-response-pill">Average response <strong id="overall-response-time">—</strong></span>
+                </div>
+                <div id="overall-hourly-chart" class="overall-hourly-chart"></div>
+            </div>
+
+            <div class="overall-panels-grid">
+                <section class="activity-results glass-panel">
+                    <div class="activity-results-header"><div><h3>Top destinations</h3><p>Requested hostnames across all clients.</p></div></div>
+                    <div class="table-responsive"><table class="activity-table"><thead><tr><th>Destination</th><th>Requests</th><th>Bandwidth</th><th>Blocked</th></tr></thead><tbody id="overall-domains-body"></tbody></table></div>
+                </section>
+                <section class="activity-results glass-panel">
+                    <div class="activity-results-header"><div><h3>Client traffic</h3><p>Overall usage contribution by source client.</p></div></div>
+                    <div class="table-responsive"><table class="activity-table"><thead><tr><th>Client</th><th>Requests</th><th>Bandwidth</th><th>Blocked</th></tr></thead><tbody id="overall-clients-body"></tbody></table></div>
+                </section>
+                <section class="activity-results glass-panel">
+                    <div class="activity-results-header"><div><h3>Squid result codes</h3><p>Cache and HTTP outcomes reported by Squid.</p></div></div>
+                    <div class="table-responsive"><table class="activity-table"><thead><tr><th>Result</th><th>Requests</th><th>Bandwidth</th></tr></thead><tbody id="overall-results-body"></tbody></table></div>
+                </section>
+                <section class="activity-results glass-panel">
+                    <div class="activity-results-header"><div><h3>Request methods</h3><p>HTTP methods observed in the proxy log.</p></div></div>
+                    <div class="table-responsive"><table class="activity-table"><thead><tr><th>Method</th><th>Requests</th><th>Bandwidth</th></tr></thead><tbody id="overall-methods-body"></tbody></table></div>
+                </section>
             </div>
         </main>
 

@@ -13,10 +13,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const navTabOnboarding    = document.getElementById('nav-tab-onboarding');
     const navTabAdmin         = document.getElementById('nav-tab-admin');
     const navTabActivity      = document.getElementById('nav-tab-activity');
+    const navTabOverall       = document.getElementById('nav-tab-overall');
     const navTabAudit         = document.getElementById('nav-tab-audit');
     const onboardingScreen    = document.getElementById('onboarding-screen');
     const adminScreen         = document.getElementById('admin-screen');
     const activityScreen      = document.getElementById('activity-screen');
+    const overallScreen       = document.getElementById('overall-screen');
     const auditScreen         = document.getElementById('audit-screen');
     const userBadge           = document.getElementById('user-badge');
     const currentUserSpan     = document.getElementById('current-user');
@@ -44,8 +46,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const activityClientSelect  = document.getElementById('activity-client-select');
     const activityQuickDevicesButtons = document.getElementById('activity-quick-devices-buttons');
     const activityDateInput     = document.getElementById('activity-date-input');
+    const activityDateLabel     = document.getElementById('activity-date-label');
     const activityPreviousDayBtn = document.getElementById('activity-previous-day-btn');
     const activityNextDayBtn    = document.getElementById('activity-next-day-btn');
+    const activityCurrentPeriodBtn = document.getElementById('activity-current-period-btn');
+    const activityPeriodButtons = document.getElementById('activity-period-buttons');
     const activityRefreshBtn    = document.getElementById('activity-refresh-btn');
     const activityCategoryFilter = document.getElementById('activity-category-filter');
     const activitySearchInput   = document.getElementById('activity-search-input');
@@ -53,10 +58,35 @@ document.addEventListener('DOMContentLoaded', () => {
     const activityEmptyState    = document.getElementById('activity-empty-state');
     const activityError         = document.getElementById('activity-error');
     const activityEstimateNote  = document.getElementById('activity-estimate-note');
+    const activityResultsTitle  = document.getElementById('activity-results-title');
     const activityTotalTime     = document.getElementById('activity-total-time');
     const activitySiteCount     = document.getElementById('activity-site-count');
     const activityRequestCount  = document.getElementById('activity-request-count');
     const activityBlockedCount  = document.getElementById('activity-blocked-count');
+
+    // Overall analytics
+    const overallDateInput      = document.getElementById('overall-date-input');
+    const overallDateLabel      = document.getElementById('overall-date-label');
+    const overallPreviousBtn    = document.getElementById('overall-previous-btn');
+    const overallCurrentBtn     = document.getElementById('overall-current-btn');
+    const overallNextBtn        = document.getElementById('overall-next-btn');
+    const overallRefreshBtn     = document.getElementById('overall-refresh-btn');
+    const overallPeriodButtons  = document.getElementById('overall-period-buttons');
+    const overallError          = document.getElementById('overall-error');
+    const overallRequests       = document.getElementById('overall-requests');
+    const overallBandwidth      = document.getElementById('overall-bandwidth');
+    const overallClients        = document.getElementById('overall-clients');
+    const overallDomains        = document.getElementById('overall-domains');
+    const overallCacheHits      = document.getElementById('overall-cache-hits');
+    const overallBlocked        = document.getElementById('overall-blocked');
+    const overallResponseTime   = document.getElementById('overall-response-time');
+    const overallResultsTitle   = document.getElementById('overall-results-title');
+    const overallReportNote     = document.getElementById('overall-report-note');
+    const overallHourlyChart    = document.getElementById('overall-hourly-chart');
+    const overallDomainsBody    = document.getElementById('overall-domains-body');
+    const overallClientsBody    = document.getElementById('overall-clients-body');
+    const overallResultsBody    = document.getElementById('overall-results-body');
+    const overallMethodsBody    = document.getElementById('overall-methods-body');
 
     // Configuration audit trail
     const auditRefreshBtn       = document.getElementById('audit-refresh-btn');
@@ -115,6 +145,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentDeviceIp  = '';
     let adminDataLoaded  = false;
     let activityData     = null;
+    let activityPeriod   = 'day';
+    let overallData      = null;
+    let overallPeriod    = 'day';
     let auditEvents      = [];
     let activityClientsLoaded = false;
     let requestedProtectedView = 'admin';
@@ -156,6 +189,19 @@ document.addEventListener('DOMContentLoaded', () => {
         if (minutes < 60) return `${minutes}m`;
         const hours = Math.floor(minutes / 60);
         return `${hours}h ${minutes % 60}m`;
+    }
+
+    function formatBytes(totalBytes) {
+        const bytes = Math.max(0, Number(totalBytes) || 0);
+        if (bytes < 1024) return `${bytes.toLocaleString()} B`;
+        const units = ['KB', 'MB', 'GB', 'TB'];
+        let value = bytes / 1024;
+        let unit = units[0];
+        for (let index = 1; index < units.length && value >= 1024; index += 1) {
+            value /= 1024;
+            unit = units[index];
+        }
+        return `${value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${unit}`;
     }
 
     const formatCategory = value => value.replaceAll('_', ' ').replace(/\b\w/g, char => char.toUpperCase());
@@ -291,10 +337,12 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabOnboarding.classList.add('active');
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
+        navTabOverall && navTabOverall.classList.remove('active');
         navTabAudit && navTabAudit.classList.remove('active');
         onboardingScreen && onboardingScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
         activityScreen && activityScreen.classList.add('hidden');
+        overallScreen && overallScreen.classList.add('hidden');
         auditScreen && auditScreen.classList.add('hidden');
     });
     navTabAdmin && navTabAdmin.addEventListener('click', () => {
@@ -307,6 +355,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isAuthenticated) { authModal.classList.remove('hidden'); }
         else { switchToActivity(); }
     });
+    navTabOverall && navTabOverall.addEventListener('click', () => {
+        requestedProtectedView = 'overall';
+        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        else { switchToOverall(); }
+    });
     navTabAudit && navTabAudit.addEventListener('click', () => {
         requestedProtectedView = 'audit';
         if (!isAuthenticated) { authModal.classList.remove('hidden'); }
@@ -317,10 +370,12 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabAdmin && navTabAdmin.classList.add('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
+        navTabOverall && navTabOverall.classList.remove('active');
         navTabAudit && navTabAudit.classList.remove('active');
         adminScreen && adminScreen.classList.remove('hidden');
         onboardingScreen && onboardingScreen.classList.add('hidden');
         activityScreen && activityScreen.classList.add('hidden');
+        overallScreen && overallScreen.classList.add('hidden');
         auditScreen && auditScreen.classList.add('hidden');
         if (!adminDataLoaded) loadAdminData();
     }
@@ -329,10 +384,12 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabActivity && navTabActivity.classList.add('active');
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
+        navTabOverall && navTabOverall.classList.remove('active');
         navTabAudit && navTabAudit.classList.remove('active');
         activityScreen && activityScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
         onboardingScreen && onboardingScreen.classList.add('hidden');
+        overallScreen && overallScreen.classList.add('hidden');
         auditScreen && auditScreen.classList.add('hidden');
         if (activityDateInput) {
             activityDateInput.max = localToday();
@@ -343,14 +400,36 @@ document.addEventListener('DOMContentLoaded', () => {
         loadActivityClients();
     }
 
+    function switchToOverall() {
+        navTabOverall && navTabOverall.classList.add('active');
+        navTabAdmin && navTabAdmin.classList.remove('active');
+        navTabActivity && navTabActivity.classList.remove('active');
+        navTabOnboarding && navTabOnboarding.classList.remove('active');
+        navTabAudit && navTabAudit.classList.remove('active');
+        overallScreen && overallScreen.classList.remove('hidden');
+        adminScreen && adminScreen.classList.add('hidden');
+        activityScreen && activityScreen.classList.add('hidden');
+        onboardingScreen && onboardingScreen.classList.add('hidden');
+        auditScreen && auditScreen.classList.add('hidden');
+        if (overallDateInput) {
+            overallDateInput.max = localToday();
+            overallDateInput.min = localDaysAgo(activityRetentionDays - 1);
+            if (!overallDateInput.value) overallDateInput.value = localToday();
+        }
+        updateOverallDateControls();
+        loadOverallAnalytics();
+    }
+
     function switchToAudit() {
         navTabAudit && navTabAudit.classList.add('active');
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
+        navTabOverall && navTabOverall.classList.remove('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
         auditScreen && auditScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
         activityScreen && activityScreen.classList.add('hidden');
+        overallScreen && overallScreen.classList.add('hidden');
         onboardingScreen && onboardingScreen.classList.add('hidden');
         loadAuditLog();
     }
@@ -403,34 +482,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateActivityDateControls() {
         if (!activityDateInput) return;
+        const labels = {
+            day: ['Date', 'Previous day', 'Next day', 'Today'],
+            week: ['Date in week', 'Previous week', 'Next week', 'This week'],
+            month: ['Date in month', 'Previous month', 'Next month', 'This month']
+        };
+        const [dateLabel, previousLabel, nextLabel, currentLabel] = labels[activityPeriod];
+        activityDateLabel && (activityDateLabel.textContent = dateLabel);
+        activityPreviousDayBtn && (activityPreviousDayBtn.textContent = `← ${previousLabel}`);
+        activityNextDayBtn && (activityNextDayBtn.textContent = `${nextLabel} →`);
+        activityCurrentPeriodBtn && (activityCurrentPeriodBtn.textContent = currentLabel);
+        const periodStart = value => {
+            if (!value) return '';
+            const [year, month, day] = value.split('-').map(Number);
+            const start = new Date(year, month - 1, day);
+            if (activityPeriod === 'week') start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+            if (activityPeriod === 'month') start.setDate(1);
+            return localDateString(start);
+        };
         if (activityPreviousDayBtn) activityPreviousDayBtn.disabled = !activityDateInput.value
-            || activityDateInput.value <= activityDateInput.min;
+            || periodStart(activityDateInput.value) <= periodStart(activityDateInput.min);
         if (activityNextDayBtn) activityNextDayBtn.disabled = !activityDateInput.value
-            || activityDateInput.value >= activityDateInput.max;
+            || periodStart(activityDateInput.value) >= periodStart(activityDateInput.max);
+        activityPeriodButtons?.querySelectorAll('[data-period]').forEach(button => {
+            const active = button.dataset.period === activityPeriod;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
     }
 
-    function loadPreviousActivityDay() {
+    function moveActivityPeriod(direction) {
         if (!activityDateInput?.value) return;
         const [year, month, day] = activityDateInput.value.split('-').map(Number);
-        const previousDay = new Date(year, month - 1, day);
-        previousDay.setDate(previousDay.getDate() - 1);
-        const previousValue = localDateString(previousDay);
-        activityDateInput.value = previousValue < activityDateInput.min
+        const moved = new Date(year, month - 1, day);
+        if (activityPeriod === 'month') moved.setMonth(moved.getMonth() + direction, 1);
+        else moved.setDate(moved.getDate() + direction * (activityPeriod === 'week' ? 7 : 1));
+        const movedValue = localDateString(moved);
+        activityDateInput.value = movedValue < activityDateInput.min
             ? activityDateInput.min
-            : previousValue;
+            : movedValue > activityDateInput.max
+                ? activityDateInput.max
+                : movedValue;
         updateActivityDateControls();
         loadActivity();
     }
 
-    function loadNextActivityDay() {
-        if (!activityDateInput?.value) return;
-        const [year, month, day] = activityDateInput.value.split('-').map(Number);
-        const nextDay = new Date(year, month - 1, day);
-        nextDay.setDate(nextDay.getDate() + 1);
-        const nextValue = localDateString(nextDay);
-        activityDateInput.value = nextValue > activityDateInput.max
-            ? activityDateInput.max
-            : nextValue;
+    function selectActivityPeriod(period) {
+        if (!['day', 'week', 'month'].includes(period)) return;
+        activityPeriod = period;
         updateActivityDateControls();
         loadActivity();
     }
@@ -444,7 +543,11 @@ document.addEventListener('DOMContentLoaded', () => {
         activityRefreshBtn && (activityRefreshBtn.disabled = true);
         activityEstimateNote && (activityEstimateNote.textContent = 'Analyzing Squid access logs…');
         try {
-            const params = new URLSearchParams({ client_ip: clientIp, date: targetDate });
+            const params = new URLSearchParams({
+                client_ip: clientIp,
+                date: targetDate,
+                period: activityPeriod
+            });
             const response = await fetch(`/api/activity?${params}`);
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Could not load website activity.');
@@ -501,10 +604,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? 'Report generated and saved. '
                     : activityData?.report_source === 'saved'
                         ? 'Loaded from saved report. '
+                        : activityData?.report_source === 'saved-daily'
+                            ? 'Built from saved daily reports. '
                         : '';
+            const coverageNote = activityData && !activityData.coverage_complete
+                ? ` Coverage is incomplete: ${activityData.days_covered} of ${activityData.days_expected} days were archived.`
+                : '';
             activityEstimateNote.textContent = activityData
-                ? `${sourceNote}${(activityData.unique_domains || activityData.unique_sites).toLocaleString()} domains grouped into ${activityData.unique_sites.toLocaleString()} websites. ${activityData.estimation.description} Background traffic may be included.`
+                ? `${sourceNote}${(activityData.unique_domains || activityData.unique_sites).toLocaleString()} domains grouped into ${activityData.unique_sites.toLocaleString()} websites. ${activityData.estimation.description} Background traffic may be included.${coverageNote}`
                 : 'Choose a client to load its activity.';
+        }
+        if (activityResultsTitle) {
+            const start = activityData?.period_start;
+            const end = activityData?.period_end;
+            const range = start && end && start !== end ? ` · ${start} – ${end}` : start ? ` · ${start}` : '';
+            activityResultsTitle.textContent = `Websites by category${range}`;
         }
 
         if (activityTableBody) {
@@ -513,7 +627,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     `<span class="activity-category-tag ${value === 'uncategorized' ? 'muted' : ''}">${escapeHtml(formatCategory(value))}</span>`
                 ).join('');
                 const categories = categoryTags(site.categories);
-                const lastSeen = new Date(site.last_seen_epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const lastSeenOptions = activityData?.period === 'day'
+                    ? { hour: '2-digit', minute: '2-digit' }
+                    : { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+                const lastSeen = new Date(site.last_seen_epoch * 1000).toLocaleString([], lastSeenOptions);
                 const domains = site.domains || [];
                 const matchedByDomain = search && !site.site.toLowerCase().includes(search) &&
                     domains.some(domain => domain.domain.toLowerCase().includes(search));
@@ -532,7 +649,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!isExpanded || domains.length <= 1) return groupRow;
 
                 const detailRows = domains.map(domain => {
-                    const domainLastSeen = new Date(domain.last_seen_epoch * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const domainLastSeen = new Date(domain.last_seen_epoch * 1000).toLocaleString([], lastSeenOptions);
                     return `<tr class="activity-domain-row">
                         <td class="activity-domain-cell"><span>↳</span>${escapeHtml(domain.domain)}</td>
                         <td><div class="activity-category-list">${categoryTags(domain.categories)}</div></td>
@@ -552,8 +669,153 @@ document.addEventListener('DOMContentLoaded', () => {
         const emptyText = activityEmptyState?.querySelector('p');
         if (activityData && !filtered.length) {
             emptyTitle && (emptyTitle.textContent = sites.length ? 'No matching websites' : 'No website activity found');
-            emptyText && (emptyText.textContent = sites.length ? 'Try changing the category or search filter.' : 'Squid recorded no website requests for this client and date.');
+            emptyText && (emptyText.textContent = sites.length ? 'Try changing the category or search filter.' : 'Squid recorded no website requests for this client and period.');
         }
+    }
+
+    function updateOverallDateControls() {
+        if (!overallDateInput) return;
+        const labels = {
+            day: ['Date', 'Previous day', 'Next day', 'Today'],
+            week: ['Date in week', 'Previous week', 'Next week', 'This week'],
+            month: ['Date in month', 'Previous month', 'Next month', 'This month']
+        };
+        const [dateLabel, previousLabel, nextLabel, currentLabel] = labels[overallPeriod];
+        overallDateLabel && (overallDateLabel.textContent = dateLabel);
+        overallPreviousBtn && (overallPreviousBtn.textContent = `← ${previousLabel}`);
+        overallNextBtn && (overallNextBtn.textContent = `${nextLabel} →`);
+        overallCurrentBtn && (overallCurrentBtn.textContent = currentLabel);
+        const periodStart = value => {
+            if (!value) return '';
+            const [year, month, day] = value.split('-').map(Number);
+            const start = new Date(year, month - 1, day);
+            if (overallPeriod === 'week') start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+            if (overallPeriod === 'month') start.setDate(1);
+            return localDateString(start);
+        };
+        overallPreviousBtn && (overallPreviousBtn.disabled = !overallDateInput.value
+            || periodStart(overallDateInput.value) <= periodStart(overallDateInput.min));
+        overallNextBtn && (overallNextBtn.disabled = !overallDateInput.value
+            || periodStart(overallDateInput.value) >= periodStart(overallDateInput.max));
+        overallPeriodButtons?.querySelectorAll('[data-period]').forEach(button => {
+            const active = button.dataset.period === overallPeriod;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
+    }
+
+    function moveOverallPeriod(direction) {
+        if (!overallDateInput?.value) return;
+        const [year, month, day] = overallDateInput.value.split('-').map(Number);
+        const moved = new Date(year, month - 1, day);
+        if (overallPeriod === 'month') moved.setMonth(moved.getMonth() + direction, 1);
+        else moved.setDate(moved.getDate() + direction * (overallPeriod === 'week' ? 7 : 1));
+        const value = localDateString(moved);
+        overallDateInput.value = value < overallDateInput.min
+            ? overallDateInput.min
+            : value > overallDateInput.max ? overallDateInput.max : value;
+        updateOverallDateControls();
+        loadOverallAnalytics();
+    }
+
+    function selectOverallPeriod(period) {
+        if (!['day', 'week', 'month'].includes(period)) return;
+        overallPeriod = period;
+        updateOverallDateControls();
+        loadOverallAnalytics();
+    }
+
+    async function loadOverallAnalytics() {
+        if (!overallDateInput?.value) return;
+        overallError?.classList.add('hidden');
+        overallRefreshBtn && (overallRefreshBtn.disabled = true);
+        overallReportNote && (overallReportNote.textContent = 'Analyzing overall Squid traffic…');
+        try {
+            if (!devicesData.length) {
+                const devicesResponse = await fetch('/api/devices');
+                if (devicesResponse.ok) devicesData = (await devicesResponse.json()).devices || [];
+            }
+            const params = new URLSearchParams({
+                date: overallDateInput.value,
+                period: overallPeriod
+            });
+            const response = await fetch(`/api/overall-analytics?${params}`);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Could not load overall analytics.');
+            overallData = data;
+            renderOverallAnalytics();
+        } catch (error) {
+            overallData = null;
+            if (overallError) {
+                overallError.textContent = error.message;
+                overallError.classList.remove('hidden');
+            }
+            renderOverallAnalytics();
+        } finally {
+            overallRefreshBtn && (overallRefreshBtn.disabled = false);
+        }
+    }
+
+    function renderOverallAnalytics() {
+        const data = overallData;
+        overallRequests && (overallRequests.textContent = data ? data.requests.toLocaleString() : '—');
+        overallBandwidth && (overallBandwidth.textContent = data ? formatBytes(data.bandwidth_bytes) : '—');
+        overallClients && (overallClients.textContent = data ? data.unique_clients.toLocaleString() : '—');
+        overallDomains && (overallDomains.textContent = data ? data.unique_domains.toLocaleString() : '—');
+        overallCacheHits && (overallCacheHits.textContent = data ? `${data.cache_hits.toLocaleString()} (${data.cache_hit_percent}%)` : '—');
+        overallBlocked && (overallBlocked.textContent = data ? data.blocked_requests.toLocaleString() : '—');
+        overallResponseTime && (overallResponseTime.textContent = data ? `${data.average_response_ms.toLocaleString()} ms` : '—');
+
+        const range = data?.period_start && data?.period_end
+            ? data.period_start === data.period_end
+                ? data.period_start
+                : `${data.period_start} – ${data.period_end}`
+            : '';
+        overallResultsTitle && (overallResultsTitle.textContent = `Requests by hour${range ? ` · ${range}` : ''}`);
+        if (overallReportNote) {
+            const sources = {
+                live: 'Live report.',
+                generated: 'Report generated and saved.',
+                saved: 'Loaded from saved report.',
+                'saved-daily': 'Built from saved daily reports.'
+            };
+            const coverage = data && !data.coverage_complete
+                ? ` Coverage is incomplete: ${data.days_covered} of ${data.days_expected} days were archived.`
+                : '';
+            overallReportNote.textContent = data
+                ? `${sources[data.report_source] || ''} ${data.error_requests.toLocaleString()} error responses and ${data.blocked_requests.toLocaleString()} blocked requests.${coverage}`
+                : 'Choose a date or period to load global analytics.';
+        }
+
+        if (overallHourlyChart) {
+            const hourly = new Map((data?.hourly || []).map(row => [row.hour, row]));
+            const maxRequests = Math.max(1, ...[...hourly.values()].map(row => row.requests));
+            overallHourlyChart.innerHTML = Array.from({ length: 24 }, (_, hour) => {
+                const row = hourly.get(hour) || { requests: 0, bandwidth_bytes: 0 };
+                const height = Math.max(row.requests ? 4 : 0, Math.round(row.requests * 100 / maxRequests));
+                return `<div class="overall-hour-column" title="${hour}:00 — ${row.requests.toLocaleString()} requests, ${escapeHtml(formatBytes(row.bandwidth_bytes))}">
+                    <span class="overall-hour-value">${row.requests ? row.requests.toLocaleString() : ''}</span>
+                    <div class="overall-hour-track"><span style="height:${height}%"></span></div>
+                    <span class="overall-hour-label">${String(hour).padStart(2, '0')}</span>
+                </div>`;
+            }).join('');
+        }
+
+        const metricRows = (rows, identity, includeBlocked = false, label = value => value) =>
+            (rows || []).slice(0, 50).map(row => `<tr>
+                <td><strong>${escapeHtml(label(row[identity], row))}</strong></td>
+                <td>${row.requests.toLocaleString()}</td>
+                <td>${escapeHtml(formatBytes(row.bandwidth_bytes))}</td>
+                ${includeBlocked ? `<td class="${row.blocked_requests ? 'activity-blocked-value' : ''}">${row.blocked_requests.toLocaleString()}</td>` : ''}
+            </tr>`).join('');
+        const clientLabel = ip => {
+            const device = devicesData.find(candidate => candidate.ip === ip);
+            return device ? `${device.hostname || device.name || ip} (${ip})` : ip;
+        };
+        overallDomainsBody && (overallDomainsBody.innerHTML = metricRows(data?.domains, 'domain', true));
+        overallClientsBody && (overallClientsBody.innerHTML = metricRows(data?.clients, 'client_ip', true, clientLabel));
+        overallResultsBody && (overallResultsBody.innerHTML = metricRows(data?.results, 'result'));
+        overallMethodsBody && (overallMethodsBody.innerHTML = metricRows(data?.methods, 'method'));
     }
 
     function auditChangeSummary(change) {
@@ -746,8 +1008,17 @@ document.addEventListener('DOMContentLoaded', () => {
         updateActivityDateControls();
         loadActivity();
     });
-    activityPreviousDayBtn && activityPreviousDayBtn.addEventListener('click', loadPreviousActivityDay);
-    activityNextDayBtn && activityNextDayBtn.addEventListener('click', loadNextActivityDay);
+    activityPreviousDayBtn && activityPreviousDayBtn.addEventListener('click', () => moveActivityPeriod(-1));
+    activityNextDayBtn && activityNextDayBtn.addEventListener('click', () => moveActivityPeriod(1));
+    activityCurrentPeriodBtn && activityCurrentPeriodBtn.addEventListener('click', () => {
+        activityDateInput.value = localToday();
+        updateActivityDateControls();
+        loadActivity();
+    });
+    activityPeriodButtons && activityPeriodButtons.addEventListener('click', event => {
+        const button = event.target.closest('[data-period]');
+        if (button) selectActivityPeriod(button.dataset.period);
+    });
     activityRefreshBtn && activityRefreshBtn.addEventListener('click', loadActivity);
     activityCategoryFilter && activityCategoryFilter.addEventListener('change', renderActivity);
     activitySearchInput && activitySearchInput.addEventListener('input', renderActivity);
@@ -759,6 +1030,22 @@ document.addEventListener('DOMContentLoaded', () => {
         else expandedActivitySites.add(siteKey);
         renderActivity();
     });
+    overallDateInput && overallDateInput.addEventListener('change', () => {
+        updateOverallDateControls();
+        loadOverallAnalytics();
+    });
+    overallPreviousBtn && overallPreviousBtn.addEventListener('click', () => moveOverallPeriod(-1));
+    overallNextBtn && overallNextBtn.addEventListener('click', () => moveOverallPeriod(1));
+    overallCurrentBtn && overallCurrentBtn.addEventListener('click', () => {
+        overallDateInput.value = localToday();
+        updateOverallDateControls();
+        loadOverallAnalytics();
+    });
+    overallPeriodButtons && overallPeriodButtons.addEventListener('click', event => {
+        const button = event.target.closest('[data-period]');
+        if (button) selectOverallPeriod(button.dataset.period);
+    });
+    overallRefreshBtn && overallRefreshBtn.addEventListener('click', loadOverallAnalytics);
     auditRefreshBtn && auditRefreshBtn.addEventListener('click', loadAuditLog);
     auditTableBody && auditTableBody.addEventListener('click', event => {
         const summary = event.target.closest('.audit-diff-details > summary');
@@ -820,6 +1107,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 isAuthenticated = true; currentUser = username;
                 updateAuthUI(); authModal.classList.add('hidden');
                 if (requestedProtectedView === 'activity') switchToActivity();
+                else if (requestedProtectedView === 'overall') switchToOverall();
                 else if (requestedProtectedView === 'audit') switchToAudit();
                 else switchToAdmin();
             } else {

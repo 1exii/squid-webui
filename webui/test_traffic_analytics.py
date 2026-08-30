@@ -4,6 +4,8 @@ import unittest
 from datetime import date, datetime
 
 from traffic_analytics import (
+    activity_period_bounds,
+    aggregate_activity_reports,
     build_daily_activity_archive,
     categories_for_host,
     extract_hostname,
@@ -117,6 +119,46 @@ class TrafficAnalyticsTests(unittest.TestCase):
         self.assertEqual(
             archive[second_day.isoformat()]["192.0.2.12"]["blocked_requests"], 1
         )
+
+    def test_calendar_period_bounds_use_monday_weeks_and_full_months(self):
+        anchor = date(2026, 8, 29)
+        self.assertEqual(
+            activity_period_bounds("week", anchor),
+            (date(2026, 8, 24), date(2026, 8, 30)),
+        )
+        self.assertEqual(
+            activity_period_bounds("month", anchor),
+            (date(2026, 8, 1), date(2026, 8, 31)),
+        )
+
+    def test_aggregate_activity_reports_sums_daily_site_and_domain_totals(self):
+        client_ip = "192.0.2.11"
+        first = summarize_client_events([
+            {"timestamp": 100.0, "host": "youtube.com", "blocked": False},
+            {"timestamp": 160.0, "host": "r1.googlevideo.com", "blocked": False},
+        ], {"videos": {"youtube.com", "googlevideo.com"}})
+        second = summarize_client_events([
+            {"timestamp": 200.0, "host": "youtube.com", "blocked": True},
+        ], {"videos": {"youtube.com", "googlevideo.com"}})
+        daily = {
+            "2026-08-24": {client_ip: first},
+            "2026-08-25": {client_ip: second},
+        }
+
+        report = aggregate_activity_reports(
+            daily, "week", date(2026, 8, 24), date(2026, 8, 30), client_ip
+        )
+        youtube = report["sites"][0]
+
+        self.assertEqual(report["period"], "week")
+        self.assertEqual(report["days_expected"], 7)
+        self.assertEqual(report["days_covered"], 2)
+        self.assertEqual(report["requests"], 3)
+        self.assertEqual(report["blocked_requests"], 1)
+        self.assertEqual(report["estimated_seconds"], 120)
+        self.assertEqual(youtube["requests"], 3)
+        self.assertEqual(youtube["domain_count"], 2)
+        self.assertEqual(youtube["categories"], ["videos"])
 
 
 if __name__ == "__main__":
