@@ -20,6 +20,9 @@ DOCKERFILE_DIR="${SQUID_DIR}/docker"  # contains Dockerfile + docker-entrypoint.
 QNAP_SERVER="${QNAP_USER}@${QNAP_IP}"
 DOCKER="${QNAP_DOCKER}"
 DOCKER_NET="${QNAP_DOCKER_NETWORK}"
+# QNAP stops containers explicitly during NAS shutdown. `unless-stopped` keeps
+# that state after Docker starts again, so use `always` for unattended boot.
+RESTART_POLICY="unless-stopped"
 
 # --- 3. HELPER FUNCTIONS ---
 
@@ -151,7 +154,7 @@ function create_squid() {
             --name "$NAME" --hostname "$NAME" \
             --net "$DOCKER_NET" --ip "$IP" \
             --cap-add=NET_ADMIN \
-            --restart=unless-stopped \
+            --restart="$RESTART_POLICY" \
             -e TZ="$TIMEZONE" \
             -e SQUID_HTTP_PORT="$SQUID_HTTP_PORT" \
             -e SQUID_HTTPS_PORT="$SQUID_HTTPS_PORT" \
@@ -225,7 +228,7 @@ function create_webui() {
         $DOCKER run -d \
             --name "$NAME" --hostname "$NAME" \
             --net "$DOCKER_NET" --ip "$IP" \
-            --restart=unless-stopped \
+            --restart="$RESTART_POLICY" \
             -e TZ="$TIMEZONE" \
             -e RUNNING_ON_NAS="true" \
             -e QNAP_IP="$QNAP_IP" \
