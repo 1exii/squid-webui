@@ -388,8 +388,14 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                         <span>Date</span>
                         <input type="date" id="activity-date-input">
                     </label>
+                    <button id="activity-previous-day-btn" class="btn btn-secondary" type="button">← Previous day</button>
                     <button id="activity-refresh-btn" class="btn btn-secondary">↻ Refresh</button>
                 </div>
+            </div>
+
+            <div class="top7-devices-card glass-panel">
+                <span class="top7-label">⭐ Quick Select:</span>
+                <div id="activity-quick-devices-buttons" class="top7-buttons-group"></div>
             </div>
 
             <div id="activity-error" class="error-banner hidden"></div>

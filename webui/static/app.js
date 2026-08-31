@@ -44,7 +44,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Website activity
     const activityClientSelect  = document.getElementById('activity-client-select');
+    const activityQuickDevicesButtons = document.getElementById('activity-quick-devices-buttons');
     const activityDateInput     = document.getElementById('activity-date-input');
+    const activityPreviousDayBtn = document.getElementById('activity-previous-day-btn');
     const activityRefreshBtn    = document.getElementById('activity-refresh-btn');
     const activityCategoryFilter = document.getElementById('activity-category-filter');
     const activitySearchInput   = document.getElementById('activity-search-input');
@@ -338,6 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
             activityDateInput.max = localToday();
             activityDateInput.min = localDaysAgo(activityRetentionDays);
         }
+        updateActivityDateControls();
         loadActivityClients();
     }
 
@@ -371,6 +374,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     activityClientSelect.appendChild(option);
                 });
                 activityClientSelect.value = previous || currentDeviceIp || devicesData[0]?.ip || '';
+                renderActivityQuickDeviceButtons();
                 activityClientsLoaded = true;
             } catch (error) {
                 showActivityError(error.message);
@@ -378,6 +382,43 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         if (activityClientSelect.value) loadActivity();
+    }
+
+    function renderActivityQuickDeviceButtons() {
+        if (!activityQuickDevicesButtons) return;
+        activityQuickDevicesButtons.innerHTML = '';
+        devicesData.slice(0, 7).forEach(device => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `top7-btn ${device.ip === activityClientSelect?.value ? 'active' : ''}`;
+            button.textContent = `${getIcon(device.name)} ${device.name}`;
+            button.title = `${device.ip} — ${device.hostname}`;
+            button.addEventListener('click', () => {
+                activityClientSelect.value = device.ip;
+                renderActivityQuickDeviceButtons();
+                loadActivity();
+            });
+            activityQuickDevicesButtons.appendChild(button);
+        });
+    }
+
+    function updateActivityDateControls() {
+        if (!activityPreviousDayBtn) return;
+        activityPreviousDayBtn.disabled = !activityDateInput?.value
+            || activityDateInput.value <= activityDateInput.min;
+    }
+
+    function loadPreviousActivityDay() {
+        if (!activityDateInput?.value) return;
+        const [year, month, day] = activityDateInput.value.split('-').map(Number);
+        const previousDay = new Date(year, month - 1, day);
+        previousDay.setDate(previousDay.getDate() - 1);
+        const previousValue = localDateString(previousDay);
+        activityDateInput.value = previousValue < activityDateInput.min
+            ? activityDateInput.min
+            : previousValue;
+        updateActivityDateControls();
+        loadActivity();
     }
 
     async function loadActivity() {
@@ -676,8 +717,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    activityClientSelect && activityClientSelect.addEventListener('change', loadActivity);
-    activityDateInput && activityDateInput.addEventListener('change', loadActivity);
+    activityClientSelect && activityClientSelect.addEventListener('change', () => {
+        renderActivityQuickDeviceButtons();
+        loadActivity();
+    });
+    activityDateInput && activityDateInput.addEventListener('change', () => {
+        updateActivityDateControls();
+        loadActivity();
+    });
+    activityPreviousDayBtn && activityPreviousDayBtn.addEventListener('click', loadPreviousActivityDay);
     activityRefreshBtn && activityRefreshBtn.addEventListener('click', loadActivity);
     activityCategoryFilter && activityCategoryFilter.addEventListener('change', renderActivity);
     activitySearchInput && activitySearchInput.addEventListener('input', renderActivity);
