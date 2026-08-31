@@ -565,6 +565,13 @@ select {
     border-radius: var(--radius-lg);
 }
 
+.activity-inline-period {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 14px;
+}
+
 .activity-period-buttons {
     display: inline-flex;
     gap: 6px;
@@ -1128,6 +1135,12 @@ select {
     .activity-period-card {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .activity-inline-period {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 8px;
     }
 
     .activity-period-buttons {
