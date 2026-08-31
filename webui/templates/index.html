@@ -486,6 +486,14 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                 <div class="toolbar-title">
                     <h2>Website Activity Reports</h2>
                     <p>Daily, weekly, and monthly reports retained for one year. Active time is an estimate from request timing, not foreground screen time.</p>
+                    <div class="activity-inline-period" aria-label="Report period">
+                        <span class="top8-label">Report period:</span>
+                        <div id="activity-period-buttons" class="activity-period-buttons">
+                            <button class="activity-period-btn active" type="button" data-period="day" aria-pressed="true">Day</button>
+                            <button class="activity-period-btn" type="button" data-period="week" aria-pressed="false">Week</button>
+                            <button class="activity-period-btn" type="button" data-period="month" aria-pressed="false">Month</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="activity-controls">
                     <label>
@@ -502,15 +510,6 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                     <button id="activity-current-period-btn" class="btn btn-secondary" type="button">Today</button>
                     <button id="activity-next-day-btn" class="btn btn-secondary" type="button">Next day →</button>
                     <button id="activity-refresh-btn" class="btn btn-secondary">↻ Refresh</button>
-                </div>
-            </div>
-
-            <div class="activity-period-card glass-panel" aria-label="Report period">
-                <span class="top8-label">Report period:</span>
-                <div id="activity-period-buttons" class="activity-period-buttons">
-                    <button class="activity-period-btn active" type="button" data-period="day" aria-pressed="true">Day</button>
-                    <button class="activity-period-btn" type="button" data-period="week" aria-pressed="false">Week</button>
-                    <button class="activity-period-btn" type="button" data-period="month" aria-pressed="false">Month</button>
                 </div>
             </div>
 
