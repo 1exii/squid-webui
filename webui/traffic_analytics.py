@@ -195,6 +195,50 @@ def parse_daily_events(access_log_path, target_date, client_ip=""):
     return events
 
 
+def parse_events_for_dates(access_log_path, target_dates):
+    """Parse the logs once and bucket events for several local calendar days."""
+    target_dates = set(target_dates)
+    if not target_dates:
+        return {}
+
+    first_epoch, _ = _day_epoch_bounds(min(target_dates))
+    _, last_epoch = _day_epoch_bounds(max(target_dates))
+    events_by_date = {target_date: defaultdict(list) for target_date in target_dates}
+
+    for path in iter_access_log_paths(access_log_path):
+        try:
+            with _open_log(path) as handle:
+                for line in handle:
+                    fields = line.split()
+                    if len(fields) < 7:
+                        continue
+                    try:
+                        timestamp = float(fields[0])
+                    except ValueError:
+                        continue
+                    if timestamp < first_epoch or timestamp >= last_epoch:
+                        continue
+
+                    target_date = datetime.fromtimestamp(timestamp).date()
+                    if target_date not in target_dates:
+                        continue
+                    host = extract_hostname(fields[5], fields[6])
+                    if not host:
+                        continue
+                    site = display_site(host)
+                    if not site:
+                        continue
+                    result = fields[3]
+                    events_by_date[target_date][fields[2]].append({
+                        "timestamp": timestamp,
+                        "host": site,
+                        "blocked": result.startswith("TCP_DENIED/") or result.endswith("/403"),
+                    })
+        except OSError:
+            continue
+    return events_by_date
+
+
 def summarize_client_events(events, category_domains):
     """Attribute active intervals and group hostnames into expandable websites."""
     ordered = sorted(events, key=lambda event: event["timestamp"])
@@ -266,20 +310,48 @@ def summarize_client_events(events, category_domains):
     }
 
 
+def _activity_metadata(target_date, client_ip, clients_with_activity=None):
+    return {
+        "date": target_date.isoformat(),
+        "client_ip": client_ip,
+        "clients_with_activity": clients_with_activity or [],
+        "estimation": {
+            "idle_cutoff_seconds": IDLE_CUTOFF_SECONDS,
+            "last_event_seconds": LAST_EVENT_SECONDS,
+            "description": "Estimated from gaps between proxy requests; gaps over 5 minutes count as 30 seconds.",
+        },
+    }
+
+
+def empty_daily_activity(target_date, client_ip, clients_with_activity=None):
+    summary = summarize_client_events([], {})
+    summary.update(_activity_metadata(target_date, client_ip, clients_with_activity))
+    return summary
+
+
 def build_daily_activity(access_log_path, blocklist_dir, target_date, client_ip=""):
     category_domains = load_category_domains(blocklist_dir)
     events_by_client = parse_daily_events(access_log_path, target_date, client_ip)
     clients = sorted(events_by_client)
     selected_events = events_by_client.get(client_ip, []) if client_ip else []
     summary = summarize_client_events(selected_events, category_domains)
-    summary.update({
-        "date": target_date.isoformat(),
-        "client_ip": client_ip,
-        "clients_with_activity": clients,
-        "estimation": {
-            "idle_cutoff_seconds": IDLE_CUTOFF_SECONDS,
-            "last_event_seconds": LAST_EVENT_SECONDS,
-            "description": "Estimated from gaps between proxy requests; gaps over 5 minutes count as 30 seconds.",
-        },
-    })
+    summary.update(_activity_metadata(target_date, client_ip, clients))
     return summary
+
+
+def build_daily_activity_archive(access_log_path, blocklist_dir, target_dates):
+    """Build all per-client reports for several dates with one log scan."""
+    target_dates = list(dict.fromkeys(target_dates))
+    category_domains = load_category_domains(blocklist_dir)
+    events_by_date = parse_events_for_dates(access_log_path, target_dates)
+    archive = {}
+    for target_date in target_dates:
+        daily_events = events_by_date.get(target_date, {})
+        clients = sorted(daily_events)
+        reports = {}
+        for client_ip in clients:
+            summary = summarize_client_events(daily_events[client_ip], category_domains)
+            summary.update(_activity_metadata(target_date, client_ip, clients))
+            reports[client_ip] = summary
+        archive[target_date.isoformat()] = reports
+    return archive

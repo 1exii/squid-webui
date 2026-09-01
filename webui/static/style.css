@@ -284,7 +284,7 @@ kbd {
 
 /* Admin Dashboard Styles */
 .main-content {
-    max-width: 1200px;
+    max-width: 1800px;
     margin: 32px auto;
     padding: 0 24px;
     width: 100%;
@@ -934,6 +934,7 @@ select {
 
 @media (max-width: 900px) {
     .top-nav,
+    .dashboard-toolbar,
     .activity-toolbar,
     .activity-results-header {
         align-items: stretch;
@@ -941,10 +942,20 @@ select {
     }
 
     .nav-tabs,
+    .toolbar-controls,
     .activity-controls,
     .activity-filters {
         align-items: stretch;
         flex-wrap: wrap;
+    }
+
+    .top-nav {
+        padding: 14px 20px;
+    }
+
+    .nav-tabs {
+        width: 100%;
+        overflow-x: auto;
     }
 
     .activity-controls label,
@@ -960,7 +971,41 @@ select {
 
 @media (max-width: 560px) {
     .main-content {
-        padding: 0 14px;
+        margin: 20px auto;
+        padding: 0 12px;
+    }
+
+    .nav-tab-btn {
+        flex: 0 0 auto;
+        padding: 8px 12px;
+    }
+
+    .nav-right,
+    .toolbar-controls {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .device-dropdown-select,
+    .search-box {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .top8-devices-card {
+        align-items: stretch;
+        padding: 14px;
+    }
+
+    .top8-buttons-group {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+    }
+
+    .top8-btn {
+        min-width: 0;
+        padding: 8px 10px;
     }
 
     .activity-summary-grid {
@@ -1088,8 +1133,8 @@ input:focus, select:focus {
     border-radius: 20px;
 }
 
-/* Top 7 Devices Quick Selection Bar */
-.top7-devices-card {
+/* Top 8 Devices Quick Selection Bar */
+.top8-devices-card {
     display: flex;
     align-items: center;
     gap: 16px;
@@ -1100,7 +1145,7 @@ input:focus, select:focus {
     border: 1px solid rgba(99, 102, 241, 0.25);
     flex-wrap: wrap;
 }
-.top7-label {
+.top8-label {
     font-size: 13px;
     font-weight: 700;
     color: var(--accent);
@@ -1108,12 +1153,12 @@ input:focus, select:focus {
     letter-spacing: 0.5px;
     white-space: nowrap;
 }
-.top7-buttons-group {
+.top8-buttons-group {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
 }
-.top7-btn {
+.top8-btn {
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -1127,13 +1172,13 @@ input:focus, select:focus {
     cursor: pointer;
     transition: all 0.2s ease;
 }
-.top7-btn:hover {
+.top8-btn:hover {
     background: var(--primary);
     color: #ffffff;
     border-color: var(--primary);
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
 }
-.top7-btn.active {
+.top8-btn.active {
     background: linear-gradient(135deg, var(--primary), var(--primary-hover));
     color: #ffffff;
     border-color: rgba(99, 102, 241, 0.6);
@@ -1747,4 +1792,43 @@ kbd {
 .btn-lg {
     padding: 14px 28px;
     font-size: 16px;
+}
+
+/* Keep late-defined dashboard components responsive on narrow phones. */
+@media (max-width: 560px) {
+    .toolbar-controls,
+    .action-footer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .device-dropdown-select,
+    .search-box {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .top8-devices-card {
+        align-items: stretch;
+        padding: 14px;
+    }
+
+    .top8-buttons-group {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+    }
+
+    .top8-btn {
+        min-width: 0;
+        padding: 8px 10px;
+    }
+
+    .action-footer {
+        gap: 14px;
+    }
+
+    .btn-lg {
+        width: 100%;
+    }
 }
