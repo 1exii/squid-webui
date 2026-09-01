@@ -4,6 +4,7 @@ import unittest
 from datetime import date, datetime
 
 from traffic_analytics import (
+    build_daily_activity_archive,
     categories_for_host,
     extract_hostname,
     parse_daily_events,
@@ -94,6 +95,27 @@ class TrafficAnalyticsTests(unittest.TestCase):
         self.assertEqual(
             sorted(event["host"] for event in events["192.0.2.11"]),
             ["current.test", "rotated.test"],
+        )
+
+    def test_archive_builds_multiple_days_and_clients_in_one_result(self):
+        first_day = date(2026, 8, 20)
+        second_day = date(2026, 8, 21)
+        lines = [
+            f"{datetime(2026, 8, 20, 12, 0).timestamp()} 10 192.0.2.11 TCP_TUNNEL/200 100 CONNECT first.test:443 - HIER_DIRECT/1.2.3.4 -\n",
+            f"{datetime(2026, 8, 21, 12, 0).timestamp()} 10 192.0.2.12 TCP_DENIED/403 100 CONNECT second.test:443 - HIER_NONE/- -\n",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "access.log")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.writelines(lines)
+            archive = build_daily_activity_archive(
+                path, directory, [first_day, second_day]
+            )
+
+        self.assertEqual(list(archive[first_day.isoformat()]), ["192.0.2.11"])
+        self.assertEqual(list(archive[second_day.isoformat()]), ["192.0.2.12"])
+        self.assertEqual(
+            archive[second_day.isoformat()]["192.0.2.12"]["blocked_requests"], 1
         )
 
 

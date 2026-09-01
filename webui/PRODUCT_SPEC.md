@@ -100,8 +100,9 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 
 ### 3.4 Daily Website Activity (Admin Only)
 - Reads the active and numbered rotated Squid native `access.log` files from a read-only WebUI container mount.
-- Lets an administrator select a configured client and any retained date from the last 30 days.
+- Lets an administrator select a configured client and any retained date from the last 100 days, with previous/next-day controls that cannot advance beyond today.
 - Rotates Squid logs automatically at local midnight and keeps 30 numbered daily generations on the persistent log volume.
+- Generates and stores per-client reports for completed days on the persistent configuration volume, backfills days still present in the 30-day log window, and removes saved reports after 100 days.
 - Groups hostname-visible traffic into website/service totals by default. Ordinary subdomains roll up to their registrable domain, while known multi-domain services such as YouTube, Netflix, Roblox, Spotify, Facebook, Instagram, and TikTok also include their first-party CDN/API domains.
 - Each website row can expand into its contributing domain names with per-domain time, category, request, blocked-request, and last-seen details.
 - Estimates active time by assigning the gap until the next proxy request to the current website. Gaps longer than five minutes count as a 30-second tail. This is labeled as an estimate because proxy traffic includes background services and cannot identify foreground screen time.

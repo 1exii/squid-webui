@@ -17,7 +17,17 @@ from config_audit import (
     policy_changes,
     read_audit_records,
 )
-from traffic_analytics import build_daily_activity
+from activity_reports import (
+    load_report,
+    prune_reports,
+    report_exists,
+    save_reports,
+)
+from traffic_analytics import (
+    build_daily_activity,
+    build_daily_activity_archive,
+    empty_daily_activity,
+)
 
 app = Flask(__name__)
 
@@ -27,10 +37,14 @@ SQUID_BLOCKLIST_DIR = os.environ.get("SQUID_BLOCKLIST_DIR", "/etc/squid/block-li
 SQUID_CERT_DIR = os.environ.get("SQUID_CERT_DIR", "/etc/squid/certs")
 ROUTER_HOSTS_CONF = os.environ.get("ROUTER_HOSTS_CONF", "/etc/squid/router/proxy-hosts.conf")
 SQUID_ACCESS_LOG = os.environ.get("SQUID_ACCESS_LOG", "/var/log/squid/access.log")
+SQUID_ACTIVITY_REPORT_DIR = os.environ.get(
+    "SQUID_ACTIVITY_REPORT_DIR", os.path.join(SQUID_CONFIG_DIR, "activity-reports")
+)
 SQUID_AUDIT_LOG = os.environ.get(
     "SQUID_AUDIT_LOG", os.path.join(SQUID_CONFIG_DIR, "configuration_audit.jsonl")
 )
-ACTIVITY_RETENTION_DAYS = 30
+ACTIVITY_RETENTION_DAYS = 100
+ACTIVITY_LOG_BACKFILL_DAYS = 30
 
 RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
 SSL_BUMP_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "ssl_bump.acl")
@@ -94,6 +108,7 @@ app.secret_key = _load_or_create_secret_key()
 # Serialises ACL compilation + reload. Guards against two requests (or the
 # background expiry thread) interleaving writes to rules.acl / ssl_bump.acl.
 COMPILE_LOCK = threading.Lock()
+ACTIVITY_REPORT_LOCK = threading.Lock()
 
 # IPs that get the Admin page as the default landing page are deployment data.
 # An empty value requires authentication for every client.
@@ -1309,7 +1324,7 @@ def get_activity():
         return jsonify({"error": "date must use YYYY-MM-DD format"}), 400
 
     if (target_date > date.today() or
-            target_date < date.today() - timedelta(days=ACTIVITY_RETENTION_DAYS)):
+            target_date < date.today() - timedelta(days=ACTIVITY_RETENTION_DAYS - 1)):
         return jsonify({
             "error": f"date must be within the last {ACTIVITY_RETENTION_DAYS} days"
         }), 400
@@ -1318,16 +1333,37 @@ def get_activity():
             socket.inet_pton(socket.AF_INET, client_ip)
         except OSError:
             return jsonify({"error": "client_ip must be a valid IPv4 address"}), 400
-    if not os.path.isfile(SQUID_ACCESS_LOG):
-        return jsonify({"error": "Squid access log is not available"}), 503
-
     try:
-        return jsonify(build_daily_activity(
-            SQUID_ACCESS_LOG,
-            SQUID_BLOCKLIST_DIR,
-            target_date,
-            client_ip,
-        ))
+        if target_date < date.today():
+            with ACTIVITY_REPORT_LOCK:
+                cache_found, report = load_report(
+                    SQUID_ACTIVITY_REPORT_DIR, target_date, client_ip
+                )
+                if cache_found:
+                    result = report or empty_daily_activity(target_date, client_ip)
+                    result["report_source"] = "saved"
+                    return jsonify(result)
+
+                if not os.path.isfile(SQUID_ACCESS_LOG):
+                    return jsonify({"error": "Squid access log is not available and this day has not been saved"}), 503
+                archive = build_daily_activity_archive(
+                    SQUID_ACCESS_LOG, SQUID_BLOCKLIST_DIR, [target_date]
+                )
+                reports = archive.get(target_date.isoformat(), {})
+                save_reports(SQUID_ACTIVITY_REPORT_DIR, target_date, reports)
+                result = reports.get(client_ip) or empty_daily_activity(
+                    target_date, client_ip, sorted(reports)
+                )
+                result["report_source"] = "generated"
+                return jsonify(result)
+
+        if not os.path.isfile(SQUID_ACCESS_LOG):
+            return jsonify({"error": "Squid access log is not available"}), 503
+        result = build_daily_activity(
+            SQUID_ACCESS_LOG, SQUID_BLOCKLIST_DIR, target_date, client_ip
+        )
+        result["report_source"] = "live"
+        return jsonify(result)
     except Exception as e:
         print(f"Error in activity API: {e}")
         return jsonify({"error": "Could not analyze the Squid access log"}), 500
@@ -1671,6 +1707,44 @@ def daily_expiration_task():
             print(f"[expiry] Error in daily_expiration_task: {e}")
 
 
+def archive_activity_reports():
+    """Backfill completed days still present in Squid's rotating logs."""
+    if not os.path.isfile(SQUID_ACCESS_LOG):
+        return
+    prune_reports(SQUID_ACTIVITY_REPORT_DIR, ACTIVITY_RETENTION_DAYS)
+    target_dates = [
+        date.today() - timedelta(days=offset)
+        for offset in range(1, ACTIVITY_LOG_BACKFILL_DAYS + 1)
+        if not report_exists(
+            SQUID_ACTIVITY_REPORT_DIR, date.today() - timedelta(days=offset)
+        )
+    ]
+    if not target_dates:
+        return
+
+    print(f"[activity] Archiving {len(target_dates)} completed daily report(s).")
+    archive = build_daily_activity_archive(
+        SQUID_ACCESS_LOG, SQUID_BLOCKLIST_DIR, target_dates
+    )
+    with ACTIVITY_REPORT_LOCK:
+        for target_date in target_dates:
+            save_reports(
+                SQUID_ACTIVITY_REPORT_DIR,
+                target_date,
+                archive.get(target_date.isoformat(), {}),
+            )
+
+
+def activity_archive_task():
+    """Keep yesterday archived and expire reports beyond 100 days."""
+    while True:
+        try:
+            archive_activity_reports()
+        except Exception as e:
+            print(f"[activity] Error archiving daily reports: {e}")
+        time.sleep(3600)
+
+
 def _is_primary_worker():
     """
     True when this process should own the singleton startup work.
@@ -1707,8 +1781,10 @@ if _is_primary_worker():
 
     expiration_thread = threading.Thread(target=daily_expiration_task, daemon=True)
     expiration_thread.start()
+    activity_thread = threading.Thread(target=activity_archive_task, daemon=True)
+    activity_thread.start()
 else:
-    print("[startup] Secondary worker — skipping ACL compilation and expiry thread.")
+    print("[startup] Secondary worker — skipping ACL compilation and background threads.")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("WEBUI_PORT", "3131")), debug=False)

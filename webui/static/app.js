@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const adminRequested      = !!window.WEBUI_CONTEXT?.adminRequested;
     const activityRetentionDays = Number(window.WEBUI_CONTEXT?.activityRetentionDays || 30);
 
-    const top7DevicesButtons  = document.getElementById('top7-devices-buttons');
+    const top8DevicesButtons  = document.getElementById('top8-devices-buttons');
     const allDevicesDropdown  = document.getElementById('all-devices-dropdown');
     const deviceSearchInput   = document.getElementById('device-search-input');
     const proxyHostsWarning   = document.getElementById('proxy-hosts-warning');
@@ -47,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const activityQuickDevicesButtons = document.getElementById('activity-quick-devices-buttons');
     const activityDateInput     = document.getElementById('activity-date-input');
     const activityPreviousDayBtn = document.getElementById('activity-previous-day-btn');
+    const activityNextDayBtn    = document.getElementById('activity-next-day-btn');
     const activityRefreshBtn    = document.getElementById('activity-refresh-btn');
     const activityCategoryFilter = document.getElementById('activity-category-filter');
     const activitySearchInput   = document.getElementById('activity-search-input');
@@ -335,10 +336,10 @@ document.addEventListener('DOMContentLoaded', () => {
         adminScreen && adminScreen.classList.add('hidden');
         onboardingScreen && onboardingScreen.classList.add('hidden');
         auditScreen && auditScreen.classList.add('hidden');
-        if (activityDateInput && !activityDateInput.value) {
-            activityDateInput.value = localToday();
+        if (activityDateInput) {
             activityDateInput.max = localToday();
-            activityDateInput.min = localDaysAgo(activityRetentionDays);
+            activityDateInput.min = localDaysAgo(activityRetentionDays - 1);
+            if (!activityDateInput.value) activityDateInput.value = localToday();
         }
         updateActivityDateControls();
         loadActivityClients();
@@ -387,10 +388,10 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderActivityQuickDeviceButtons() {
         if (!activityQuickDevicesButtons) return;
         activityQuickDevicesButtons.innerHTML = '';
-        devicesData.slice(0, 7).forEach(device => {
+        devicesData.slice(0, 8).forEach(device => {
             const button = document.createElement('button');
             button.type = 'button';
-            button.className = `top7-btn ${device.ip === activityClientSelect?.value ? 'active' : ''}`;
+            button.className = `top8-btn ${device.ip === activityClientSelect?.value ? 'active' : ''}`;
             button.textContent = `${getIcon(device.name)} ${device.name}`;
             button.title = `${device.ip} — ${device.hostname}`;
             button.addEventListener('click', () => {
@@ -403,9 +404,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateActivityDateControls() {
-        if (!activityPreviousDayBtn) return;
-        activityPreviousDayBtn.disabled = !activityDateInput?.value
+        if (!activityDateInput) return;
+        if (activityPreviousDayBtn) activityPreviousDayBtn.disabled = !activityDateInput.value
             || activityDateInput.value <= activityDateInput.min;
+        if (activityNextDayBtn) activityNextDayBtn.disabled = !activityDateInput.value
+            || activityDateInput.value >= activityDateInput.max;
     }
 
     function loadPreviousActivityDay() {
@@ -417,6 +420,19 @@ document.addEventListener('DOMContentLoaded', () => {
         activityDateInput.value = previousValue < activityDateInput.min
             ? activityDateInput.min
             : previousValue;
+        updateActivityDateControls();
+        loadActivity();
+    }
+
+    function loadNextActivityDay() {
+        if (!activityDateInput?.value) return;
+        const [year, month, day] = activityDateInput.value.split('-').map(Number);
+        const nextDay = new Date(year, month - 1, day);
+        nextDay.setDate(nextDay.getDate() + 1);
+        const nextValue = localDateString(nextDay);
+        activityDateInput.value = nextValue > activityDateInput.max
+            ? activityDateInput.max
+            : nextValue;
         updateActivityDateControls();
         loadActivity();
     }
@@ -481,8 +497,15 @@ document.addEventListener('DOMContentLoaded', () => {
         activityRequestCount && (activityRequestCount.textContent = activityData ? activityData.requests.toLocaleString() : '—');
         activityBlockedCount && (activityBlockedCount.textContent = activityData ? activityData.blocked_requests.toLocaleString() : '—');
         if (activityEstimateNote) {
+            const sourceNote = activityData?.report_source === 'live'
+                ? 'Live report. '
+                : activityData?.report_source === 'generated'
+                    ? 'Report generated and saved. '
+                    : activityData?.report_source === 'saved'
+                        ? 'Loaded from saved report. '
+                        : '';
             activityEstimateNote.textContent = activityData
-                ? `${(activityData.unique_domains || activityData.unique_sites).toLocaleString()} domains grouped into ${activityData.unique_sites.toLocaleString()} websites. ${activityData.estimation.description} Background traffic may be included.`
+                ? `${sourceNote}${(activityData.unique_domains || activityData.unique_sites).toLocaleString()} domains grouped into ${activityData.unique_sites.toLocaleString()} websites. ${activityData.estimation.description} Background traffic may be included.`
                 : 'Choose a client to load its activity.';
         }
 
@@ -726,6 +749,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadActivity();
     });
     activityPreviousDayBtn && activityPreviousDayBtn.addEventListener('click', loadPreviousActivityDay);
+    activityNextDayBtn && activityNextDayBtn.addEventListener('click', loadNextActivityDay);
     activityRefreshBtn && activityRefreshBtn.addEventListener('click', loadActivity);
     activityCategoryFilter && activityCategoryFilter.addEventListener('change', renderActivity);
     activitySearchInput && activitySearchInput.addEventListener('input', renderActivity);
@@ -830,7 +854,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             buildWeeklyGrid();
             buildTodayGrid();
-            renderTop7Buttons();
+            renderTop8Buttons();
             renderDropdown();
             renderAllBlocklistCheckboxes();
 
@@ -846,19 +870,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // TOP 7 / DROPDOWN
+    // TOP 8 / DROPDOWN
     // ─────────────────────────────────────────────────────────────
-    function renderTop7Buttons() {
-        if (!top7DevicesButtons) return;
-        top7DevicesButtons.innerHTML = '';
-        devicesData.slice(0, 7).forEach(dev => {
+    function renderTop8Buttons() {
+        if (!top8DevicesButtons) return;
+        top8DevicesButtons.innerHTML = '';
+        devicesData.slice(0, 8).forEach(dev => {
             const btn = document.createElement('button');
             btn.type = 'button';
-            btn.className = `top7-btn ${dev.ip === currentDeviceIp ? 'active' : ''}`;
+            btn.className = `top8-btn ${dev.ip === currentDeviceIp ? 'active' : ''}`;
             btn.innerHTML = `${getIcon(dev.name)} ${dev.name}`;
             btn.title = `${dev.ip} — ${dev.hostname}`;
             btn.addEventListener('click', () => selectDevice(dev.ip));
-            top7DevicesButtons.appendChild(btn);
+            top8DevicesButtons.appendChild(btn);
         });
     }
 
@@ -891,7 +915,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function selectDevice(ip) {
         if (!ip) return;
         currentDeviceIp = ip;
-        renderTop7Buttons();
+        renderTop8Buttons();
         renderDropdown();
 
         const dev = devicesData.find(d => d.ip === ip) || { ip, hostname: ip, name: ip };
