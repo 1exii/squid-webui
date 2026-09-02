@@ -21,10 +21,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const userBadge           = document.getElementById('user-badge');
     const currentUserSpan     = document.getElementById('current-user');
     const authActionBtn       = document.getElementById('auth-action-btn');
-    const guideTabWindows     = document.getElementById('guide-tab-windows');
-    const guideTabUbuntu      = document.getElementById('guide-tab-ubuntu');
-    const guideContentWindows = document.getElementById('guide-content-windows');
-    const guideContentUbuntu  = document.getElementById('guide-content-ubuntu');
+    const guideTabs           = document.querySelectorAll('[data-guide-target]');
+    const guidePanels         = document.querySelectorAll('[data-guide-panel]');
     const authModal           = document.getElementById('auth-modal');
     const authModalClose      = document.getElementById('auth-modal-close');
     const loginForm           = document.getElementById('login-form');
@@ -773,16 +771,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    if (guideTabWindows && guideTabUbuntu) {
-        guideTabWindows.addEventListener('click', () => {
-            guideTabWindows.classList.add('active'); guideTabUbuntu.classList.remove('active');
-            guideContentWindows.classList.remove('hidden'); guideContentUbuntu.classList.add('hidden');
+    guideTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+            const selectedGuide = tab.dataset.guideTarget;
+            guideTabs.forEach(candidate => {
+                const isSelected = candidate === tab;
+                candidate.classList.toggle('active', isSelected);
+                candidate.setAttribute('aria-selected', String(isSelected));
+            });
+            guidePanels.forEach(panel => {
+                panel.classList.toggle('hidden', panel.dataset.guidePanel !== selectedGuide);
+            });
         });
-        guideTabUbuntu.addEventListener('click', () => {
-            guideTabUbuntu.classList.add('active'); guideTabWindows.classList.remove('active');
-            guideContentUbuntu.classList.remove('hidden'); guideContentWindows.classList.add('hidden');
-        });
-    }
+    });
 
     // ─────────────────────────────────────────────────────────────
     // AUTH MODAL
