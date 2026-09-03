@@ -49,7 +49,7 @@
                 </section>
                 <section class="guide-section">
                     <h4>Reliable Proxy Routing</h4>
-                    <p>Install the Root CA for HTTPS trust, then use the WebUI-hosted <strong>Proxy Auto-Config (PAC)</strong> file to route browser traffic reliably. Transparent HTTPS interception remains available, but CDN hostnames with rapidly rotating DNS addresses can be rejected by Squid's mandatory destination verification.</p>
+                    <p>Install the Root CA for HTTPS trust, then use the WebUI-hosted <strong>Proxy Auto-Config (PAC)</strong> file to route browser traffic reliably. Using the same DNS resolver for clients and Squid minimizes CDN destination mismatches. PAC remains recommended because transparent interception can still fail during DNS cache changes or when browsers use Secure DNS.</p>
                     <ul>
                         <li><strong>PAC URL:</strong> <code>{{ pac_url }}</code> sends Internet traffic through <code>{{ squid_proxy_host }}:{{ squid_proxy_port }}</code> while keeping LAN destinations direct.</li>
                         <li><strong>Router Safety Net:</strong> The configured router continues redirecting direct HTTP, HTTPS, and Spotify AP traffic from registered client IPs.</li>
