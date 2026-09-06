@@ -8,6 +8,7 @@ from activity_reports import (
     load_overall_report,
     load_report,
     load_reports,
+    load_reports_snapshot,
     period_report_exists,
     overall_report_exists,
     prune_period_reports,
@@ -55,6 +56,25 @@ class ActivityReportCacheTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             save_reports(directory, target, reports)
             self.assertEqual(load_reports(directory, target), (True, reports))
+
+    def test_daily_snapshot_round_trip_includes_incremental_refresh_metadata(self):
+        target = date(2026, 8, 20)
+        reports = {"192.0.2.11": {"requests": 3}}
+        refresh = {
+            "through_epoch": 123.5,
+            "cursor_state": {"1:2": {"offset": 400, "size": 400}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            generated_at = save_reports(
+                directory, target, reports, refresh=refresh
+            )
+            found, loaded, metadata = load_reports_snapshot(directory, target)
+
+        self.assertTrue(found)
+        self.assertEqual(loaded, reports)
+        self.assertEqual(metadata["through_epoch"], 123.5)
+        self.assertEqual(metadata["cursor_state"], refresh["cursor_state"])
+        self.assertEqual(metadata["generated_at"], generated_at)
 
     def test_period_round_trip_and_pruning_use_private_subdirectories(self):
         today = date(2026, 8, 29)

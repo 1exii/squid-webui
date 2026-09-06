@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from calendar import monthrange
+import copy
 from datetime import datetime, time as datetime_time, timedelta
 import gzip
 import ipaddress
@@ -240,6 +241,78 @@ def parse_events_for_dates(access_log_path, target_dates):
     return events_by_date
 
 
+def parse_daily_events_incremental(
+        access_log_path, target_date, cursor_state=None, since_epoch=0):
+    """Read only unseen log tails, surviving ordinary Squid log rotation."""
+    start_epoch, end_epoch = _day_epoch_bounds(target_date)
+    previous_cursors = cursor_state if isinstance(cursor_state, dict) else {}
+    updated_cursors = {}
+    events = defaultdict(list)
+    through_epoch = float(since_epoch or 0)
+
+    for path in iter_access_log_paths(access_log_path):
+        try:
+            stat_result = os.stat(path)
+        except OSError:
+            continue
+        identity = f"{stat_result.st_dev}:{stat_result.st_ino}"
+        previous = previous_cursors.get(identity, {})
+        use_timestamp_filter = (
+            not previous_cursors or
+            (identity not in previous_cursors and
+             os.path.abspath(path) != os.path.abspath(access_log_path))
+        )
+
+        # Compressed rotations are immutable. Once consumed, they need not be
+        # decompressed on every refresh. Timestamp filtering de-duplicates a
+        # newly compressed file whose inode changed during rotation.
+        if path.endswith(".gz") and previous.get("size") == stat_result.st_size:
+            updated_cursors[identity] = previous
+            continue
+
+        try:
+            with _open_log(path) as handle:
+                offset = int(previous.get("offset", 0) or 0)
+                if not path.endswith(".gz") and 0 < offset <= stat_result.st_size:
+                    handle.seek(offset)
+                while True:
+                    line = handle.readline()
+                    if not line:
+                        break
+                    fields = line.split()
+                    if len(fields) < 7:
+                        continue
+                    try:
+                        timestamp = float(fields[0])
+                    except ValueError:
+                        continue
+                    if timestamp < start_epoch or timestamp >= end_epoch:
+                        continue
+                    through_epoch = max(through_epoch, timestamp)
+                    if use_timestamp_filter and timestamp <= since_epoch:
+                        continue
+                    host = extract_hostname(fields[5], fields[6])
+                    site = display_site(host) if host else ""
+                    if not site:
+                        continue
+                    result = fields[3]
+                    events[fields[2]].append({
+                        "timestamp": timestamp,
+                        "host": site,
+                        "blocked": (
+                            result.startswith("TCP_DENIED/") or result.endswith("/403")
+                        ),
+                    })
+                updated_cursors[identity] = {
+                    "offset": 0 if path.endswith(".gz") else handle.tell(),
+                    "size": stat_result.st_size,
+                }
+        except (OSError, ValueError):
+            continue
+
+    return events, updated_cursors, through_epoch
+
+
 def summarize_client_events(events, category_domains):
     """Attribute active intervals and group hostnames into expandable websites."""
     ordered = sorted(events, key=lambda event: event["timestamp"])
@@ -308,7 +381,101 @@ def summarize_client_events(events, category_domains):
         "blocked_requests": sum(int(event["blocked"]) for event in ordered),
         "estimated_seconds": total_seconds,
         "sites": rows,
+        "_first_event": (
+            {"timestamp": ordered[0]["timestamp"], "host": ordered[0]["host"]}
+            if ordered else None
+        ),
+        "_last_event": (
+            {"timestamp": ordered[-1]["timestamp"], "host": ordered[-1]["host"]}
+            if ordered else None
+        ),
     }
+
+
+def _summary_boundary(summary, latest=True):
+    key = "_last_event" if latest else "_first_event"
+    boundary = summary.get(key)
+    if isinstance(boundary, dict) and boundary.get("host"):
+        return boundary
+    domains = [
+        domain
+        for site in summary.get("sites", [])
+        for domain in site.get("domains", [])
+        if domain.get("domain") and domain.get("last_seen_epoch") is not None
+    ]
+    if not domains:
+        return None
+    domain = (max if latest else min)(domains, key=lambda item: item["last_seen_epoch"])
+    return {"timestamp": domain["last_seen_epoch"], "host": domain["domain"]}
+
+
+def _adjust_last_event_interval(summary, next_event):
+    """Replace the cached 30-second tail with its now-known next-event gap."""
+    previous = _summary_boundary(summary, latest=True)
+    if not previous or not next_event:
+        return
+    gap = next_event["timestamp"] - previous["timestamp"]
+    if gap <= 0 or gap > IDLE_CUTOFF_SECONDS:
+        return
+    correction = max(1, round(gap)) - LAST_EVENT_SECONDS
+    if not correction:
+        return
+    site_key, _ = site_identity(previous["host"])
+    for site in summary.get("sites", []):
+        if site.get("site_key") != site_key:
+            continue
+        site["estimated_seconds"] = max(0, site["estimated_seconds"] + correction)
+        for domain in site.get("domains", []):
+            if domain.get("domain") == previous["host"]:
+                domain["estimated_seconds"] = max(
+                    0, domain["estimated_seconds"] + correction
+                )
+                break
+        break
+    summary["estimated_seconds"] = max(0, summary["estimated_seconds"] + correction)
+
+
+def merge_daily_activity_reports(
+        cached_reports, new_events, target_date, category_domains=None):
+    """Merge newly observed events into an all-client daily report snapshot."""
+    clients = sorted(set(cached_reports) | set(new_events))
+    reports = {}
+    for client_ip in clients:
+        cached = copy.deepcopy(cached_reports.get(client_ip))
+        events = new_events.get(client_ip, [])
+        incremental = summarize_client_events(
+            events, category_domains or {}
+        ) if events else None
+        if cached and incremental:
+            _adjust_last_event_interval(cached, incremental.get("_first_event"))
+            summary = _merge_activity_summaries([cached, incremental])
+        elif cached:
+            summary = cached
+        else:
+            summary = incremental
+        summary.update(_activity_metadata(target_date, client_ip, clients))
+        reports[client_ip] = summary
+    return reports
+
+
+def refresh_daily_activity_archive(
+        access_log_path, blocklist_dir, target_date, cached_reports=None,
+        cursor_state=None, since_epoch=0):
+    """Incrementally refresh today's saved all-client report."""
+    events, cursors, through_epoch = parse_daily_events_incremental(
+        access_log_path,
+        target_date,
+        cursor_state=cursor_state,
+        since_epoch=since_epoch,
+    )
+    event_count = sum(len(client_events) for client_events in events.values())
+    reports = merge_daily_activity_reports(
+        cached_reports or {},
+        events,
+        target_date,
+        load_category_domains(blocklist_dir),
+    )
+    return reports, cursors, through_epoch, event_count
 
 
 def _activity_metadata(target_date, client_ip, clients_with_activity=None):
@@ -435,6 +602,18 @@ def _merge_activity_summaries(summaries):
         sites.values(),
         key=lambda row: (-row["estimated_seconds"], -row["requests"], row["site"]),
     )
+    boundaries = [
+        boundary
+        for summary in summaries
+        for boundary in (_summary_boundary(summary, latest=True),)
+        if boundary
+    ]
+    first_boundaries = [
+        boundary
+        for summary in summaries
+        for boundary in (_summary_boundary(summary, latest=False),)
+        if boundary
+    ]
     return {
         "unique_sites": len(rows),
         "unique_domains": sum(row["domain_count"] for row in rows),
@@ -446,6 +625,14 @@ def _merge_activity_summaries(summaries):
             summary.get("estimated_seconds", 0) for summary in summaries
         ),
         "sites": rows,
+        "_first_event": (
+            min(first_boundaries, key=lambda item: item["timestamp"])
+            if first_boundaries else None
+        ),
+        "_last_event": (
+            max(boundaries, key=lambda item: item["timestamp"])
+            if boundaries else None
+        ),
     }
 
 

@@ -22,6 +22,7 @@ from activity_reports import (
     load_period_report,
     load_report,
     load_reports,
+    load_reports_snapshot,
     overall_report_exists,
     period_report_exists,
     prune_overall_reports,
@@ -40,9 +41,9 @@ from traffic_analytics import (
     activity_period_bounds,
     aggregate_activity_archive,
     aggregate_activity_reports,
-    build_daily_activity,
     build_daily_activity_archive,
     empty_daily_activity,
+    refresh_daily_activity_archive,
 )
 
 app = Flask(__name__)
@@ -1334,23 +1335,67 @@ def _activity_dates(period_start, period_end):
     ]
 
 
+def _latest_activity_epoch(reports):
+    latest = 0
+    for report in reports.values():
+        boundary = report.get("_last_event") if isinstance(report, dict) else None
+        if isinstance(boundary, dict):
+            latest = max(latest, float(boundary.get("timestamp", 0) or 0))
+        for site in report.get("sites", []) if isinstance(report, dict) else []:
+            latest = max(latest, float(site.get("last_seen_epoch", 0) or 0))
+    return latest
+
+
+def _refresh_today_activity_reports(target_date):
+    """Refresh the all-client daily cache from unseen Squid log tails."""
+    cache_found, cached_reports, metadata = load_reports_snapshot(
+        SQUID_ACTIVITY_REPORT_DIR, target_date
+    )
+    since_epoch = float(
+        metadata.get("through_epoch") or _latest_activity_epoch(cached_reports)
+    )
+    reports, cursor_state, through_epoch, new_requests = (
+        refresh_daily_activity_archive(
+            SQUID_ACCESS_LOG,
+            SQUID_BLOCKLIST_DIR,
+            target_date,
+            cached_reports=cached_reports,
+            cursor_state=metadata.get("cursor_state"),
+            since_epoch=since_epoch,
+        )
+    )
+    previous_updated_at = metadata.get("generated_at") if cache_found else None
+    generated_at = save_reports(
+        SQUID_ACTIVITY_REPORT_DIR,
+        target_date,
+        reports,
+        refresh={
+            "cursor_state": cursor_state,
+            "through_epoch": through_epoch,
+        },
+    )
+    return reports, {
+        "cache_previous_updated_at": previous_updated_at,
+        "cache_updated_at": generated_at,
+        "new_requests": new_requests,
+        "report_source": "incremental" if cache_found else "generated",
+    }
+
+
 def _load_or_generate_daily_reports(target_dates):
     """Load saved days and backfill missing dates still available in Squid logs."""
     today = date.today()
     reports_by_date = {}
     missing = []
     generated = False
+    live_refresh = None
 
     for target_date in target_dates:
         if target_date == today:
             if not os.path.isfile(SQUID_ACCESS_LOG):
                 continue
-            live = build_daily_activity_archive(
-                SQUID_ACCESS_LOG, SQUID_BLOCKLIST_DIR, [target_date]
-            )
-            reports_by_date[target_date.isoformat()] = live.get(
-                target_date.isoformat(), {}
-            )
+            reports, live_refresh = _refresh_today_activity_reports(target_date)
+            reports_by_date[target_date.isoformat()] = reports
             continue
 
         found, reports = load_reports(SQUID_ACTIVITY_REPORT_DIR, target_date)
@@ -1374,7 +1419,7 @@ def _load_or_generate_daily_reports(target_dates):
         for target_date in target_dates
         if target_date.isoformat() not in reports_by_date
     ]
-    return reports_by_date, unavailable, generated
+    return reports_by_date, unavailable, generated, live_refresh
 
 
 @app.route("/api/activity", methods=["GET"])
@@ -1440,7 +1485,7 @@ def get_activity():
                         return jsonify(report)
 
                 target_dates = _activity_dates(period_start, period_end)
-                daily_reports, unavailable, generated = (
+                daily_reports, unavailable, generated, live_refresh = (
                     _load_or_generate_daily_reports(target_dates)
                 )
                 result = aggregate_activity_reports(
@@ -1449,7 +1494,9 @@ def get_activity():
                 result["coverage_complete"] = not unavailable
                 result["unavailable_days"] = len(unavailable)
                 if period_end == date.today():
-                    result["report_source"] = "live"
+                    result["report_source"] = "incremental"
+                    if live_refresh:
+                        result.update(live_refresh)
                 else:
                     result["report_source"] = "generated" if generated else "saved-daily"
 
@@ -1498,15 +1545,42 @@ def get_activity():
 
         if not os.path.isfile(SQUID_ACCESS_LOG):
             return jsonify({"error": "Squid access log is not available"}), 503
-        result = build_daily_activity(
-            SQUID_ACCESS_LOG, SQUID_BLOCKLIST_DIR, target_date, client_ip
-        )
-        result["report_source"] = "live"
-        result["coverage_complete"] = True
-        return jsonify(result)
+        with ACTIVITY_REPORT_LOCK:
+            reports, refresh = _refresh_today_activity_reports(target_date)
+            result = reports.get(client_ip) or empty_daily_activity(
+                target_date, client_ip, sorted(reports)
+            )
+            result.update(refresh)
+            result["coverage_complete"] = True
+            return jsonify(result)
     except Exception as e:
         print(f"Error in activity API: {e}")
         return jsonify({"error": "Could not analyze the Squid access log"}), 500
+
+
+@app.route("/api/activity/cache-status", methods=["GET"])
+def get_activity_cache_status():
+    """Return lightweight daily-cache freshness without analyzing Squid logs."""
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+    date_value = request.args.get("date", today_str()).strip()
+    try:
+        target_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "date must use YYYY-MM-DD format"}), 400
+    if (target_date > date.today() or
+            target_date < date.today() - timedelta(days=ACTIVITY_RETENTION_DAYS - 1)):
+        return jsonify({
+            "error": f"date must be within the last {ACTIVITY_RETENTION_DAYS} days"
+        }), 400
+    found, _, metadata = load_reports_snapshot(
+        SQUID_ACTIVITY_REPORT_DIR, target_date
+    )
+    return jsonify({
+        "cache_found": found,
+        "cache_updated_at": metadata.get("generated_at") if found else None,
+        "is_live_date": target_date == date.today(),
+    })
 
 
 def _load_or_generate_overall_daily_reports(target_dates):

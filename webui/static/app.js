@@ -177,6 +177,9 @@ document.addEventListener('DOMContentLoaded', () => {
     let adminDataLoaded  = false;
     let activityData     = null;
     let activityPeriod   = 'day';
+    let activityRequestSequence = 0;
+    let activityRequestController = null;
+    const activityCacheUpdates = new Map();
     let overallData      = null;
     let overallPeriod    = 'day';
     let auditEvents      = [];
@@ -573,28 +576,110 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetDate = activityDateInput?.value;
         if (!clientIp || !targetDate) return;
 
+        const requestSequence = ++activityRequestSequence;
+        activityRequestController?.abort();
+        activityRequestController = new AbortController();
         showActivityError('');
         activityRefreshBtn && (activityRefreshBtn.disabled = true);
-        activityEstimateNote && (activityEstimateNote.textContent = 'Analyzing Squid access logs…');
+        renderActivityLoading(clientIp, targetDate);
+        updateActivityLoadingStatus(targetDate, requestSequence, activityRequestController.signal);
         try {
             const params = new URLSearchParams({
                 client_ip: clientIp,
                 date: targetDate,
                 period: activityPeriod
             });
-            const response = await fetch(`/api/activity?${params}`);
+            const response = await fetch(`/api/activity?${params}`, {
+                signal: activityRequestController.signal
+            });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Could not load website activity.');
+            if (requestSequence !== activityRequestSequence) return;
             activityData = data;
+            if (data.cache_updated_at) {
+                activityCacheUpdates.set(`${activityPeriod}:${targetDate}`, data.cache_updated_at);
+            }
             populateActivityCategories();
             renderActivity();
         } catch (error) {
+            if (error.name === 'AbortError' || requestSequence !== activityRequestSequence) return;
             activityData = null;
             showActivityError(error.message);
             renderActivity();
         } finally {
-            activityRefreshBtn && (activityRefreshBtn.disabled = false);
+            if (requestSequence === activityRequestSequence) {
+                activityRefreshBtn && (activityRefreshBtn.disabled = false);
+            }
         }
+    }
+
+    function activityRefreshDescription(targetDate) {
+        const lastUpdate = activityCacheUpdates.get(`${activityPeriod}:${targetDate}`);
+        if (!lastUpdate) return targetDate === localToday()
+            ? 'Building the daily activity cache from Squid logs…'
+            : 'Loading the saved activity report…';
+        const updateDate = new Date(lastUpdate);
+        const elapsedSeconds = Math.max(0, Math.round((Date.now() - updateDate.getTime()) / 1000));
+        let elapsed;
+        if (elapsedSeconds < 60) elapsed = 'the last minute';
+        else if (elapsedSeconds < 3600) {
+            const minutes = Math.max(1, Math.round(elapsedSeconds / 60));
+            elapsed = `the last ${minutes} minute${minutes === 1 ? '' : 's'}`;
+        } else {
+            const hours = Math.max(1, Math.round(elapsedSeconds / 3600));
+            elapsed = `the last ${hours} hour${hours === 1 ? '' : 's'}`;
+        }
+        return `Updating activity since ${updateDate.toLocaleTimeString([], {
+            hour: '2-digit', minute: '2-digit'
+        })} (${elapsed})…`;
+    }
+
+    async function updateActivityLoadingStatus(targetDate, requestSequence, signal) {
+        if (activityPeriod !== 'day') return;
+        try {
+            const params = new URLSearchParams({ date: targetDate });
+            const response = await fetch(`/api/activity/cache-status?${params}`, { signal });
+            if (!response.ok) return;
+            const status = await response.json();
+            if (requestSequence !== activityRequestSequence ||
+                    !activityEmptyState?.classList.contains('activity-loading')) return;
+            if (status.cache_updated_at) {
+                activityCacheUpdates.set(`day:${targetDate}`, status.cache_updated_at);
+                const emptyText = activityEmptyState.querySelector('p');
+                emptyText && (emptyText.textContent = status.is_live_date
+                    ? activityRefreshDescription(targetDate)
+                    : `Loading the report saved ${new Date(status.cache_updated_at).toLocaleString()}…`);
+            }
+        } catch (error) {
+            if (error.name !== 'AbortError') console.debug('Activity cache status unavailable.');
+        }
+    }
+
+    function renderActivityLoading(clientIp, targetDate) {
+        activityData = null;
+        expandedActivitySites.clear();
+        activityTotalTime && (activityTotalTime.textContent = '—');
+        activitySiteCount && (activitySiteCount.textContent = '—');
+        activityRequestCount && (activityRequestCount.textContent = '—');
+        activityBlockedCount && (activityBlockedCount.textContent = '—');
+        activityTableBody && (activityTableBody.innerHTML = '');
+        if (activityCategoryFilter) {
+            activityCategoryFilter.innerHTML = '<option value="">All categories</option>';
+        }
+        activityTableBody?.closest('table')?.classList.add('hidden');
+        activityEmptyState?.classList.remove('hidden');
+        activityEmptyState?.classList.add('activity-loading');
+        const emptyIcon = activityEmptyState?.querySelector('.empty-icon');
+        const emptyTitle = activityEmptyState?.querySelector('h3');
+        const emptyText = activityEmptyState?.querySelector('p');
+        emptyIcon && (emptyIcon.textContent = '↻');
+        emptyTitle && (emptyTitle.textContent = 'Updating activity');
+        emptyText && (emptyText.textContent = activityRefreshDescription(targetDate));
+        const device = devicesData.find(item => item.ip === clientIp);
+        activityResultsTitle && (activityResultsTitle.textContent =
+            `Loading ${device?.name || device?.hostname || clientIp} · ${targetDate}`);
+        activityEstimateNote && (activityEstimateNote.textContent =
+            'The previous device report has been cleared while this update runs.');
     }
 
     function showActivityError(message) {
@@ -632,8 +717,8 @@ document.addEventListener('DOMContentLoaded', () => {
         activityRequestCount && (activityRequestCount.textContent = activityData ? activityData.requests.toLocaleString() : '—');
         activityBlockedCount && (activityBlockedCount.textContent = activityData ? activityData.blocked_requests.toLocaleString() : '—');
         if (activityEstimateNote) {
-            const sourceNote = activityData?.report_source === 'live'
-                ? 'Live report. '
+            const sourceNote = activityData?.report_source === 'incremental'
+                ? `Daily cache refreshed${activityData.new_requests ? ` with ${activityData.new_requests.toLocaleString()} new website requests across all clients` : '; no new website requests'}. `
                 : activityData?.report_source === 'generated'
                     ? 'Report generated and saved. '
                     : activityData?.report_source === 'saved'
@@ -697,13 +782,19 @@ document.addEventListener('DOMContentLoaded', () => {
             }).join('');
         }
         activityEmptyState && activityEmptyState.classList.toggle('hidden', filtered.length > 0);
+        activityEmptyState?.classList.remove('activity-loading');
         const table = activityTableBody?.closest('table');
         table && table.classList.toggle('hidden', filtered.length === 0);
         const emptyTitle = activityEmptyState?.querySelector('h3');
         const emptyText = activityEmptyState?.querySelector('p');
+        const emptyIcon = activityEmptyState?.querySelector('.empty-icon');
+        emptyIcon && (emptyIcon.textContent = '📭');
         if (activityData && !filtered.length) {
             emptyTitle && (emptyTitle.textContent = sites.length ? 'No matching websites' : 'No website activity found');
             emptyText && (emptyText.textContent = sites.length ? 'Try changing the category or search filter.' : 'Squid recorded no website requests for this client and period.');
+        } else if (!activityData) {
+            emptyTitle && (emptyTitle.textContent = 'No activity loaded');
+            emptyText && (emptyText.textContent = 'Select a client and date above.');
         }
     }
 

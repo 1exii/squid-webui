@@ -10,6 +10,7 @@ from traffic_analytics import (
     categories_for_host,
     extract_hostname,
     parse_daily_events,
+    refresh_daily_activity_archive,
     registrable_domain,
     site_identity,
     summarize_client_events,
@@ -119,6 +120,120 @@ class TrafficAnalyticsTests(unittest.TestCase):
         self.assertEqual(
             archive[second_day.isoformat()]["192.0.2.12"]["blocked_requests"], 1
         )
+
+    def test_incremental_refresh_merges_all_clients_and_only_reads_new_tail(self):
+        target = date(2026, 8, 21)
+        first_stamp = datetime(2026, 8, 21, 12, 0).timestamp()
+        second_stamp = datetime(2026, 8, 21, 12, 1).timestamp()
+        other_stamp = datetime(2026, 8, 21, 12, 2).timestamp()
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "access.log")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    f"{first_stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 "
+                    "CONNECT first.test:443 - HIER_DIRECT/1.2.3.4 -\n"
+                )
+            reports, cursors, through_epoch, event_count = (
+                refresh_daily_activity_archive(path, directory, target)
+            )
+            self.assertEqual(event_count, 1)
+
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(
+                    f"{second_stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 "
+                    "CONNECT second.test:443 - HIER_DIRECT/1.2.3.4 -\n"
+                )
+                handle.write(
+                    f"{other_stamp} 10 192.0.2.12 TCP_DENIED/403 100 "
+                    "CONNECT blocked.test:443 - HIER_NONE/- -\n"
+                )
+            reports, cursors, through_epoch, event_count = (
+                refresh_daily_activity_archive(
+                    path,
+                    directory,
+                    target,
+                    cached_reports=reports,
+                    cursor_state=cursors,
+                    since_epoch=through_epoch,
+                )
+            )
+            unchanged, _, _, final_count = refresh_daily_activity_archive(
+                path,
+                directory,
+                target,
+                cached_reports=reports,
+                cursor_state=cursors,
+                since_epoch=through_epoch,
+            )
+
+        self.assertEqual(event_count, 2)
+        self.assertEqual(reports["192.0.2.11"]["requests"], 2)
+        self.assertEqual(reports["192.0.2.11"]["estimated_seconds"], 90)
+        self.assertEqual(reports["192.0.2.12"]["blocked_requests"], 1)
+        self.assertEqual(final_count, 0)
+        self.assertEqual(unchanged, reports)
+
+    def test_incremental_cursor_follows_log_inode_through_rotation(self):
+        target = date(2026, 8, 21)
+        first_stamp = datetime(2026, 8, 21, 12, 0).timestamp()
+        second_stamp = datetime(2026, 8, 21, 12, 10).timestamp()
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "access.log")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    f"{first_stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 "
+                    "CONNECT first.test:443 - HIER_DIRECT/1.2.3.4 -\n"
+                )
+            reports, cursors, through_epoch, _ = refresh_daily_activity_archive(
+                path, directory, target
+            )
+            os.rename(path, f"{path}.0")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    f"{second_stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 "
+                    "CONNECT second.test:443 - HIER_DIRECT/1.2.3.4 -\n"
+                )
+            reports, _, _, event_count = refresh_daily_activity_archive(
+                path,
+                directory,
+                target,
+                cached_reports=reports,
+                cursor_state=cursors,
+                since_epoch=through_epoch,
+            )
+
+        self.assertEqual(event_count, 1)
+        self.assertEqual(reports["192.0.2.11"]["requests"], 2)
+
+    def test_incremental_cursor_keeps_new_line_with_same_timestamp(self):
+        target = date(2026, 8, 21)
+        stamp = datetime(2026, 8, 21, 12, 0).timestamp()
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "access.log")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    f"{stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 "
+                    "CONNECT first.test:443 - HIER_DIRECT/1.2.3.4 -\n"
+                )
+            reports, cursors, through_epoch, _ = refresh_daily_activity_archive(
+                path, directory, target
+            )
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(
+                    f"{stamp} 10 192.0.2.11 TCP_TUNNEL/200 100 "
+                    "CONNECT simultaneous.test:443 - HIER_DIRECT/1.2.3.4 -\n"
+                )
+            reports, _, _, event_count = refresh_daily_activity_archive(
+                path,
+                directory,
+                target,
+                cached_reports=reports,
+                cursor_state=cursors,
+                since_epoch=through_epoch,
+            )
+
+        self.assertEqual(event_count, 1)
+        self.assertEqual(reports["192.0.2.11"]["requests"], 2)
 
     def test_calendar_period_bounds_use_monday_weeks_and_full_months(self):
         anchor = date(2026, 8, 29)

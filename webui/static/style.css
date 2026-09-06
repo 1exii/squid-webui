@@ -766,6 +766,21 @@ select {
     background: rgba(255, 255, 255, 0.025);
 }
 
+.activity-loading .empty-icon {
+    display: inline-block;
+    animation: activity-spin 0.9s linear infinite;
+}
+
+@keyframes activity-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .activity-loading .empty-icon {
+        animation: none;
+    }
+}
+
 .audit-table {
     table-layout: fixed;
 }

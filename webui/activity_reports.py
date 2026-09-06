@@ -30,36 +30,53 @@ def load_report(cache_dir, target_date, client_ip):
         return False, None
 
 
-def load_reports(cache_dir, target_date):
-    """Return (cache_found, all_client_reports) for one completed day."""
+def load_reports_snapshot(cache_dir, target_date):
+    """Return reports plus refresh metadata for one cached day."""
     path = report_path(cache_dir, target_date)
     try:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
         if (payload.get("schema_version") != SCHEMA_VERSION or
                 payload.get("date") != target_date.isoformat()):
-            return False, {}
+            return False, {}, {}
         reports = payload.get("reports", {})
-        return (True, reports) if isinstance(reports, dict) else (False, {})
+        if not isinstance(reports, dict):
+            return False, {}, {}
+        metadata = payload.get("refresh", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata = dict(metadata)
+        metadata["generated_at"] = payload.get("generated_at")
+        return True, reports, metadata
     except (OSError, ValueError, TypeError):
-        return False, {}
+        return False, {}, {}
 
 
-def save_reports(cache_dir, target_date, reports):
-    """Atomically store every client report for a completed day."""
+def load_reports(cache_dir, target_date):
+    """Return (cache_found, all_client_reports) for one completed day."""
+    found, reports, _ = load_reports_snapshot(cache_dir, target_date)
+    return found, reports
+
+
+def save_reports(cache_dir, target_date, reports, refresh=None):
+    """Atomically store every client report and optional refresh metadata."""
     os.makedirs(cache_dir, mode=0o700, exist_ok=True)
     try:
         os.chmod(cache_dir, 0o700)
     except OSError:
         pass
 
+    generated_at = datetime.now(timezone.utc).isoformat()
     payload = {
         "schema_version": SCHEMA_VERSION,
         "date": target_date.isoformat(),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": generated_at,
         "reports": reports,
     }
+    if refresh:
+        payload["refresh"] = refresh
     _save_payload(cache_dir, report_path(cache_dir, target_date), payload)
+    return generated_at
 
 
 def period_report_path(cache_dir, period, period_start):

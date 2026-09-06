@@ -104,6 +104,8 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - Provides Day/Week/Month quick selectors and previous/current/next navigation that reloads immediately and cannot advance beyond the current period.
 - Rotates Squid logs automatically at local midnight and keeps 30 numbered daily generations on the persistent log volume.
 - Generates private per-client reports for completed days on the persistent configuration volume, backfills days still present in the 30-day log window, and keeps saved reports for 365 days.
+- Saves today's all-client report after each request and incrementally merges only newly appended Squid log entries on later refreshes, including across ordinary log rotation.
+- Clears the previous client immediately while loading and shows cache freshness so the administrator can see which recent interval is being updated.
 - Generates completed weekly and monthly snapshots from saved daily reports. Current periods combine saved completed days with today's live log; the UI flags incomplete coverage when an older day was never archived.
 - Groups hostname-visible traffic into website/service totals by default. Ordinary subdomains roll up to their registrable domain, while known multi-domain services such as YouTube, Netflix, Roblox, Spotify, Facebook, Instagram, and TikTok also include their first-party CDN/API domains.
 - Each website row can expand into its contributing domain names with per-domain time, category, request, blocked-request, and last-seen details.
@@ -189,6 +191,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 | `/api/auth/logout` | `POST` | Public | Clears admin session. |
 | `/api/devices` | `GET` | Admin | Returns list of devices parsed from `devices.list`. |
 | `/api/activity?date=<YYYY-MM-DD>&client_ip=<IPv4>` | `GET` | Admin | Returns daily categorized website activity and estimated active time for one client. |
+| `/api/activity/cache-status?date=<YYYY-MM-DD>` | `GET` | Admin | Returns daily-cache freshness immediately without analyzing Squid logs. |
 | `/api/audit-log?limit=<1-500>` | `GET` | Admin | Returns newest-first append-only Squid configuration audit events. |
 | `/api/blocklists` | `GET` | Admin | Lists available blocklist category files. |
 | `/api/policies` | `GET` | Admin | Returns `always_block`, `always_allow`, and the automatically materialized `default_block` schedule entries for each device. |
