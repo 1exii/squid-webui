@@ -64,6 +64,116 @@ function remove_instances() {
     done
 }
 
+function sync_squid_config() {
+    local NAME=$1
+    local REMOTE_BASE="${QNAP_CONTAINER_ROOT}/$NAME"
+
+    echo "  [*] Syncing squid.conf and configs to QNAP..."
+    # squid.conf 'include's rules.acl, ssl_bump.acl, bump_domains.conf, and early_splice.acl.
+    # Pre-create all includes so a first-time deploy starts cleanly.
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db ${REMOTE_BASE}/logs && touch ${REMOTE_BASE}/configs/rules.acl ${REMOTE_BASE}/configs/ssl_bump.acl ${REMOTE_BASE}/configs/bump_domains.conf ${REMOTE_BASE}/configs/early_splice.acl"
+    local rendered_conf rendered_error_dir
+    rendered_conf="$(mktemp)"
+    rendered_error_dir="$(mktemp -d)"
+    trap 'rm -f "${rendered_conf:-}"; rm -rf "${rendered_error_dir:-}"' RETURN
+    sed \
+        -e "s|__LOCAL_NETWORKS__|${LOCAL_NETWORKS}|g" \
+        -e "s|__SQUID_PROXY_PORT__|${SQUID_PROXY_PORT}|g" \
+        -e "s|__SQUID_HTTP_PORT__|${SQUID_HTTP_PORT}|g" \
+        -e "s|__SQUID_HTTPS_PORT__|${SQUID_HTTPS_PORT}|g" \
+        -e "s|__SQUID_DNS_SERVERS__|${SQUID_DNS_SERVERS}|g" \
+        "$LOCAL_CONF_TEMPLATE" > "$rendered_conf"
+    scp "$rendered_conf" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
+
+    if [ -f "${SQUID_DIR}/configs/generate_bump_domains.py" ]; then
+        scp "${SQUID_DIR}/configs/generate_bump_domains.py" "$QNAP_SERVER:${REMOTE_BASE}/configs/" 2>/dev/null || true
+    fi
+    if [ -d "${SQUID_DIR}/configs/errors" ]; then
+        cp -a "${SQUID_DIR}/configs/errors/." "$rendered_error_dir/"
+        if [ -f "$rendered_error_dir/ERR_ACCESS_DENIED" ]; then
+            sed -i "s|__WEBUI_PUBLIC_URL__|${WEBUI_PUBLIC_URL}|g" "$rendered_error_dir/ERR_ACCESS_DENIED"
+        fi
+        scp -r "$rendered_error_dir/"* "$QNAP_SERVER:${REMOTE_BASE}/configs/errors/" 2>/dev/null || true
+    fi
+
+    if [ -f "${LOCAL_CERT_DIR}/squid-ca.pem" ] && [ -f "${LOCAL_CERT_DIR}/squid-ca.key" ]; then
+        echo "  [*] Syncing SSL certs to QNAP..."
+        scp "${LOCAL_CERT_DIR}/squid-ca.pem" "${LOCAL_CERT_DIR}/squid-ca.key" "$QNAP_SERVER:${REMOTE_BASE}/certs/"
+    else
+        echo "  [!] WARNING: SSL certs not found in ${LOCAL_CERT_DIR}. Run squid-mgmt.sh cert first."
+    fi
+
+    if [ -d "${BLOCKLIST_DIR}" ]; then
+        echo "  [*] Syncing blocklists to QNAP..."
+        ssh "$QNAP_SERVER" "rm -f ${REMOTE_BASE}/block-lists/*.txt"
+        scp "${BLOCKLIST_DIR}/"*.txt "$QNAP_SERVER:${REMOTE_BASE}/block-lists/" 2>/dev/null || true
+    fi
+}
+
+function update_squid_config() {
+    local NAME=$1
+    local REMOTE_BASE="${QNAP_CONTAINER_ROOT}/$NAME"
+
+    echo ">>> Updating configuration for $NAME without recreating container..."
+
+    # Check if container is running
+    local is_running
+    is_running=$(ssh -T "$QNAP_SERVER" "$DOCKER inspect -f '{{.State.Running}}' '$NAME' 2>/dev/null" || true)
+    if [ "$is_running" != "true" ]; then
+        echo "  [!] ERROR: Container '$NAME' is not running on QNAP."
+        echo "      Use 'proxy-deploy' to build and run the container first."
+        return 1
+    fi
+
+    # Backup existing configuration file on QNAP in case new config is invalid
+    echo "  [*] Backing up current squid.conf on QNAP..."
+    ssh "$QNAP_SERVER" "[ -f '${REMOTE_BASE}/configs/squid.conf' ] && cp -p '${REMOTE_BASE}/configs/squid.conf' '${REMOTE_BASE}/configs/squid.conf.bak' || true"
+
+    # Sync configuration files
+    sync_squid_config "$NAME"
+
+    # Regenerate bump_domains.acl inside container if generator script exists
+    echo "  [*] Refreshing bump_domains.acl inside container..."
+    ssh -T "$QNAP_SERVER" "$DOCKER exec '$NAME' sh -c '[ -f /etc/squid/configs/generate_bump_domains.py ] && python3 /etc/squid/configs/generate_bump_domains.py /etc/squid/block-lists /etc/squid/configs/bump_domains.acl || true'"
+
+    # Validate syntax before reloading
+    echo "  [*] Validating Squid configuration (squid -k parse)..."
+    local parse_out parse_rc
+    parse_out=$(ssh -T "$QNAP_SERVER" "$DOCKER exec '$NAME' squid -k parse 2>&1")
+    parse_rc=$?
+
+    if [ $parse_rc -ne 0 ] || echo "$parse_out" | grep -qiE "FATAL|Bungled"; then
+        echo "  [!] ERROR: Squid configuration validation failed! Parse output:"
+        echo "$parse_out"
+        echo "  [*] Rolling back squid.conf to previous version..."
+        ssh -T "$QNAP_SERVER" "[ -f '${REMOTE_BASE}/configs/squid.conf.bak' ] && cp -f '${REMOTE_BASE}/configs/squid.conf.bak' '${REMOTE_BASE}/configs/squid.conf' && rm -f '${REMOTE_BASE}/configs/squid.conf.bak'"
+        return 1
+    fi
+
+    if echo "$parse_out" | grep -qi "empty ACL"; then
+        echo "  [!] WARNING: empty ACL(s) detected — those rules can never match."
+    fi
+
+    # Hot-reload configuration without disrupting active connections
+    echo "  [*] Hot-reloading Squid configuration via SIGHUP..."
+    ssh -T "$QNAP_SERVER" "$DOCKER kill -s HUP '$NAME' >/dev/null && rm -f '${REMOTE_BASE}/configs/squid.conf.bak'"
+    if [ $? -ne 0 ]; then
+        echo "  [!] ERROR: Failed to send SIGHUP to container '$NAME'."
+        return 1
+    fi
+
+    # Verify container remains running
+    sleep 1
+    is_running=$(ssh -T "$QNAP_SERVER" "$DOCKER inspect -f '{{.State.Running}}' '$NAME' 2>/dev/null" || true)
+    if [ "$is_running" != "true" ]; then
+        echo "  [!] ERROR: Container '$NAME' stopped unexpectedly after reload signal."
+        return 1
+    fi
+
+    echo "  [+] Squid configuration updated and reloaded cleanly (zero container downtime)!"
+    return 0
+}
+
 function create_squid() {
     local IP=$1
     local NAME=$2
@@ -90,58 +200,7 @@ function create_squid() {
     fi
 
     # Sync config, errors, and certs before starting the container
-    echo "  [*] Syncing squid.conf and configs to QNAP..."
-    # squid.conf 'include's rules.acl, ssl_bump.acl and bump_domains.conf, and a
-    # missing include file is a FATAL parse error — pre-create all includes so a
-    # first-time deploy starts cleanly before the Web UI has ever compiled.
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db ${REMOTE_BASE}/logs && touch ${REMOTE_BASE}/configs/rules.acl ${REMOTE_BASE}/configs/ssl_bump.acl ${REMOTE_BASE}/configs/bump_domains.conf ${REMOTE_BASE}/configs/early_splice.acl"
-    local rendered_conf rendered_error_dir
-    rendered_conf="$(mktemp)"
-    rendered_error_dir="$(mktemp -d)"
-    trap 'rm -f "${rendered_conf:-}"; rm -rf "${rendered_error_dir:-}"' RETURN
-    sed \
-        -e "s|__LOCAL_NETWORKS__|${LOCAL_NETWORKS}|g" \
-        -e "s|__SQUID_PROXY_PORT__|${SQUID_PROXY_PORT}|g" \
-        -e "s|__SQUID_HTTP_PORT__|${SQUID_HTTP_PORT}|g" \
-        -e "s|__SQUID_HTTPS_PORT__|${SQUID_HTTPS_PORT}|g" \
-        -e "s|__SQUID_DNS_SERVERS__|${SQUID_DNS_SERVERS}|g" \
-        "$LOCAL_CONF_TEMPLATE" > "$rendered_conf"
-    scp "$rendered_conf" "$QNAP_SERVER:${REMOTE_BASE}/configs/squid.conf"
-    # DO NOT copy ssl_bump.acl (or rules.acl, or bump_domains.*) from the repo.
-    #
-    # These are RUNTIME STATE generated by the Web UI, not deployable config. The
-    # checked-in ssl_bump.acl is an empty placeholder, and copying it here wiped
-    # the live per-device bump rules on every deploy. Combined with the '!CONNECT'
-    # deny scoping in rules.acl — which persists in the volume and is NOT reset —
-    # that produced a silent FAIL-OPEN: the CONNECT was allowed through expecting
-    # a bump that no longer existed, fell to 'http_access allow localnet', and
-    # every blocked HTTPS site tunnelled straight through.
-    #
-    # The files are only pre-created (touch, above) so squid.conf's 'include'
-    # directives resolve on a first-time deploy. The Web UI repopulates them.
-    if [ -f "${SQUID_DIR}/configs/generate_bump_domains.py" ]; then
-        scp "${SQUID_DIR}/configs/generate_bump_domains.py" "$QNAP_SERVER:${REMOTE_BASE}/configs/" 2>/dev/null || true
-    fi
-    if [ -d "${SQUID_DIR}/configs/errors" ]; then
-        cp -a "${SQUID_DIR}/configs/errors/." "$rendered_error_dir/"
-        if [ -f "$rendered_error_dir/ERR_ACCESS_DENIED" ]; then
-            sed -i "s|__WEBUI_PUBLIC_URL__|${WEBUI_PUBLIC_URL}|g" "$rendered_error_dir/ERR_ACCESS_DENIED"
-        fi
-        scp -r "$rendered_error_dir/"* "$QNAP_SERVER:${REMOTE_BASE}/configs/errors/" 2>/dev/null || true
-    fi
-
-    if [ -f "${LOCAL_CERT_DIR}/squid-ca.pem" ] && [ -f "${LOCAL_CERT_DIR}/squid-ca.key" ]; then
-        echo "  [*] Syncing SSL certs to QNAP..."
-        scp "${LOCAL_CERT_DIR}/squid-ca.pem" "${LOCAL_CERT_DIR}/squid-ca.key" "$QNAP_SERVER:${REMOTE_BASE}/certs/"
-    else
-        echo "  [!] WARNING: SSL certs not found in ${LOCAL_CERT_DIR}. Run squid-mgmt.sh cert first."
-    fi
-
-    if [ -d "${BLOCKLIST_DIR}" ]; then
-        echo "  [*] Syncing blocklists to QNAP..."
-        ssh "$QNAP_SERVER" "rm -f ${REMOTE_BASE}/block-lists/*.txt"
-        scp "${BLOCKLIST_DIR}/"*.txt "$QNAP_SERVER:${REMOTE_BASE}/block-lists/" 2>/dev/null || true
-    fi
+    sync_squid_config "$NAME"
 
     # NOTE: individual :ro file mounts for rules.acl / ssl_bump.acl were removed.
     # The parent configs/ directory is already mounted read-write (the Web UI and
@@ -278,9 +337,35 @@ function create_instances() {
     sleep 15
 }
 
+function update_instances_config() {
+    mapfile -t active_list < <(get_filtered_instances)
+
+    [ ${#active_list[@]} -eq 0 ] && return
+
+    if [ ! -f "$LOCAL_CONF_TEMPLATE" ]; then
+        echo "ERROR: Squid config template missing at $LOCAL_CONF_TEMPLATE"
+        exit 1
+    fi
+
+    for entry in "${active_list[@]}"; do
+        read -r IP NAME IMAGE <<< "$entry"
+
+        if [ "$NAME" == "$SQUID_CONTAINER_NAME" ]; then
+            update_squid_config "$NAME"
+            if [ $? -ne 0 ]; then
+                exit 1
+            fi
+        else
+            echo "ERROR: Config-only update is not supported for '$NAME'"
+            exit 1
+        fi
+    done
+}
+
 # --- 4. EXECUTION LOGIC ---
 CREATE=FALSE
 REMOVE=FALSE
+CONFIG=FALSE
 TARGET_NAMES=()
 
 # Parse arguments
@@ -288,14 +373,15 @@ while [ $# -gt 0 ] ; do
     case "$1" in
         create) CREATE=TRUE ;;
         remove) REMOVE=TRUE ;;
+        config|config-deploy|reconfigure) CONFIG=TRUE ;;
         *)      TARGET_NAMES+=("$1") ;;
     esac
     shift
 done
 
 # Check 1: Must have an action
-if [[ "$CREATE" == "FALSE" && "$REMOVE" == "FALSE" ]]; then
-    echo "ERROR: You must specify 'create', 'remove', or both."
+if [[ "$CREATE" == "FALSE" && "$REMOVE" == "FALSE" && "$CONFIG" == "FALSE" ]]; then
+    echo "ERROR: You must specify 'create', 'remove', 'config', or a combination."
     exit 1
 fi
 
@@ -303,7 +389,7 @@ fi
 if [ ${#TARGET_NAMES[@]} -eq 0 ]; then
     echo "-------------------------------------------------------"
     echo "ERROR: No target containers specified."
-    echo "Usage: $0 {create|remove} <target1> <target2> ..."
+    echo "Usage: $0 {create|remove|config} <target1> <target2> ..."
     echo "-------------------------------------------------------"
     echo "Available Targets:"
     for entry in "${DOCKER_INSTANCES[@]}"; do
@@ -319,6 +405,10 @@ fi
 
 if [[ "$CREATE" == "TRUE" ]]; then
     create_instances
+fi
+
+if [[ "$CONFIG" == "TRUE" ]]; then
+    update_instances_config
 fi
 
 find "${SQUID_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

@@ -205,9 +205,11 @@ python3 configs/generate_bump_domains.py block-lists configs/bump_domains.acl
 ./squid-mgmt.sh dump-config
 ```
 
-### 3. Trigger manual Squid SIGHUP reload
-Use **Save & Apply** in the Web UI; it validates the generated configuration
-before sending SIGHUP and rolls back invalid ACL output.
+### 3. Deploy configuration without container recreation (hot-reload)
+```bash
+./squid-mgmt.sh proxy-config-deploy
+```
+Syncs rendered `squid.conf`, custom error pages, blocklists, and certificates to QNAP, refreshes `bump_domains.acl`, validates the syntax with `squid -k parse` (with automatic rollback on parse error), and sends `SIGHUP` to hot-reload the running Squid daemon without dropping active client connections or recreating the Docker container.
 
 ### 4. Inspect active rules inside container
 ```bash

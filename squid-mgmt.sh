@@ -76,6 +76,29 @@ deploy_proxy() {
     echo "  [+] Squid Proxy deployed!"
 }
 
+deploy_proxy_config() {
+    echo "-----------------------------------------------"
+    echo ">>> Updating Squid Proxy Configuration on QNAP..."
+
+    local DEPLOY_SCRIPT="${SQUID_DIR}/docker/deploy-squid-docker.sh"
+
+    if [ ! -f "${DEPLOY_SCRIPT}" ]; then
+        echo "  [!] ERROR: Deploy script not found: ${DEPLOY_SCRIPT}"
+        exit 1
+    fi
+
+    echo "  [*] Syncing configuration and hot-reloading ${SQUID_CONTAINER_NAME}..."
+    "${DEPLOY_SCRIPT}" config "${SQUID_CONTAINER_NAME}"
+    local rc=$?
+
+    if [ ${rc} -eq 0 ]; then
+        echo "  [+] Squid Proxy configuration deployed and reloaded successfully!"
+    else
+        echo "  [!] ERROR: Failed to update Squid configuration (exit code: ${rc})."
+        return ${rc}
+    fi
+}
+
 dump_config() {
     echo "-----------------------------------------------"
     echo ">>> Dumping parsed Squid Configuration from QNAP proxy container..."
@@ -418,7 +441,7 @@ deploy_webui() {
 # --- 3. EXECUTION ---
 
 if [ "$#" -eq 0 ]; then
-    echo "Usage: $0 [cert|dump-config|catlogs|proxy-deploy|webui-deploy|router-deploy|linux-deploy|all]"
+    echo "Usage: $0 [cert|dump-config|catlogs|proxy-deploy|proxy-config-deploy|webui-deploy|router-deploy|linux-deploy|all]"
     exit 1
 fi
 
@@ -432,10 +455,11 @@ while [ $# -gt 0 ] ; do
         catlogs)        cat_logs ;;
 
         # Command line option to deploy the system to qnap, router, and linux client.
-        proxy-deploy)   deploy_proxy ;;
-        webui-deploy)   deploy_webui ;;
-        router-deploy)  deploy_router_proxy ;;
-        linux-deploy)   deploy_linux_cert ;;
+        proxy-deploy)        deploy_proxy ;;
+        proxy-config-deploy) deploy_proxy_config ;;
+        webui-deploy)        deploy_webui ;;
+        router-deploy)       deploy_router_proxy ;;
+        linux-deploy)        deploy_linux_cert ;;
 
         all)
             deploy_proxy
@@ -444,7 +468,7 @@ while [ $# -gt 0 ] ; do
             ;;
         *)
             echo "Unknown command: $1"
-            echo "Usage: $0 [cert|dump-config|catlogs|proxy-deploy|webui-deploy|router-deploy|linux-deploy|all]"
+            echo "Usage: $0 [cert|dump-config|catlogs|proxy-deploy|proxy-config-deploy|webui-deploy|router-deploy|linux-deploy|all]"
             ;;
     esac
     shift
