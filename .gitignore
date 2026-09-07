@@ -3,6 +3,9 @@ __pycache__/
 *.pyo
 *.pyd
 .sudo_pass
+*sudo-password*
+**/secrets/
+deployments/local/
 deployments/local
 debug/*.log
 debug/*.txt
