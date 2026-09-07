@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=20260907-3">
 </head>
 <body>
     <div id="app-container">
@@ -25,6 +25,7 @@
                 <button id="nav-tab-admin" class="nav-tab-btn">⚙️ Access Control Admin</button>
                 <button id="nav-tab-activity" class="nav-tab-btn">📊 Website Activity</button>
                 <button id="nav-tab-overall" class="nav-tab-btn">📈 Overall Analytics</button>
+                <button id="nav-tab-failures" class="nav-tab-btn">⚠️ Access Failures</button>
                 <button id="nav-tab-tls" class="nav-tab-btn">TLS Exceptions</button>
                 <button id="nav-tab-audit" class="nav-tab-btn">🧾 Change Log</button>
                 {% endif %}
@@ -272,6 +273,99 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                 <button type="button" class="btn btn-primary" id="tls-exception-save">Save and apply exceptions</button>
                 <button type="button" class="btn btn-secondary" id="tls-exception-reload">Reload saved entries</button>
                 <p id="tls-exception-status" role="status" aria-live="polite"></p>
+            </section>
+        </main>
+
+        <main id="failures-screen" class="main-content hidden">
+            <section class="glass-panel failure-analytics-panel">
+                <div class="panel-header-with-actions">
+                    <div>
+                        <h2>⚠️ Connection Failures (Non-Policy)</h2>
+                        <p class="panel-subtitle">Websites and domains that clients could not access where no parental or access control policy blocked the request. Includes quick live windows (5m to 5h), {{ failure_retention_days }}-day cached daily history, root-cause explanations, and pre-formatted logs ready to copy for Gemini / ChatGPT.</p>
+                    </div>
+                </div>
+
+                <div class="failures-toolbar glass-panel">
+                    <div class="failures-toolbar-row">
+                        <div class="quick-window-group" id="failures-quick-windows">
+                            <span class="toolbar-label">Quick View:</span>
+                            <button type="button" class="btn btn-sm btn-filter active" data-window="day">Day</button>
+                            <button type="button" class="btn btn-sm btn-filter" data-window="5h">5h</button>
+                            <button type="button" class="btn btn-sm btn-filter" data-window="3h">3h</button>
+                            <button type="button" class="btn btn-sm btn-filter" data-window="2h">2h</button>
+                            <button type="button" class="btn btn-sm btn-filter" data-window="1h">1h</button>
+                            <button type="button" class="btn btn-sm btn-filter" data-window="30m">30m</button>
+                            <button type="button" class="btn btn-sm btn-filter" data-window="10m">10m</button>
+                            <button type="button" class="btn btn-sm btn-filter" data-window="5m">5m</button>
+                        </div>
+                        <div class="history-nav-group">
+                            <span class="toolbar-label">Daily History:</span>
+                            <button type="button" class="btn btn-sm btn-secondary" id="failures-prev-day">◀ Prev Day</button>
+                            <button type="button" class="btn btn-sm btn-secondary" id="failures-today">Today</button>
+                            <button type="button" class="btn btn-sm btn-secondary" id="failures-next-day">Next Day ▶</button>
+                            <input type="date" id="failures-date-picker" class="input-sm form-control-sm">
+                        </div>
+                    </div>
+                    <div class="failures-toolbar-row secondary-filters">
+                        <div class="filter-item">
+                            <label for="failures-client-filter" class="toolbar-label">Device:</label>
+                            <select id="failures-client-filter" class="form-select-sm">
+                                <option value="">All Clients</option>
+                            </select>
+                        </div>
+                        <div class="filter-item search-filter-item">
+                            <label for="failures-domain-filter" class="toolbar-label">Domain Search:</label>
+                            <input type="text" id="failures-domain-filter" placeholder="Filter by domain or error..." class="input-sm form-control-sm">
+                        </div>
+                        <div class="filter-actions">
+                            <button type="button" class="btn btn-sm btn-primary" id="failures-refresh-btn">🔄 Refresh</button>
+                            <span id="failures-cache-badge" class="badge-cached hidden">Cached</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Select Device Bar -->
+                <div class="top8-devices-card glass-panel" id="failures-quick-devices-card">
+                    <span class="top8-label">⭐ Quick Select Device:</span>
+                    <div id="failures-quick-devices-buttons" class="top8-buttons-group"></div>
+                </div>
+
+                <!-- KPI Summary Cards -->
+                <div class="kpi-grid failures-kpi-grid">
+                    <div class="kpi-card glass-panel">
+                        <div class="kpi-value" id="kpi-total-failures">0</div>
+                        <div class="kpi-label">Total Failures</div>
+                    </div>
+                    <div class="kpi-card glass-panel">
+                        <div class="kpi-value" id="kpi-failing-domains">0</div>
+                        <div class="kpi-label">Failing Domains</div>
+                    </div>
+                    <div class="kpi-card glass-panel">
+                        <div class="kpi-value" id="kpi-affected-devices">0</div>
+                        <div class="kpi-label">Affected Devices</div>
+                    </div>
+                    <div class="kpi-card glass-panel">
+                        <div class="kpi-value" id="kpi-primary-category">-</div>
+                        <div class="kpi-label">Top Failure Category</div>
+                    </div>
+                </div>
+
+                <!-- Failure Categories Breakdown Bar -->
+                <div class="category-breakdown-bar" id="failures-category-pills"></div>
+
+                <!-- Loading & Empty States -->
+                <div id="failures-loading" class="text-center p-3 hidden">
+                    <div class="spinner"></div>
+                    <p>Analyzing Squid logs for connection failures...</p>
+                </div>
+
+                <div id="failures-empty" class="glass-panel text-center p-4 hidden">
+                    <p>🎉 <strong>No non-policy connection failures detected</strong> in this time window.</p>
+                    <small class="text-muted">All client requests succeeded or were governed by policy rules.</small>
+                </div>
+
+                <!-- List of Failure Cards -->
+                <div id="failures-list" class="failures-container"></div>
             </section>
         </main>
 
@@ -722,10 +816,12 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
     <script>
         window.WEBUI_CONTEXT = Object.freeze({
             adminRequested: {{ admin_requested | tojson }},
-            activityRetentionDays: {{ activity_retention_days | tojson }}
+            activityRetentionDays: {{ activity_retention_days | tojson }},
+            failureRetentionDays: {{ failure_retention_days | tojson }}
         });
     </script>
-    <script src="/static/app.js"></script>
-    <script src="/static/tls-exceptions.js"></script>
+    <script src="/static/app.js?v=20260907-3"></script>
+    <script src="/static/tls-exceptions.js?v=20260907-3"></script>
+    <script src="/static/failures.js?v=20260907-3"></script>
 </body>
 </html>

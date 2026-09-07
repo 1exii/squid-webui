@@ -7,7 +7,7 @@ import threading
 import time
 import socket
 import http.client
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as datetime_time, timedelta
 import paramiko
 from passlib.hash import md5_crypt, sha512_crypt, sha256_crypt, des_crypt
 from flask import Flask, render_template, request, jsonify, session, send_file
@@ -38,6 +38,13 @@ from overall_analytics import (
     aggregate_overall_reports,
     build_daily_overall_archive,
 )
+from failure_analytics import (
+    WINDOW_SECONDS,
+    parse_failure_events,
+    load_daily_failure_report,
+    save_daily_failure_report,
+    prune_failure_reports,
+)
 from traffic_analytics import (
     activity_period_bounds,
     aggregate_activity_archive,
@@ -48,6 +55,17 @@ from traffic_analytics import (
 )
 
 app = Flask(__name__)
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+
+@app.after_request
+def add_cache_control_headers(response):
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 
 # Configuration paths (inside container / host)
 SQUID_CONFIG_DIR = os.environ.get("SQUID_CONFIG_DIR", "/etc/squid/configs")
@@ -63,6 +81,10 @@ SQUID_AUDIT_LOG = os.environ.get(
 )
 ACTIVITY_RETENTION_DAYS = 365
 ACTIVITY_LOG_BACKFILL_DAYS = 30
+FAILURE_REPORT_RETENTION_DAYS = int(os.environ.get("FAILURE_REPORT_RETENTION_DAYS", "30"))
+SQUID_FAILURE_REPORT_DIR = os.environ.get(
+    "SQUID_FAILURE_REPORT_DIR", os.path.join(SQUID_CONFIG_DIR, "failure-reports")
+)
 
 RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
 TLS_EXCEPTIONS_PATH = os.path.join(SQUID_CONFIG_DIR, "tls_exceptions.json")
@@ -1228,6 +1250,7 @@ def index(admin_requested):
         admin_visible=admin_visible,
         admin_requested=admin_requested,
         activity_retention_days=ACTIVITY_RETENTION_DAYS,
+        failure_retention_days=FAILURE_REPORT_RETENTION_DAYS,
         pac_url=PAC_URL,
         webui_public_url=WEBUI_PUBLIC_URL,
         squid_proxy_host=SQUID_PROXY_HOST,
@@ -1717,6 +1740,112 @@ def get_overall_analytics():
     except Exception as e:
         print(f"Error in overall analytics API: {e}")
         return jsonify({"error": "Could not analyze overall Squid traffic"}), 500
+
+
+@app.route("/api/failure-analytics", methods=["GET"])
+def get_failure_analytics():
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    window = request.args.get("window", "").strip().lower()
+    date_val = request.args.get("date", "").strip()
+    client_ip = request.args.get("client_ip", "").strip()
+    try:
+        limit = int(request.args.get("limit", "500"))
+    except ValueError:
+        limit = 500
+
+    devices = {d["ip"]: d for d in load_devices_list()}
+    today = date.today()
+
+    try:
+        if window in ("day", "1d"):
+            if not date_val:
+                date_val = today.isoformat()
+            window = ""
+
+        if window:
+            if window not in WINDOW_SECONDS:
+                return jsonify({
+                    "error": f"Invalid window '{window}'. Expected one of: {', '.join(WINDOW_SECONDS.keys())}"
+                }), 400
+            duration = WINDOW_SECONDS[window]
+            now_epoch = datetime.now().timestamp()
+            start_epoch = now_epoch - duration
+            end_epoch = now_epoch
+
+            summary, events = parse_failure_events(
+                SQUID_ACCESS_LOG,
+                start_epoch,
+                end_epoch,
+                client_ip=client_ip,
+                devices_by_ip=devices,
+                limit=limit,
+            )
+            return jsonify({
+                "mode": "window",
+                "window": window,
+                "start_epoch": start_epoch,
+                "end_epoch": end_epoch,
+                "cached": False,
+                "summary": summary,
+                "events": events,
+            })
+
+        if not date_val:
+            date_val = today.isoformat()
+        try:
+            target_date = datetime.strptime(date_val, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "date must use YYYY-MM-DD format"}), 400
+
+        oldest = today - timedelta(days=FAILURE_REPORT_RETENTION_DAYS - 1)
+        if target_date > today or target_date < oldest:
+            return jsonify({
+                "error": f"date must be within the last {FAILURE_REPORT_RETENTION_DAYS} days"
+            }), 400
+
+        if target_date < today and not client_ip:
+            cached_found, cached_data = load_daily_failure_report(
+                SQUID_FAILURE_REPORT_DIR, target_date
+            )
+            if cached_found and cached_data:
+                cached_data["cached"] = True
+                return jsonify(cached_data)
+
+        start_epoch = datetime.combine(target_date, datetime_time.min).timestamp()
+        end_epoch = datetime.combine(target_date + timedelta(days=1), datetime_time.min).timestamp()
+
+        summary, events = parse_failure_events(
+            SQUID_ACCESS_LOG,
+            start_epoch,
+            end_epoch,
+            client_ip=client_ip,
+            devices_by_ip=devices,
+            limit=limit,
+        )
+
+        response_payload = {
+            "mode": "date",
+            "date": target_date.isoformat(),
+            "start_epoch": start_epoch,
+            "end_epoch": end_epoch,
+            "cached": False,
+            "summary": summary,
+            "events": events,
+        }
+
+        if target_date < today and not client_ip:
+            save_daily_failure_report(SQUID_FAILURE_REPORT_DIR, target_date, response_payload)
+            prune_failure_reports(
+                SQUID_FAILURE_REPORT_DIR, FAILURE_REPORT_RETENTION_DAYS, today=today
+            )
+
+        return jsonify(response_payload)
+
+    except Exception as e:
+        app.logger.exception("Error in failure analytics API")
+        return jsonify({"error": f"Failed to analyze failure logs: {e}"}), 500
 
 
 def load_tls_exceptions():

@@ -31,6 +31,13 @@ WEBUI_RESTART_POLICY="unless-stopped"
 get_filtered_instances() {
     local filtered=()
     for target in "${TARGET_NAMES[@]}"; do
+        # Normalize target aliases
+        if [[ "$target" == "webui" || "$target" == "squid-webui" ]]; then
+            target="$WEBUI_CONTAINER_NAME"
+        elif [[ "$target" == "squid" || "$target" == "proxy" || "$target" == "squid-proxy" ]]; then
+            target="$SQUID_CONTAINER_NAME"
+        fi
+
         local found=false
         for entry in "${DOCKER_INSTANCES[@]}"; do
             read -r IP NAME IMAGE <<< "$entry"
@@ -299,6 +306,7 @@ function create_webui() {
             -e WEBUI_PORT="$WEBUI_PORT" \
             -e ADMIN_CLIENT_IPS="$ADMIN_CLIENT_IPS" \
             -e CERT_NAME="$CERT_NAME" \
+            -e FAILURE_REPORT_RETENTION_DAYS="$FAILURE_REPORT_RETENTION_DAYS" \
             -v "${REMOTE_SQUID_BASE}/configs:/etc/squid/configs" \
             -v "${REMOTE_SQUID_BASE}/certs:/etc/squid/certs:ro" \
             -v "${REMOTE_SQUID_BASE}/block-lists:/etc/squid/block-lists" \
@@ -314,7 +322,10 @@ EOF
 function create_instances() {
     mapfile -t active_list < <(get_filtered_instances)
 
-    [ ${#active_list[@]} -eq 0 ] && return
+    if [ ${#active_list[@]} -eq 0 ]; then
+        echo "ERROR: No matching container targets found."
+        exit 1
+    fi
 
     if [ ! -f "$LOCAL_CONF_TEMPLATE" ]; then
         echo "ERROR: Squid config template missing at $LOCAL_CONF_TEMPLATE"
