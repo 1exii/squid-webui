@@ -1,4 +1,5 @@
 import os
+from tls_exceptions import DEFAULT_EXCEPTIONS, validate_exceptions, render_exceptions
 import json
 import copy
 import secrets
@@ -64,6 +65,8 @@ ACTIVITY_RETENTION_DAYS = 365
 ACTIVITY_LOG_BACKFILL_DAYS = 30
 
 RULES_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "rules.acl")
+TLS_EXCEPTIONS_PATH = os.path.join(SQUID_CONFIG_DIR, "tls_exceptions.json")
+EARLY_SPLICE_PATH = os.path.join(SQUID_CONFIG_DIR, "early_splice.acl")
 SSL_BUMP_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "ssl_bump.acl")
 # Domain list requiring SSL bumping for deep URL path inspection (data file).
 BUMP_DOMAINS_ACL_PATH = os.path.join(SQUID_CONFIG_DIR, "bump_domains.acl")
@@ -124,7 +127,7 @@ app.secret_key = _load_or_create_secret_key()
 
 # Serialises ACL compilation + reload. Guards against two requests (or the
 # background expiry thread) interleaving writes to rules.acl / ssl_bump.acl.
-COMPILE_LOCK = threading.Lock()
+COMPILE_LOCK = threading.RLock()
 ACTIVITY_REPORT_LOCK = threading.Lock()
 
 # IPs that get the Admin page as the default landing page are deployment data.
@@ -980,7 +983,7 @@ def _build_policy_acls(policies, parsed_blocklists):
     return "\n".join(acl_lines) + "\n", "\n".join(ssl_bump_lines) + "\n"
 
 
-def compile_device_policies_acls(policies):
+def compile_device_policies_acls(policies, tls_entries=None):
     """
     Regenerate every managed Squid config file from the device policies, then
     validate and reload. On a validation failure the previous configuration is
@@ -991,6 +994,12 @@ def compile_device_policies_acls(policies):
     with COMPILE_LOCK:
         snap = snapshot_configs()
         try:
+            entries = load_tls_exceptions() if tls_entries is None else validate_exceptions(tls_entries)
+            os.makedirs(SQUID_CONFIG_DIR, exist_ok=True)
+            with open(EARLY_SPLICE_PATH, "w") as handle:
+                handle.write(render_exceptions(entries))
+            with open(TLS_EXCEPTIONS_PATH, "w") as handle:
+                json.dump(entries, handle, indent=2)
             parsed_blocklists = get_parsed_blocklists()
 
             # Keep the bump list in step with the blocklists on every compile,
@@ -1132,6 +1141,8 @@ def validate_squid_config():
 # Files rewritten on every compile; all are snapshotted so a bad generation can
 # be rolled back before Squid is ever asked to load it.
 _MANAGED_CONFIG_FILES = (
+    TLS_EXCEPTIONS_PATH,
+    EARLY_SPLICE_PATH,
     RULES_ACL_PATH,
     SSL_BUMP_ACL_PATH,
     BUMP_DOMAINS_ACL_PATH,
@@ -1163,6 +1174,10 @@ def restore_configs(snap):
     """
     for path, content in snap.items():
         try:
+            if path == TLS_EXCEPTIONS_PATH and content is None:
+                if os.path.exists(path):
+                    os.unlink(path)
+                continue
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content if content is not None else
                         "# Reverted: this generation failed validation.\n")
@@ -1702,6 +1717,45 @@ def get_overall_analytics():
     except Exception as e:
         print(f"Error in overall analytics API: {e}")
         return jsonify({"error": "Could not analyze overall Squid traffic"}), 500
+
+
+def load_tls_exceptions():
+    try:
+        with open(TLS_EXCEPTIONS_PATH) as handle:
+            return validate_exceptions(json.load(handle))
+    except FileNotFoundError:
+        return copy.deepcopy(DEFAULT_EXCEPTIONS)
+
+
+@app.route("/api/tls-exceptions", methods=["GET", "POST"])
+def tls_exceptions_api():
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        with COMPILE_LOCK:
+            before = load_tls_exceptions()
+            if request.method == "GET":
+                return jsonify({"entries": before})
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict) or "entries" not in data:
+                raise ValueError("Expected entries")
+            entries = validate_exceptions(data["entries"])
+            ok, message = compile_device_policies_acls(load_device_policies(), entries)
+            if before != entries:
+                record = make_audit_record(request_audit_actor(), "admin_api", [{
+                    "kind": "tls_exceptions_updated", "hostname": "TLS Exceptions",
+                    "device_ip": "all", "changed_fields": ["tls_exceptions"],
+                    "before": {"tls_exceptions": before}, "after": {"tls_exceptions": entries}
+                }], ok, message)
+                record["action"] = "tls_exceptions_changed"
+                append_audit_record(SQUID_AUDIT_LOG, record)
+            return jsonify({"success": ok, "message": message,
+                            "entries": load_tls_exceptions()}), 200 if ok else 500
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        app.logger.exception("TLS exception operation failed")
+        return jsonify({"error": "Could not load or apply TLS exceptions"}), 500
 
 
 @app.route("/api/policies", methods=["GET"])

@@ -2012,3 +2012,11 @@ kbd {
         width: 100%;
     }
 }
+
+/* Shared TLS service exceptions. */
+.tls-exceptions-panel { padding: 1rem; margin-bottom: 1rem; }
+.tls-exception-row { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin: 1rem 0; }
+.tls-exception-row label { display: flex; flex-direction: column; gap: .4rem; flex: 1 1 12rem; min-width: 0; }
+.tls-exception-row input:not([type=checkbox]), .tls-exception-row textarea { width: 100%; box-sizing: border-box; padding: .6rem; }
+.tls-exception-row input[type=checkbox] { align-self: start; }
+@media (max-width: 600px) { .tls-exception-row { flex-direction: column; align-items: stretch; } .tls-exception-row label { flex: auto; } }

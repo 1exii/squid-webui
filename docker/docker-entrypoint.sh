@@ -5,6 +5,9 @@ set -e
 mkdir -p /var/cache/squid /var/lib/squid /var/log/squid
 chown -R proxy:proxy /var/cache/squid /var/lib/squid /var/log/squid
 
+# Preserve generated exceptions; bootstrap an empty include on older volumes.
+touch /etc/squid/configs/early_splice.acl
+
 # 2. Configure system timezone from $TZ if specified
 if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then
     ln -sf "/usr/share/zoneinfo/$TZ" /etc/localtime

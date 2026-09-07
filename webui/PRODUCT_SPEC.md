@@ -247,3 +247,30 @@ When you finish updating this file:
 1. Save your changes to this file (`PRODUCT_SPEC.md`).
 2. Message the AI assistant with a prompt like:
    > *"I updated `personal/home-network/squid/webui/PRODUCT_SPEC.md`. Please update the Web UI implementation to reflect the changes in Section 6."*
+
+### Shared TLS compatibility exceptions
+
+A separate authenticated TLS Exceptions tab includes the service editor backed by authenticated
+GET/POST `/api/tls-exceptions` (`{"entries": [...]}`). Each entry has `domain`,
+`destination_networks` (public CIDRs), and boolean `enabled`. Domain names include
+subdomains; schemes, wildcards, duplicate domains and config injection are rejected.
+An empty destination list supports explicit proxy requests only. Networks must be
+maintained from the service provider's published requirements; resolving an apex
+name cannot enumerate a service's endpoints.
+
+The persisted `configs/tls_exceptions.json` is independent of device policies.
+Missing storage initializes the Vivox entry (`vivox.com`, `85.236.96.0/21`,
+`85.236.104.0/23`); an explicitly saved empty list remains empty. All policy
+compilations regenerate `early_splice.acl`. The template loads it before peeking.
+Domain matches use explicit-port CONNECT authority without reverse DNS; network
+matches cover transparent connections. All exceptions are restricted to step 1,
+TCP CONNECT destination port 443. This is a shared, always-on TLS inspection
+exception, not a scheduled allowance: matching streams may bypass category/path
+inspection for all devices. Existing HTTP access checks still apply before splice.
+Audio UDP remains outside Squid.
+
+Exception changes use the compilation lock, parse-before-reload and rollback path,
+and record exact before/after entries in the Change Log. Deploy scripts and the
+proxy entrypoint create a missing empty include without overwriting generated state.
+Deploy the updated proxy template and WebUI together. A live VALORANT reconnect is
+required to verify compatibility; config generation alone does not verify voice.

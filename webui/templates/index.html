@@ -25,6 +25,7 @@
                 <button id="nav-tab-admin" class="nav-tab-btn">⚙️ Access Control Admin</button>
                 <button id="nav-tab-activity" class="nav-tab-btn">📊 Website Activity</button>
                 <button id="nav-tab-overall" class="nav-tab-btn">📈 Overall Analytics</button>
+                <button id="nav-tab-tls" class="nav-tab-btn">TLS Exceptions</button>
                 <button id="nav-tab-audit" class="nav-tab-btn">🧾 Change Log</button>
                 {% endif %}
             </div>
@@ -262,8 +263,22 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
         </main>
 
         {% if admin_visible %}
+        <main id="tls-screen" class="main-content hidden">
+            <section class="glass-panel tls-exceptions-panel" id="tls-exceptions-panel">
+                <h2>TLS Exceptions</h2>
+                <p>Compatibility exceptions for all devices, at all times. Matching connections skip TLS inspection and can override category blocking. Domains include subdomains. Public destination networks are needed for transparent connections; DNS cannot discover every service address.</p>
+                <div id="tls-exception-rows"></div>
+                <button type="button" class="btn btn-secondary" id="tls-exception-add">Add service</button>
+                <button type="button" class="btn btn-primary" id="tls-exception-save">Save and apply exceptions</button>
+                <button type="button" class="btn btn-secondary" id="tls-exception-reload">Reload saved entries</button>
+                <p id="tls-exception-status" role="status" aria-live="polite"></p>
+            </section>
+        </main>
+
         <!-- Admin View: Device Access Control (Protected) -->
         <main id="admin-screen" class="main-content hidden">
+
+
 
             <!-- Toolbar & Device Selector -->
             <div class="dashboard-toolbar glass-panel">
@@ -711,5 +726,6 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
         });
     </script>
     <script src="/static/app.js"></script>
+    <script src="/static/tls-exceptions.js"></script>
 </body>
 </html>

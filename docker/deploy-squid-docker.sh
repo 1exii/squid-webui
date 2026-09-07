@@ -92,9 +92,9 @@ function create_squid() {
     # Sync config, errors, and certs before starting the container
     echo "  [*] Syncing squid.conf and configs to QNAP..."
     # squid.conf 'include's rules.acl, ssl_bump.acl and bump_domains.conf, and a
-    # missing include file is a FATAL parse error — pre-create all three so a
+    # missing include file is a FATAL parse error — pre-create all includes so a
     # first-time deploy starts cleanly before the Web UI has ever compiled.
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db ${REMOTE_BASE}/logs && touch ${REMOTE_BASE}/configs/rules.acl ${REMOTE_BASE}/configs/ssl_bump.acl ${REMOTE_BASE}/configs/bump_domains.conf"
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_BASE}/configs ${REMOTE_BASE}/configs/errors ${REMOTE_BASE}/certs ${REMOTE_BASE}/block-lists ${REMOTE_BASE}/router ${REMOTE_BASE}/cache ${REMOTE_BASE}/ssl_db ${REMOTE_BASE}/logs && touch ${REMOTE_BASE}/configs/rules.acl ${REMOTE_BASE}/configs/ssl_bump.acl ${REMOTE_BASE}/configs/bump_domains.conf ${REMOTE_BASE}/configs/early_splice.acl"
     local rendered_conf rendered_error_dir
     rendered_conf="$(mktemp)"
     rendered_error_dir="$(mktemp -d)"
@@ -195,7 +195,7 @@ function create_webui() {
     # deployed on its own (without create_squid having run first) Docker would
     # otherwise silently create an empty directory and the CA download endpoints
     # would 404.
-    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/certs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router ${REMOTE_SQUID_BASE}/logs && touch ${REMOTE_SQUID_BASE}/configs/rules.acl ${REMOTE_SQUID_BASE}/configs/ssl_bump.acl ${REMOTE_SQUID_BASE}/configs/bump_domains.conf"
+    ssh "$QNAP_SERVER" "mkdir -p ${REMOTE_SQUID_BASE}/configs ${REMOTE_SQUID_BASE}/certs ${REMOTE_SQUID_BASE}/block-lists ${REMOTE_SQUID_BASE}/router ${REMOTE_SQUID_BASE}/logs && touch ${REMOTE_SQUID_BASE}/configs/rules.acl ${REMOTE_SQUID_BASE}/configs/ssl_bump.acl ${REMOTE_SQUID_BASE}/configs/bump_domains.conf ${REMOTE_SQUID_BASE}/configs/early_splice.acl"
 
     if [ -f "${LOCAL_CERT_DIR}/squid-ca.pem" ]; then
         scp "${LOCAL_CERT_DIR}/squid-ca.pem" "$QNAP_SERVER:${REMOTE_SQUID_BASE}/certs/" 2>/dev/null || true

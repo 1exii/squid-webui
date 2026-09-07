@@ -14,6 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const navTabAdmin         = document.getElementById('nav-tab-admin');
     const navTabActivity      = document.getElementById('nav-tab-activity');
     const navTabOverall       = document.getElementById('nav-tab-overall');
+    const navTabTls = document.getElementById('nav-tab-tls');
+    const tlsScreen = document.getElementById('tls-screen');
     const navTabAudit         = document.getElementById('nav-tab-audit');
     const onboardingScreen    = document.getElementById('onboarding-screen');
     const adminScreen         = document.getElementById('admin-screen');
@@ -372,6 +374,8 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
         navTabOverall && navTabOverall.classList.remove('active');
+        navTabTls && navTabTls.classList.remove('active');
+        tlsScreen && tlsScreen.classList.add('hidden');
         navTabAudit && navTabAudit.classList.remove('active');
         onboardingScreen && onboardingScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
@@ -400,11 +404,29 @@ document.addEventListener('DOMContentLoaded', () => {
         else { switchToAudit(); }
     });
 
+    navTabTls && navTabTls.addEventListener('click', () => {
+        requestedProtectedView = 'tls';
+        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        else { switchToTls(); }
+    });
+
+    function switchToTls() {
+        [navTabAdmin, navTabActivity, navTabOverall, navTabAudit, navTabOnboarding]
+            .forEach(tab => tab && tab.classList.remove('active'));
+        [adminScreen, activityScreen, overallScreen, auditScreen, onboardingScreen]
+            .forEach(screen => screen && screen.classList.add('hidden'));
+        navTabTls.classList.add('active');
+        tlsScreen.classList.remove('hidden');
+        document.dispatchEvent(new Event('tls-exceptions-open'));
+    }
+
     function switchToAdmin() {
         navTabAdmin && navTabAdmin.classList.add('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
         navTabOverall && navTabOverall.classList.remove('active');
+        navTabTls && navTabTls.classList.remove('active');
+        tlsScreen && tlsScreen.classList.add('hidden');
         navTabAudit && navTabAudit.classList.remove('active');
         adminScreen && adminScreen.classList.remove('hidden');
         onboardingScreen && onboardingScreen.classList.add('hidden');
@@ -420,6 +442,8 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
         navTabOverall && navTabOverall.classList.remove('active');
+        navTabTls && navTabTls.classList.remove('active');
+        tlsScreen && tlsScreen.classList.add('hidden');
         navTabAudit && navTabAudit.classList.remove('active');
         activityScreen && activityScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
@@ -441,6 +465,8 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
         navTabOnboarding && navTabOnboarding.classList.remove('active');
+        navTabTls && navTabTls.classList.remove('active');
+        tlsScreen && tlsScreen.classList.add('hidden');
         navTabAudit && navTabAudit.classList.remove('active');
         overallScreen && overallScreen.classList.remove('hidden');
         adminScreen && adminScreen.classList.add('hidden');
@@ -457,6 +483,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function switchToAudit() {
+        navTabTls && navTabTls.classList.remove('active');
+        tlsScreen && tlsScreen.classList.add('hidden');
         navTabAudit && navTabAudit.classList.add('active');
         navTabAdmin && navTabAdmin.classList.remove('active');
         navTabActivity && navTabActivity.classList.remove('active');
@@ -1233,6 +1261,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateAuthUI(); authModal.classList.add('hidden');
                 if (requestedProtectedView === 'activity') switchToActivity();
                 else if (requestedProtectedView === 'overall') switchToOverall();
+                else if (requestedProtectedView === 'tls') switchToTls();
                 else if (requestedProtectedView === 'audit') switchToAudit();
                 else switchToAdmin();
             } else {
