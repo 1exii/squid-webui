@@ -123,11 +123,22 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - Each event records the server-local timestamp, NAS username or trusted-admin-client identity, source admin IP, success state, affected devices and fields, and exact before/after policy values.
 - Automatic midnight expiration is recorded as a system actor. Failed ACL compilation is also recorded because `device_policies.json` was changed even when generated ACL files were rolled back.
 - The API combines two or more changes into one displayed entry when they have the same authenticated identity, source admin-client IP, and single target device and all occur within two minutes of the first change, even if another device was edited between them. Raw JSONL events remain append-only and unmodified; automatic system events and multi-device changes are never combined.
-- The authenticated Change Log view displays the newest 100 entries with a lazy-rendered, side-by-side JSON comparison. Removed values are highlighted red and added values green while unchanged lines remain aligned. `SQUID_AUDIT_LOG` can override the storage path.
+### 3.7 Failure Analytics & Diagnostics (Admin Only)
+- **Diagnostic Scope:** Captures and analyzes non-policy proxy failures (e.g., HTTP 5xx server errors, 408 timeouts, 429 rate limits, 000 connection aborts, TCP resets, swap failures, DNS/CONNECT errors) to distinguish upstream and network failures from intentional ACL policy blocks.
+- **Universal Whole-Day Cache:** Always parses and caches the complete failure dataset across all clients and destinations into `configs/failure-reports/daily/{YYYY-MM-DD}.json` (retained for 30 days). Client, device, and domain filters operate purely in-memory on the cached dataset without triggering log recalculation.
+- **Incremental "Today" Tracking:**
+  - `TodayFailureTracker` persists file tracking state (`last_inode`, `last_size`, `last_offset`) to disk alongside today's event log.
+  - On WebUI restart or redeploy (`squid-mgmt.sh webui-deploy`), the state is restored from disk, allowing subsequent checks to parse only newly appended log bytes in sub-milliseconds.
+  - When starting without an existing offset, a binary search (`find_midnight_offset`) locates midnight in `< 1ms`, avoiding linear scans through historical days in active Squid logs.
+  - Byte-level token pre-filtering (`FAILURE_CANDIDATE_BYTES`) skips parsing over 99% of standard 200/304 log lines directly in C/Python byte buffers.
+- **Performance & Diagnostic Actions:**
+  - Progressive/chunked DOM rendering in the WebUI (initial 50 cards with on-demand expansion) prevents browser UI locking on days with heavy failure volume.
+  - Robust clipboard integration with automated fallback (`document.execCommand`) for non-TLS intranet HTTP connections.
+  - One-click prompt generation for Gemini and ChatGPT formatted with Squid failure diagnostics, client context, and suggested remediations.
 
 ---
 
-### 3.6 Critical User Journeys (CUJs)
+### 3.8 Critical User Journeys (CUJs)
 
 #### 🎯 CUJ 1: Permanent 24/7 Block (`Always Block` Subset)
 - **User Goal:** Unconditionally block specific high-risk category lists (e.g. `adult.txt`, `gambling.txt`) on a target device 24/7, bypassing any time-based schedule matrices.

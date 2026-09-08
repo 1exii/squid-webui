@@ -40,10 +40,13 @@ from overall_analytics import (
 )
 from failure_analytics import (
     WINDOW_SECONDS,
-    parse_failure_events,
+    build_failure_summary_from_events,
+    filter_cached_failure_report,
     load_daily_failure_report,
-    save_daily_failure_report,
+    parse_failure_events,
     prune_failure_reports,
+    save_daily_failure_report,
+    today_tracker,
 )
 from traffic_analytics import (
     activity_period_bounds,
@@ -1750,13 +1753,22 @@ def get_failure_analytics():
     window = request.args.get("window", "").strip().lower()
     date_val = request.args.get("date", "").strip()
     client_ip = request.args.get("client_ip", "").strip()
-    try:
-        limit = int(request.args.get("limit", "500"))
-    except ValueError:
-        limit = 500
+    limit_arg = request.args.get("limit")
+    if limit_arg:
+        try:
+            if limit_arg.lower() in ("all", "0", "none"):
+                limit = None
+            else:
+                limit = max(1, int(limit_arg))
+        except ValueError:
+            limit = 1000
+    else:
+        limit = 1000
 
     devices = {d["ip"]: d for d in load_devices_list()}
     today = date.today()
+
+    force_refresh = request.args.get("refresh", "").strip().lower() in ("1", "true", "yes")
 
     try:
         if window in ("day", "1d"):
@@ -1773,15 +1785,36 @@ def get_failure_analytics():
             now_epoch = datetime.now().timestamp()
             start_epoch = now_epoch - duration
             end_epoch = now_epoch
+            midnight_epoch = datetime.combine(today, datetime_time.min).timestamp()
 
-            summary, events = parse_failure_events(
-                SQUID_ACCESS_LOG,
-                start_epoch,
-                end_epoch,
-                client_ip=client_ip,
-                devices_by_ip=devices,
-                limit=limit,
-            )
+            if start_epoch >= midnight_epoch:
+                all_today = today_tracker.get_today_events(
+                    SQUID_ACCESS_LOG,
+                    devices_by_ip=devices,
+                    force_refresh=force_refresh,
+                    cache_dir=SQUID_FAILURE_REPORT_DIR,
+                    target_date=today,
+                )
+                matching_events = [
+                    e for e in all_today
+                    if e.get("timestamp", 0) >= start_epoch and (not client_ip or e.get("client_ip") == client_ip)
+                ]
+                summary, events = build_failure_summary_from_events(
+                    matching_events,
+                    start_epoch=start_epoch,
+                    end_epoch=end_epoch,
+                    devices_by_ip=devices,
+                    limit=limit,
+                )
+            else:
+                summary, events = parse_failure_events(
+                    SQUID_ACCESS_LOG,
+                    start_epoch,
+                    end_epoch,
+                    client_ip=client_ip,
+                    devices_by_ip=devices,
+                    limit=limit,
+                )
             return jsonify({
                 "mode": "window",
                 "window": window,
@@ -1800,47 +1833,96 @@ def get_failure_analytics():
             return jsonify({"error": "date must use YYYY-MM-DD format"}), 400
 
         oldest = today - timedelta(days=FAILURE_REPORT_RETENTION_DAYS - 1)
-        if target_date > today or target_date < oldest:
+        if target_date > today + timedelta(days=1) or target_date < oldest:
             return jsonify({
                 "error": f"date must be within the last {FAILURE_REPORT_RETENTION_DAYS} days"
             }), 400
 
-        if target_date < today and not client_ip:
-            cached_found, cached_data = load_daily_failure_report(
-                SQUID_FAILURE_REPORT_DIR, target_date
-            )
-            if cached_found and cached_data:
-                cached_data["cached"] = True
-                return jsonify(cached_data)
+        if target_date < today:
+            if not force_refresh:
+                cached_found, cached_data = load_daily_failure_report(
+                    SQUID_FAILURE_REPORT_DIR, target_date
+                )
+                if cached_found and cached_data:
+                    filtered_report = filter_cached_failure_report(
+                        cached_data, client_ip=client_ip, limit=limit
+                    )
+                    return jsonify(filtered_report)
 
+            # Not cached yet: parse full day once from Squid logs, save to daily cache, then filter
+            start_epoch = datetime.combine(target_date, datetime_time.min).timestamp()
+            end_epoch = datetime.combine(target_date + timedelta(days=1), datetime_time.min).timestamp()
+
+            full_summary, full_events = parse_failure_events(
+                SQUID_ACCESS_LOG,
+                start_epoch,
+                end_epoch,
+                client_ip="",
+                devices_by_ip=devices,
+                limit=None,
+            )
+
+            full_payload = {
+                "mode": "date",
+                "date": target_date.isoformat(),
+                "start_epoch": start_epoch,
+                "end_epoch": end_epoch,
+                "cached": False,
+                "summary": full_summary,
+                "events": full_events[:5000],
+            }
+
+            save_daily_failure_report(SQUID_FAILURE_REPORT_DIR, target_date, full_payload)
+            prune_failure_reports(
+                SQUID_FAILURE_REPORT_DIR, FAILURE_REPORT_RETENTION_DAYS, today=today
+            )
+
+            filtered_report = filter_cached_failure_report(
+                full_payload, client_ip=client_ip, limit=limit
+            )
+            return jsonify(filtered_report)
+
+        # target_date == today: use incremental TodayFailureTracker
         start_epoch = datetime.combine(target_date, datetime_time.min).timestamp()
         end_epoch = datetime.combine(target_date + timedelta(days=1), datetime_time.min).timestamp()
 
-        summary, events = parse_failure_events(
+        all_today = today_tracker.get_today_events(
             SQUID_ACCESS_LOG,
-            start_epoch,
-            end_epoch,
-            client_ip=client_ip,
             devices_by_ip=devices,
-            limit=limit,
+            force_refresh=force_refresh,
+            cache_dir=SQUID_FAILURE_REPORT_DIR,
+            target_date=target_date,
         )
+        if client_ip:
+            matching_events = [e for e in all_today if e.get("client_ip") == client_ip]
+            summary, events = build_failure_summary_from_events(
+                matching_events,
+                start_epoch=start_epoch,
+                end_epoch=end_epoch,
+                devices_by_ip=devices,
+                limit=limit,
+            )
+        else:
+            summary = today_tracker.get_today_summary()
+            if not summary:
+                summary, _ = build_failure_summary_from_events(
+                    all_today,
+                    start_epoch=start_epoch,
+                    end_epoch=end_epoch,
+                    devices_by_ip=devices,
+                    limit=None,
+                )
+            events = all_today[:limit] if limit else all_today
 
         response_payload = {
             "mode": "date",
             "date": target_date.isoformat(),
             "start_epoch": start_epoch,
             "end_epoch": end_epoch,
-            "cached": False,
+            "cached": not force_refresh,
             "summary": summary,
             "events": events,
         }
-
-        if target_date < today and not client_ip:
-            save_daily_failure_report(SQUID_FAILURE_REPORT_DIR, target_date, response_payload)
-            prune_failure_reports(
-                SQUID_FAILURE_REPORT_DIR, FAILURE_REPORT_RETENTION_DAYS, today=today
-            )
-
         return jsonify(response_payload)
 
     except Exception as e:

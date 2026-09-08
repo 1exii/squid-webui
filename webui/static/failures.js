@@ -29,6 +29,9 @@
     let loadedEvents = [];
     let clientsLoaded = false;
     let currentFetchController = null;
+    let currentFullDataset = null;
+    let currentFullDatasetKey = "";
+    const sessionDatasetCache = new Map();
 
     function localToday() {
         const d = new Date();
@@ -73,12 +76,74 @@
         return "📟";
     }
 
+    function computeFilteredSummary(events) {
+        const domainCounts = {};
+        const domainCategories = {};
+        const clientCounts = {};
+        const categoryCounts = {};
+
+        events.forEach(e => {
+            const dom = e.domain || "";
+            const cat = e.category || "Unknown";
+            const cip = e.client_ip || "";
+
+            domainCounts[dom] = (domainCounts[dom] || 0) + 1;
+            if (!domainCategories[dom]) domainCategories[dom] = {};
+            domainCategories[dom][cat] = (domainCategories[dom][cat] || 0) + 1;
+            clientCounts[cip] = (clientCounts[cip] || 0) + 1;
+            categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+        });
+
+        const topDomains = Object.entries(domainCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 25)
+            .map(([domain, count]) => {
+                const cats = Object.entries(domainCategories[domain] || {}).sort((a, b) => b[1] - a[1]);
+                return {
+                    domain,
+                    failures: count,
+                    primary_category: cats.length > 0 ? cats[0][0] : "Unknown",
+                };
+            });
+
+        return {
+            total_failures: events.length,
+            unique_domains: Object.keys(domainCounts).length,
+            unique_clients: Object.keys(clientCounts).length,
+            category_counts: categoryCounts,
+            top_domains: topDomains,
+        };
+    }
+
+    function renderCurrentView() {
+        if (!currentFullDataset) return;
+        if (!currentClientIp) {
+            renderData(currentFullDataset);
+        } else {
+            const allEvents = currentFullDataset.events || [];
+            const filteredEvents = allEvents.filter(e => e.client_ip === currentClientIp);
+            const filteredSummary = computeFilteredSummary(filteredEvents);
+            renderData({
+                ...currentFullDataset,
+                summary: filteredSummary,
+                events: filteredEvents,
+            });
+        }
+    }
+
     function selectClient(ip) {
         currentClientIp = ip || "";
         if (clientFilter) {
             clientFilter.value = currentClientIp;
         }
         syncQuickDeviceButtons();
+
+        const activeKey = `${currentMode}:${currentMode === "window" ? currentWindow : currentDate}`;
+        if (currentFullDataset && currentFullDatasetKey === activeKey) {
+            renderCurrentView();
+            return;
+        }
+
         loadData();
     }
 
@@ -169,6 +234,71 @@
         });
     }
 
+    async function copyTextToClipboard(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch (_) {}
+        }
+
+        // Fallback for non-secure HTTP contexts (e.g. LAN WebUI on Chrome/Ubuntu)
+        let textArea = null;
+        try {
+            textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.top = "-9999px";
+            textArea.style.left = "-9999px";
+            textArea.style.opacity = "0";
+            textArea.setAttribute("readonly", "");
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            textArea.setSelectionRange(0, 99999);
+            const successful = document.execCommand("copy");
+            if (successful) return true;
+        } catch (_) {
+        } finally {
+            if (textArea && textArea.parentNode) {
+                textArea.parentNode.removeChild(textArea);
+            }
+        }
+
+        // Last-resort fallback: prompt user with pre-selected text
+        try {
+            window.prompt("Press Ctrl+C to copy diagnostic prompt:", text);
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function buildCopyPrompt(event) {
+        if (event.copyable_prompt) return event.copyable_prompt;
+        const parts = [
+            "### Squid Proxy Access Failure Report",
+            `- **Timestamp**: ${event.datetime_local || ""} (epoch: ${event.timestamp || ""})`,
+            `- **Client Device**: ${event.client_name || event.client_ip || ""} (${event.client_ip || ""})`,
+            `- **Target Domain**: ${event.domain || ""}`,
+            `- **Destination**: ${event.method || ""} ${event.url || ""}`,
+            `- **Squid Result Code**: ${event.result || ""} (HTTP Status: ${event.status || ""})`,
+            `- **Error Category**: ${event.category || ""}`,
+            `- **Preliminary Diagnostic**: ${event.explanation || ""}`,
+            "",
+            "#### Raw Squid Access Log Line:",
+            "```text",
+            event.raw_log || "",
+            "```",
+            "",
+            "#### Diagnostic Prompt:",
+            "Please analyze the root cause of this failure in the Squid proxy environment. " +
+            "Could this be caused by SSL inspection/certificate pinning, an upstream network or DNS issue, " +
+            "or a Squid configuration issue? What are the specific troubleshooting steps or recommended ACL/splice fixes?"
+        ];
+        return parts.join("\n");
+    }
+
     function renderEventCard(event) {
         const card = document.createElement("div");
         card.className = "failure-card glass-panel";
@@ -213,8 +343,9 @@
         const copyBtn = card.querySelector(".btn-copy-ai");
         if (copyBtn) {
             copyBtn.addEventListener("click", async () => {
-                try {
-                    await navigator.clipboard.writeText(event.copyable_prompt);
+                const prompt = buildCopyPrompt(event);
+                const copied = await copyTextToClipboard(prompt);
+                if (copied) {
                     const originalText = copyBtn.textContent;
                     copyBtn.textContent = "✅ Copied to clipboard!";
                     copyBtn.classList.add("btn-success");
@@ -222,8 +353,8 @@
                         copyBtn.textContent = originalText;
                         copyBtn.classList.remove("btn-success");
                     }, 2000);
-                } catch (_) {
-                    alert("Failed to copy to clipboard. Please copy manually from the raw log.");
+                } else {
+                    alert("Failed to copy to clipboard. Please view raw log to copy manually.");
                 }
             });
         }
@@ -250,30 +381,87 @@
             .replace(/'/g, "&#039;");
     }
 
-    function applyClientSearch() {
-        if (!domainFilter || !failuresList) return;
-        const query = domainFilter.value.trim().toLowerCase();
-        let visibleCount = 0;
-        const cards = failuresList.querySelectorAll(".failure-card");
+    let currentRenderBatch = 50;
 
-        cards.forEach(card => {
-            const domain = card.dataset.domain;
-            const client = card.dataset.client;
-            const explanation = card.dataset.explanation;
-            const matches = !query || domain.includes(query) || client.includes(query) || explanation.includes(query);
-            card.classList.toggle("hidden", !matches);
-            if (matches) visibleCount++;
-        });
+    function renderEventList(events) {
+        if (!failuresList) return;
+        failuresList.replaceChildren();
 
-        if (emptyState) {
-            if (cards.length > 0 && visibleCount === 0) {
+        const query = (domainFilter && domainFilter.value || "").trim().toLowerCase();
+        let matched = events || [];
+        if (query) {
+            matched = matched.filter(e => {
+                const dom = (e.domain || "").toLowerCase();
+                const cl = (e.client_name || e.client_ip || "").toLowerCase();
+                const exp = (e.explanation || "").toLowerCase();
+                return dom.includes(query) || cl.includes(query) || exp.includes(query);
+            });
+        }
+
+        if (matched.length === 0) {
+            if (emptyState) {
                 emptyState.classList.remove("hidden");
                 const p = emptyState.querySelector("p");
-                if (p) p.innerHTML = `🔍 No failures matching <strong>${escapeHtml(query)}</strong>.`;
-            } else if (cards.length > 0) {
-                emptyState.classList.add("hidden");
+                if (p) {
+                    p.innerHTML = query
+                        ? `🔍 No failures matching <strong>${escapeHtml(query)}</strong>.`
+                        : "🎉 <strong>No non-policy connection failures detected</strong> in this time period.";
+                }
             }
+            return;
         }
+
+        if (emptyState) emptyState.classList.add("hidden");
+
+        const toRender = matched.slice(0, currentRenderBatch);
+        const fragment = document.createDocumentFragment();
+        toRender.forEach(evt => {
+            fragment.appendChild(renderEventCard(evt));
+        });
+        failuresList.appendChild(fragment);
+
+        if (matched.length > toRender.length) {
+            const paginationBar = document.createElement("div");
+            paginationBar.className = "failure-pagination-bar";
+            paginationBar.style.display = "flex";
+            paginationBar.style.justifyContent = "center";
+            paginationBar.style.alignItems = "center";
+            paginationBar.style.gap = "12px";
+            paginationBar.style.padding = "24px 0";
+
+            const countLabel = document.createElement("span");
+            countLabel.style.fontSize = "0.9rem";
+            countLabel.style.color = "var(--text-muted, #888)";
+            countLabel.textContent = `Showing ${toRender.length} of ${matched.length} failures`;
+
+            const loadMoreBtn = document.createElement("button");
+            loadMoreBtn.type = "button";
+            loadMoreBtn.className = "btn btn-secondary";
+            loadMoreBtn.textContent = "⬇️ Load 50 More";
+            loadMoreBtn.addEventListener("click", () => {
+                currentRenderBatch += 50;
+                renderEventList(events);
+            });
+
+            const loadAllBtn = document.createElement("button");
+            loadAllBtn.type = "button";
+            loadAllBtn.className = "btn btn-text";
+            loadAllBtn.textContent = `Load All (${matched.length})`;
+            loadAllBtn.addEventListener("click", () => {
+                currentRenderBatch = matched.length;
+                renderEventList(events);
+            });
+
+            paginationBar.appendChild(countLabel);
+            paginationBar.appendChild(loadMoreBtn);
+            paginationBar.appendChild(loadAllBtn);
+            failuresList.appendChild(paginationBar);
+        }
+    }
+
+    function applyClientSearch() {
+        currentRenderBatch = 50;
+        renderEventList(loadedEvents);
     }
 
     function clearCurrentStatsAndList() {
@@ -290,7 +478,46 @@
         if (kpiCategory) kpiCategory.textContent = "—";
     }
 
-    async function loadData() {
+    function renderData(data) {
+        const summary = data.summary || {};
+        loadedEvents = data.events || [];
+
+        // Update KPI cards
+        if (kpiTotal) kpiTotal.textContent = summary.total_failures || 0;
+        if (kpiDomains) kpiDomains.textContent = summary.unique_domains || 0;
+        if (kpiClients) kpiClients.textContent = summary.unique_clients || 0;
+
+        const topDomain = summary.top_domains && summary.top_domains[0];
+        const topCategory = topDomain ? topDomain.primary_category : (summary.category_counts && Object.keys(summary.category_counts)[0]) || "-";
+        if (kpiCategory) kpiCategory.textContent = topCategory;
+
+        // Cache badge
+        if (cacheBadge) cacheBadge.classList.toggle("hidden", !data.cached);
+
+        // Category breakdown
+        renderCategoryPills(summary.category_counts);
+
+        currentRenderBatch = 50;
+        renderEventList(loadedEvents);
+    }
+
+    async function loadData(forceRefresh = false) {
+        const today = localToday();
+        const cacheKey = `${currentMode}:${currentMode === "window" ? currentWindow : (currentDate || today)}`;
+
+        // If already cached in this session, display immediately without network latency or spinners
+        if (!forceRefresh && sessionDatasetCache.has(cacheKey)) {
+            if (currentFetchController) {
+                currentFetchController.abort();
+                currentFetchController = null;
+            }
+            if (loadingIndicator) loadingIndicator.classList.add("hidden");
+            currentFullDataset = sessionDatasetCache.get(cacheKey);
+            currentFullDatasetKey = cacheKey;
+            renderCurrentView();
+            return;
+        }
+
         if (currentFetchController) {
             currentFetchController.abort();
         }
@@ -298,7 +525,6 @@
 
         clearCurrentStatsAndList();
 
-        const today = localToday();
         const targetLabel = (currentMode === "date")
             ? (currentDate === today ? "today" : currentDate)
             : `last ${currentWindow}`;
@@ -317,8 +543,8 @@
         } else {
             url += `date=${encodeURIComponent(currentDate || today)}`;
         }
-        if (currentClientIp) {
-            url += `&client_ip=${encodeURIComponent(currentClientIp)}`;
+        if (forceRefresh) {
+            url += "&refresh=1";
         }
 
         try {
@@ -328,41 +554,11 @@
                 throw new Error(errData.error || "Failed to load failure data");
             }
             const data = await res.json();
-            const summary = data.summary || {};
-            loadedEvents = data.events || [];
-
-            // Update KPI cards
-            if (kpiTotal) kpiTotal.textContent = summary.total_failures || 0;
-            if (kpiDomains) kpiDomains.textContent = summary.unique_domains || 0;
-            if (kpiClients) kpiClients.textContent = summary.unique_clients || 0;
-
-            const topDomain = summary.top_domains && summary.top_domains[0];
-            const topCategory = topDomain ? topDomain.primary_category : (summary.category_counts && Object.keys(summary.category_counts)[0]) || "-";
-            if (kpiCategory) kpiCategory.textContent = topCategory;
-
-            // Cache badge
-            if (cacheBadge) cacheBadge.classList.toggle("hidden", !data.cached);
-
-            // Category breakdown
-            renderCategoryPills(summary.category_counts);
-
-            if (loadedEvents.length === 0) {
-                if (emptyState) {
-                    emptyState.classList.remove("hidden");
-                    const p = emptyState.querySelector("p");
-                    if (p) p.innerHTML = "🎉 <strong>No non-policy connection failures detected</strong> in this time period.";
-                }
-            } else {
-                if (emptyState) emptyState.classList.add("hidden");
-                if (failuresList) {
-                    const fragment = document.createDocumentFragment();
-                    loadedEvents.forEach(evt => {
-                        fragment.appendChild(renderEventCard(evt));
-                    });
-                    failuresList.appendChild(fragment);
-                }
-                applyClientSearch();
-            }
+            sessionDatasetCache.set(cacheKey, data);
+            currentFullDataset = data;
+            currentFullDatasetKey = `${currentMode}:${currentMode === "window" ? currentWindow : currentDate}`;
+            currentFullDatasetKey = cacheKey;
+            renderCurrentView();
         } catch (err) {
             if (err.name === "AbortError") return;
             if (emptyState) {
@@ -449,6 +645,8 @@
         quickButtons.forEach(btn => {
             btn.addEventListener("click", () => {
                 const win = btn.dataset.window;
+                currentFullDataset = null;
+                currentFullDatasetKey = "";
                 if (win === "day") {
                     currentMode = "date";
                     currentWindow = "day";
@@ -471,6 +669,8 @@
             prevDayBtn.addEventListener("click", () => {
                 currentMode = "date";
                 currentWindow = "day";
+                currentFullDataset = null;
+                currentFullDatasetKey = "";
                 const today = localToday();
                 const cur = (datePicker && datePicker.value) || currentDate || today;
                 let target = addDays(cur, -1);
@@ -488,6 +688,8 @@
             todayBtn.addEventListener("click", () => {
                 currentMode = "date";
                 currentWindow = "day";
+                currentFullDataset = null;
+                currentFullDatasetKey = "";
                 currentDate = localToday();
                 if (datePicker) datePicker.value = currentDate;
                 updateQuickButtonStates();
@@ -502,6 +704,8 @@
                 if (cur >= today) return;
                 currentMode = "date";
                 currentWindow = "day";
+                currentFullDataset = null;
+                currentFullDatasetKey = "";
                 let target = addDays(cur, 1);
                 if (target > today) target = today;
                 currentDate = target;
@@ -515,6 +719,8 @@
             datePicker.addEventListener("change", () => {
                 currentMode = "date";
                 currentWindow = "day";
+                currentFullDataset = null;
+                currentFullDatasetKey = "";
                 const today = localToday();
                 if (datePicker.value > today) {
                     datePicker.value = today;
@@ -529,9 +735,7 @@
 
         if (clientFilter) {
             clientFilter.addEventListener("change", () => {
-                currentClientIp = clientFilter.value;
-                syncQuickDeviceButtons();
-                loadData();
+                selectClient(clientFilter.value);
             });
         }
 
@@ -540,7 +744,14 @@
         }
 
         if (refreshBtn) {
-            refreshBtn.addEventListener("click", loadData);
+            refreshBtn.addEventListener("click", () => {
+                currentFullDataset = null;
+                currentFullDatasetKey = "";
+                const today = localToday();
+                const cacheKey = `${currentMode}:${currentMode === "window" ? currentWindow : (currentDate || today)}`;
+                sessionDatasetCache.delete(cacheKey);
+                loadData(true);
+            });
         }
     }
 

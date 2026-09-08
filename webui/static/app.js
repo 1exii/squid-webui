@@ -1964,13 +1964,37 @@ document.addEventListener('DOMContentLoaded', () => {
         rulesPreviewTextbox.value = lines.join('\n');
     }
 
-    copyRulesBtn && copyRulesBtn.addEventListener('click', () => {
+    copyRulesBtn && copyRulesBtn.addEventListener('click', async () => {
         if (!rulesPreviewTextbox || !rulesPreviewTextbox.value) return;
-        navigator.clipboard.writeText(rulesPreviewTextbox.value).then(() => {
+        const text = rulesPreviewTextbox.value;
+        let copied = false;
+        if (navigator.clipboard && window.isSecureContext) {
+            try {
+                await navigator.clipboard.writeText(text);
+                copied = true;
+            } catch (_) {}
+        }
+        if (!copied) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.top = '-9999px';
+                ta.style.opacity = '0';
+                ta.setAttribute('readonly', '');
+                document.body.appendChild(ta);
+                ta.select();
+                copied = document.execCommand('copy');
+                document.body.removeChild(ta);
+            } catch (_) {}
+        }
+        if (copied) {
             const orig = copyRulesBtn.textContent;
             copyRulesBtn.textContent = '✅ Copied!';
             setTimeout(() => { copyRulesBtn.textContent = orig; }, 2000);
-        });
+        } else {
+            window.prompt('Press Ctrl+C to copy rules:', text);
+        }
     });
 
     observeQuickDeviceButtons(top8DevicesButtons);
