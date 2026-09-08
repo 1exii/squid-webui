@@ -2067,8 +2067,11 @@ kbd {
 .explanation-body { font-size: 0.85rem; color: #d1d5db; line-height: 1.4; }
 
 .failure-actions { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.25rem; }
+.failure-count-badge { background: rgba(99, 102, 241, 0.2); border: 1px solid #6366f1; color: #a5b4fc; border-radius: 6px; padding: 0.2rem 0.55rem; font-size: 0.8rem; font-weight: 700; white-space: nowrap; }
+.time-range-sub { color: #64748b; font-size: 0.8rem; margin-left: 0.25rem; font-weight: normal; }
 .btn-copy-ai { background: rgba(59, 130, 246, 0.15); border: 1px solid #3b82f6; color: #93c5fd; }
 .btn-copy-ai:hover { background: #3b82f6; color: #fff; }
 .btn-copy-ai.btn-success { background: #10b981; border-color: #059669; color: #fff; }
 .btn-toggle-raw { color: #9ca3af; text-decoration: underline; background: none; border: none; cursor: pointer; padding: 0.2rem 0.4rem; font-size: 0.8rem; }
-.raw-log-container { background: #0f172a; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 0.6rem; margin-top: 0.5rem; overflow-x: auto; font-size: 0.75rem; color: #94a3b8; }
+.raw-log-container { background: #0f172a; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 0.6rem; margin-top: 0.5rem; overflow-x: auto; max-height: 380px; overflow-y: auto; font-size: 0.75rem; color: #94a3b8; white-space: pre-wrap; word-break: break-all; }
+

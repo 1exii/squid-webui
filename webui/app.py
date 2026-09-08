@@ -42,6 +42,7 @@ from failure_analytics import (
     WINDOW_SECONDS,
     build_failure_summary_from_events,
     filter_cached_failure_report,
+    group_failure_events,
     load_daily_failure_report,
     parse_failure_events,
     prune_failure_reports,
@@ -1894,7 +1895,10 @@ def get_failure_analytics():
             target_date=target_date,
         )
         if client_ip:
-            matching_events = [e for e in all_today if e.get("client_ip") == client_ip]
+            matching_events = [
+                e for e in all_today
+                if e.get("client_ip") == client_ip or client_ip in e.get("client_ips", [])
+            ]
             summary, events = build_failure_summary_from_events(
                 matching_events,
                 start_epoch=start_epoch,
@@ -1905,14 +1909,16 @@ def get_failure_analytics():
         else:
             summary = today_tracker.get_today_summary()
             if not summary:
-                summary, _ = build_failure_summary_from_events(
+                summary, events = build_failure_summary_from_events(
                     all_today,
                     start_epoch=start_epoch,
                     end_epoch=end_epoch,
                     devices_by_ip=devices,
-                    limit=None,
+                    limit=limit,
                 )
-            events = all_today[:limit] if limit else all_today
+            else:
+                grouped = group_failure_events(all_today)
+                events = grouped[:limit] if limit else grouped
 
         response_payload = {
             "mode": "date",

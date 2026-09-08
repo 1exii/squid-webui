@@ -144,27 +144,224 @@ def is_failure_event(result, status, url):
 
 def build_copyable_prompt(event):
     """Construct an AI prompt snippet ready to paste into Gemini / ChatGPT."""
+    count = event.get("count", 1)
     parts = [
         "### Squid Proxy Access Failure Report",
-        f"- **Timestamp**: {event['datetime_local']} (epoch: {event['timestamp']})",
-        f"- **Client Device**: {event['client_name']} ({event['client_ip']})",
-        f"- **Target Domain**: {event['domain']}",
-        f"- **Destination**: {event['method']} {event['url']}",
-        f"- **Squid Result Code**: {event['result']} (HTTP Status: {event['status']})",
-        f"- **Error Category**: {event['category']}",
-        f"- **Preliminary Diagnostic**: {event['explanation']}",
-        "",
-        "#### Raw Squid Access Log Line:",
-        "```text",
-        event["raw_log"],
-        "```",
-        "",
-        "#### Diagnostic Prompt:",
-        "Please analyze the root cause of this failure in the Squid proxy environment. "
-        "Could this be caused by SSL inspection/certificate pinning, an upstream network or DNS issue, "
-        "or a Squid configuration issue? What are the specific troubleshooting steps or recommended ACL/splice fixes?"
     ]
+    first_seen = event.get("first_seen") or event.get("datetime_local", "")
+    last_seen = event.get("last_seen") or event.get("datetime_local", "")
+
+    if count > 1:
+        parts.append(f"- **Frequency / Repetition**: Repeated **{count:,} times** between {first_seen} and {last_seen}")
+        parts.append(f"- **Last Occurrence**: {last_seen} (epoch: {event.get('timestamp', '')})")
+        parts.append(f"- **First Occurrence**: {first_seen}")
+    else:
+        parts.append(f"- **Timestamp**: {last_seen} (epoch: {event.get('timestamp', '')})")
+
+    clients = event.get("clients")
+    if clients and len(clients) > 1:
+        client_desc = ", ".join(f"{c['client_name']} ({c['client_ip']}, x{c['count']:,})" for c in clients)
+        parts.append(f"- **Affected Client Devices**: {client_desc}")
+    else:
+        client_name = event.get("client_name") or event.get("client_ip") or "Unknown"
+        client_ip = event.get("client_ip", "")
+        parts.append(f"- **Client Device**: {client_name} ({client_ip})")
+
+    parts.extend([
+        f"- **Target Domain**: {event.get('domain', '')}",
+        f"- **Destination**: {event.get('method', '')} {event.get('url', '')}",
+        f"- **Squid Result Code**: {event.get('result', '')} (HTTP Status: {event.get('status', '')})",
+        f"- **Error Category**: {event.get('category', '')}",
+        f"- **Preliminary Diagnostic**: {event.get('explanation', '')}",
+        "",
+    ])
+
+    raw_logs = event.get("raw_logs")
+    if not raw_logs and event.get("raw_log"):
+        raw_logs = [event["raw_log"]]
+
+    if count > 1:
+        parts.append(f"#### Raw Squid Access Log Line(s) (Repeated {count:,} times between {first_seen} and {last_seen}):")
+        parts.append("```text")
+        if raw_logs and len(raw_logs) > 5:
+            parts.extend(raw_logs[:3])
+            parts.append(f"... [Repeated {count:,} times total; showing first 3 and last 2 entries] ...")
+            parts.extend(raw_logs[-2:])
+        elif raw_logs:
+            parts.extend(raw_logs)
+        elif event.get("raw_log"):
+            parts.append(event["raw_log"])
+        parts.append("```")
+        parts.append("")
+        parts.append("#### Diagnostic Prompt:")
+        parts.append(
+            f"This connection failure occurred repeatedly ({count:,} times) between {first_seen} and {last_seen}. "
+            "Please analyze the root cause of this recurring failure in the Squid proxy environment. "
+            "Could this be caused by SSL inspection/certificate pinning, an upstream network or DNS issue, "
+            "or a Squid configuration issue? What are the specific troubleshooting steps or recommended ACL/splice fixes?"
+        )
+    else:
+        parts.append("#### Raw Squid Access Log Line:")
+        parts.append("```text")
+        parts.append(event.get("raw_log", ""))
+        parts.append("```")
+        parts.append("")
+        parts.append("#### Diagnostic Prompt:")
+        parts.append(
+            "Please analyze the root cause of this failure in the Squid proxy environment. "
+            "Could this be caused by SSL inspection/certificate pinning, an upstream network or DNS issue, "
+            "or a Squid configuration issue? What are the specific troubleshooting steps or recommended ACL/splice fixes?"
+        )
     return "\n".join(parts)
+
+
+def group_failure_events(events):
+    """
+    Group failure events by (domain.lower(), category, status).
+    Returns a list of grouped event dictionaries sorted newest-first (descending timestamp).
+    Idempotent: correctly aggregates raw single events, already-grouped events, or a mixture.
+    """
+    if not events:
+        return []
+
+    groups = {}
+
+    for ev in events:
+        domain = (ev.get("domain") or "").strip().lower()
+        category = ev.get("category") or "Unknown"
+        status = str(ev.get("status") or "-")
+        key = (domain, category, status)
+
+        count = ev.get("count", 1)
+        ts = ev.get("timestamp", 0)
+
+        # Extract raw log lines
+        if "raw_logs" in ev and isinstance(ev["raw_logs"], list):
+            lines = ev["raw_logs"]
+        elif ev.get("raw_log"):
+            lines = [ev["raw_log"]]
+        else:
+            lines = []
+
+        if key not in groups:
+            groups[key] = {
+                "representative": ev,
+                "domain": ev.get("domain") or domain,
+                "category": category,
+                "status": status,
+                "explanation": ev.get("explanation", ""),
+                "method": ev.get("method", "CONNECT"),
+                "url": ev.get("url", ""),
+                "result": ev.get("result", ""),
+                "count": count,
+                "min_timestamp": ts,
+                "max_timestamp": ts,
+                "first_seen_str": ev.get("first_seen") or ev.get("datetime_local"),
+                "last_seen_str": ev.get("last_seen") or ev.get("datetime_local"),
+                "client_counts": Counter(),
+                "client_names": {},
+                "raw_logs": list(lines),
+            }
+            if ev.get("clients") and isinstance(ev["clients"], list):
+                for c in ev["clients"]:
+                    cip = c.get("client_ip")
+                    if cip:
+                        c_cnt = c.get("count", 1)
+                        groups[key]["client_counts"][cip] += c_cnt
+                        if c.get("client_name"):
+                            groups[key]["client_names"][cip] = c["client_name"]
+            else:
+                cip = ev.get("client_ip")
+                if cip:
+                    groups[key]["client_counts"][cip] += count
+                    if ev.get("client_name"):
+                        groups[key]["client_names"][cip] = ev["client_name"]
+        else:
+            g = groups[key]
+            g["count"] += count
+            if ts > g["max_timestamp"]:
+                g["max_timestamp"] = ts
+                g["last_seen_str"] = ev.get("last_seen") or ev.get("datetime_local")
+                g["representative"] = ev
+                g["method"] = ev.get("method") or g["method"]
+                g["url"] = ev.get("url") or g["url"]
+                g["result"] = ev.get("result") or g["result"]
+            if ts < g["min_timestamp"] or g["min_timestamp"] == 0:
+                g["min_timestamp"] = ts
+                g["first_seen_str"] = ev.get("first_seen") or ev.get("datetime_local")
+
+            if ev.get("clients") and isinstance(ev["clients"], list):
+                for c in ev["clients"]:
+                    cip = c.get("client_ip")
+                    if cip:
+                        c_cnt = c.get("count", 1)
+                        g["client_counts"][cip] += c_cnt
+                        if c.get("client_name"):
+                            g["client_names"][cip] = c["client_name"]
+            else:
+                cip = ev.get("client_ip")
+                if cip:
+                    g["client_counts"][cip] += count
+                    if ev.get("client_name") and cip not in g["client_names"]:
+                        g["client_names"][cip] = ev["client_name"]
+
+            g["raw_logs"].extend(lines)
+
+    result = []
+    for g in groups.values():
+        max_ts = g["max_timestamp"]
+        min_ts = g["min_timestamp"]
+
+        first_seen = g["first_seen_str"]
+        if not first_seen and min_ts:
+            first_seen = datetime.fromtimestamp(min_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+        last_seen = g["last_seen_str"]
+        if not last_seen and max_ts:
+            last_seen = datetime.fromtimestamp(max_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+        clients_list = []
+        for cip, cnt in g["client_counts"].most_common():
+            cname = g["client_names"].get(cip, cip)
+            clients_list.append({
+                "client_ip": cip,
+                "client_name": cname,
+                "count": cnt,
+            })
+
+        top_client_ip = clients_list[0]["client_ip"] if clients_list else ""
+        top_client_name = clients_list[0]["client_name"] if clients_list else ""
+        all_client_ips = [c["client_ip"] for c in clients_list]
+        all_client_names = [c["client_name"] for c in clients_list]
+
+        dt_local = last_seen or (datetime.fromtimestamp(max_ts).strftime("%Y-%m-%d %H:%M:%S") if max_ts else "")
+
+        grouped_event = {
+            "timestamp": max_ts,
+            "datetime_local": dt_local,
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "count": g["count"],
+            "domain": g["domain"],
+            "category": g["category"],
+            "status": g["status"],
+            "explanation": g["explanation"],
+            "method": g["method"],
+            "url": g["url"],
+            "result": g["result"],
+            "client_ip": top_client_ip,
+            "client_name": top_client_name,
+            "client_ips": all_client_ips,
+            "client_names": all_client_names,
+            "clients": clients_list,
+            "raw_logs": g["raw_logs"],
+            "raw_log": "\n".join(g["raw_logs"]),
+        }
+        grouped_event["copyable_prompt"] = build_copyable_prompt(grouped_event)
+        result.append(grouped_event)
+
+    result.sort(key=lambda item: item["timestamp"], reverse=True)
+    return result
 
 
 def _open_log(path):
@@ -243,6 +440,7 @@ def parse_failure_events(
     client_ip="",
     devices_by_ip=None,
     limit=500,
+    group=True,
 ):
     """
     Scan access logs for non-policy connection failures within [start_epoch, end_epoch].
@@ -264,6 +462,7 @@ def parse_failure_events(
                     # Quick boundary check: read first line timestamp
                     first_line = handle.readline()
                     sp1 = first_line.find(b" ")
+                    t1 = None
                     if sp1 > 0:
                         try:
                             t1 = float(first_line[:sp1])
@@ -284,8 +483,10 @@ def parse_failure_events(
                         except ValueError:
                             pass
 
-                    # Seek to start of target range
-                    offset = find_midnight_offset(handle, size, start_epoch)
+                    # Binary search offset if reading near midnight on today's file
+                    offset = 0
+                    if t1 and t1 < start_epoch:
+                        offset = find_midnight_offset(handle, size, start_epoch)
                     handle.seek(offset)
 
                     for raw_line in handle:
@@ -348,6 +549,7 @@ def parse_failure_events(
         end_epoch=end_epoch,
         devices_by_ip=devices,
         limit=limit,
+        group=group,
     )
 
 
@@ -506,6 +708,7 @@ class TodayFailureTracker:
                     client_ip="",
                     devices_by_ip=devices_by_ip,
                     limit=None,
+                    group=False,
                 )
                 self.today_events = baseline_events
                 self.today_summary = baseline_summary
@@ -544,6 +747,7 @@ class TodayFailureTracker:
                         end_epoch=end_of_day_epoch,
                         devices_by_ip=devices_by_ip,
                         limit=None,
+                        group=False,
                     )
                     self.today_summary = summary
                     today_payload = {
@@ -568,9 +772,10 @@ class TodayFailureTracker:
 today_tracker = TodayFailureTracker()
 
 
-def build_failure_summary_from_events(events, start_epoch=None, end_epoch=None, devices_by_ip=None, limit=None):
+def build_failure_summary_from_events(events, start_epoch=None, end_epoch=None, devices_by_ip=None, limit=None, group=True):
     """
     Compute structured summary KPI metrics and breakdown distributions from a list of failure events.
+    Returns (summary_dict, grouped_events_list).
     """
     devices = devices_by_ip or {}
     domain_counts = Counter()
@@ -578,18 +783,29 @@ def build_failure_summary_from_events(events, start_epoch=None, end_epoch=None, 
     client_counts = Counter()
     category_counts = Counter()
     status_counts = Counter()
+    total_failures = 0
 
     for event in events:
+        cnt = event.get("count", 1)
+        total_failures += cnt
         dom = event.get("domain", "")
         cat = event.get("category", "Unknown")
-        cip = event.get("client_ip", "")
         st = str(event.get("status", ""))
 
-        domain_counts[dom] += 1
-        domain_categories[dom][cat] += 1
-        client_counts[cip] += 1
-        category_counts[cat] += 1
-        status_counts[st] += 1
+        domain_counts[dom] += cnt
+        domain_categories[dom][cat] += cnt
+        category_counts[cat] += cnt
+        status_counts[st] += cnt
+
+        if event.get("clients") and isinstance(event["clients"], list):
+            for c in event["clients"]:
+                cip = c.get("client_ip")
+                if cip:
+                    client_counts[cip] += c.get("count", 1)
+        else:
+            cip = event.get("client_ip", "")
+            if cip:
+                client_counts[cip] += cnt
 
     top_domains = []
     for dom, count in sorted(domain_counts.items(), key=lambda x: x[1], reverse=True)[:25]:
@@ -611,7 +827,7 @@ def build_failure_summary_from_events(events, start_epoch=None, end_epoch=None, 
         })
 
     summary = {
-        "total_failures": len(events),
+        "total_failures": total_failures,
         "unique_domains": len(domain_counts),
         "unique_clients": len(client_counts),
         "category_counts": dict(category_counts),
@@ -622,7 +838,11 @@ def build_failure_summary_from_events(events, start_epoch=None, end_epoch=None, 
         "end_epoch": end_epoch,
     }
 
-    result_events = events
+    if group:
+        result_events = group_failure_events(events)
+    else:
+        result_events = events
+
     if limit and len(result_events) > limit:
         result_events = result_events[:limit]
 
@@ -639,14 +859,28 @@ def filter_cached_failure_report(cached_data, client_ip=None, limit=None):
 
     all_events = cached_data.get("events", [])
     if not client_ip:
-        result_events = all_events[:limit] if (limit and len(all_events) > limit) else all_events
+        grouped_events = group_failure_events(all_events)
+        result_events = grouped_events[:limit] if (limit and len(grouped_events) > limit) else grouped_events
         return {
             **cached_data,
             "cached": True,
             "events": result_events,
         }
 
-    filtered_events = [e for e in all_events if e.get("client_ip") == client_ip]
+    filtered_events = []
+    for e in all_events:
+        if e.get("clients") and isinstance(e["clients"], list):
+            client_match = next((c for c in e["clients"] if c.get("client_ip") == client_ip), None)
+            if client_match:
+                e_copy = dict(e)
+                e_copy["count"] = client_match.get("count", 1)
+                e_copy["client_ip"] = client_ip
+                e_copy["client_name"] = client_match.get("client_name") or client_ip
+                e_copy["clients"] = [client_match]
+                e_copy["client_ips"] = [client_ip]
+                filtered_events.append(e_copy)
+        elif e.get("client_ip") == client_ip or client_ip in e.get("client_ips", []):
+            filtered_events.append(e)
 
     devices_by_ip = {}
     for cl in cached_data.get("summary", {}).get("top_clients", []):

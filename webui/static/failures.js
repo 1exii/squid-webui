@@ -81,17 +81,28 @@
         const domainCategories = {};
         const clientCounts = {};
         const categoryCounts = {};
+        let totalFailures = 0;
 
         events.forEach(e => {
+            const count = e.count || 1;
+            totalFailures += count;
             const dom = e.domain || "";
             const cat = e.category || "Unknown";
-            const cip = e.client_ip || "";
 
-            domainCounts[dom] = (domainCounts[dom] || 0) + 1;
+            domainCounts[dom] = (domainCounts[dom] || 0) + count;
             if (!domainCategories[dom]) domainCategories[dom] = {};
-            domainCategories[dom][cat] = (domainCategories[dom][cat] || 0) + 1;
-            clientCounts[cip] = (clientCounts[cip] || 0) + 1;
-            categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+            domainCategories[dom][cat] = (domainCategories[dom][cat] || 0) + count;
+            categoryCounts[cat] = (categoryCounts[cat] || 0) + count;
+
+            if (e.clients && Array.isArray(e.clients) && e.clients.length > 0) {
+                e.clients.forEach(c => {
+                    if (c.client_ip) {
+                        clientCounts[c.client_ip] = (clientCounts[c.client_ip] || 0) + (c.count || 1);
+                    }
+                });
+            } else if (e.client_ip) {
+                clientCounts[e.client_ip] = (clientCounts[e.client_ip] || 0) + count;
+            }
         });
 
         const topDomains = Object.entries(domainCounts)
@@ -107,7 +118,7 @@
             });
 
         return {
-            total_failures: events.length,
+            total_failures: totalFailures,
             unique_domains: Object.keys(domainCounts).length,
             unique_clients: Object.keys(clientCounts).length,
             category_counts: categoryCounts,
@@ -121,7 +132,24 @@
             renderData(currentFullDataset);
         } else {
             const allEvents = currentFullDataset.events || [];
-            const filteredEvents = allEvents.filter(e => e.client_ip === currentClientIp);
+            const filteredEvents = [];
+            allEvents.forEach(e => {
+                if (e.clients && Array.isArray(e.clients)) {
+                    const match = e.clients.find(c => c.client_ip === currentClientIp);
+                    if (match) {
+                        filteredEvents.push({
+                            ...e,
+                            count: match.count || 1,
+                            client_ip: currentClientIp,
+                            client_name: match.client_name || currentClientIp,
+                            clients: [match],
+                            client_ips: [currentClientIp],
+                        });
+                    }
+                } else if (e.client_ip === currentClientIp || (e.client_ips && e.client_ips.includes(currentClientIp))) {
+                    filteredEvents.push(e);
+                }
+            });
             const filteredSummary = computeFilteredSummary(filteredEvents);
             renderData({
                 ...currentFullDataset,
@@ -276,47 +304,115 @@
 
     function buildCopyPrompt(event) {
         if (event.copyable_prompt) return event.copyable_prompt;
+        const count = event.count || 1;
         const parts = [
             "### Squid Proxy Access Failure Report",
-            `- **Timestamp**: ${event.datetime_local || ""} (epoch: ${event.timestamp || ""})`,
-            `- **Client Device**: ${event.client_name || event.client_ip || ""} (${event.client_ip || ""})`,
+        ];
+        const firstSeen = event.first_seen || event.datetime_local || "";
+        const lastSeen = event.last_seen || event.datetime_local || "";
+
+        if (count > 1) {
+            parts.push(`- **Frequency / Repetition**: Repeated **${count.toLocaleString()} times** between ${firstSeen} and ${lastSeen}`);
+            parts.push(`- **Last Occurrence**: ${lastSeen} (epoch: ${event.timestamp || ""})`);
+            parts.push(`- **First Occurrence**: ${firstSeen}`);
+        } else {
+            parts.push(`- **Timestamp**: ${lastSeen} (epoch: ${event.timestamp || ""})`);
+        }
+
+        if (event.clients && event.clients.length > 1) {
+            const devDesc = event.clients.map(c => `${c.client_name} (${c.client_ip}, x${(c.count || 1).toLocaleString()})`).join(", ");
+            parts.push(`- **Affected Client Devices**: ${devDesc}`);
+        } else {
+            parts.push(`- **Client Device**: ${event.client_name || event.client_ip || ""} (${event.client_ip || ""})`);
+        }
+
+        parts.push(
             `- **Target Domain**: ${event.domain || ""}`,
             `- **Destination**: ${event.method || ""} ${event.url || ""}`,
             `- **Squid Result Code**: ${event.result || ""} (HTTP Status: ${event.status || ""})`,
             `- **Error Category**: ${event.category || ""}`,
             `- **Preliminary Diagnostic**: ${event.explanation || ""}`,
-            "",
-            "#### Raw Squid Access Log Line:",
-            "```text",
-            event.raw_log || "",
-            "```",
-            "",
-            "#### Diagnostic Prompt:",
-            "Please analyze the root cause of this failure in the Squid proxy environment. " +
-            "Could this be caused by SSL inspection/certificate pinning, an upstream network or DNS issue, " +
-            "or a Squid configuration issue? What are the specific troubleshooting steps or recommended ACL/splice fixes?"
-        ];
+            ""
+        );
+
+        const rawLogs = event.raw_logs || (event.raw_log ? [event.raw_log] : []);
+        if (count > 1) {
+            parts.push(`#### Raw Squid Access Log Line(s) (Repeated ${count.toLocaleString()} times between ${firstSeen} and ${lastSeen}):`);
+            parts.push("```text");
+            if (rawLogs.length > 5) {
+                parts.push(...rawLogs.slice(0, 3));
+                parts.push(`... [Repeated ${count.toLocaleString()} times total; showing first 3 and last 2 entries] ...`);
+                parts.push(...rawLogs.slice(-2));
+            } else if (rawLogs.length > 0) {
+                parts.push(...rawLogs);
+            } else if (event.raw_log) {
+                parts.push(event.raw_log);
+            }
+            parts.push("```", "");
+            parts.push("#### Diagnostic Prompt:");
+            parts.push(
+                `This connection failure occurred repeatedly (${count.toLocaleString()} times) between ${firstSeen} and ${lastSeen}. ` +
+                "Please analyze the root cause of this recurring failure in the Squid proxy environment. " +
+                "Could this be caused by SSL inspection/certificate pinning, an upstream network or DNS issue, " +
+                "or a Squid configuration issue? What are the specific troubleshooting steps or recommended ACL/splice fixes?"
+            );
+        } else {
+            parts.push("#### Raw Squid Access Log Line:");
+            parts.push("```text");
+            parts.push(event.raw_log || "");
+            parts.push("```", "");
+            parts.push("#### Diagnostic Prompt:");
+            parts.push(
+                "Please analyze the root cause of this failure in the Squid proxy environment. " +
+                "Could this be caused by SSL inspection/certificate pinning, an upstream network or DNS issue, " +
+                "or a Squid configuration issue? What are the specific troubleshooting steps or recommended ACL/splice fixes?"
+            );
+        }
         return parts.join("\n");
     }
 
     function renderEventCard(event) {
         const card = document.createElement("div");
         card.className = "failure-card glass-panel";
+        const clientSearchTokens = event.client_names
+            ? event.client_names.join(" ")
+            : (event.client_name || event.client_ip || "");
         card.dataset.domain = (event.domain || "").toLowerCase();
-        card.dataset.client = (event.client_name || event.client_ip || "").toLowerCase();
+        card.dataset.client = clientSearchTokens.toLowerCase();
         card.dataset.explanation = (event.explanation || "").toLowerCase();
 
+        const count = event.count || 1;
         const statusClass = getStatusClass(event.status);
+        const countBadge = count > 1
+            ? `<span class="failure-count-badge" title="${count.toLocaleString()} occurrences">🔁 ${count.toLocaleString()} occurrences</span>`
+            : "";
+
+        const timeHtml = (count > 1 && event.first_seen && event.last_seen && event.first_seen !== event.last_seen)
+            ? `🕒 Last: ${escapeHtml(event.last_seen)} <span class="time-range-sub">(First: ${escapeHtml(event.first_seen)})</span>`
+            : `🕒 ${escapeHtml(event.datetime_local || event.last_seen || "")}`;
+
+        let deviceBadgeHtml = "";
+        if (event.clients && event.clients.length > 1) {
+            const clientListText = event.clients.map(c => `${escapeHtml(c.client_name || c.client_ip)} (x${c.count})`).join(", ");
+            deviceBadgeHtml = `<span class="failure-device-badge clickable-filter" title="Filter by ${escapeHtml(event.client_name || event.client_ip)} (Primary of ${event.clients.length} devices)">📱 ${event.clients.length} devices: ${clientListText}</span>`;
+        } else {
+            deviceBadgeHtml = `<span class="failure-device-badge clickable-filter" title="Filter by ${escapeHtml(event.client_name || event.client_ip)}">${getDeviceIcon(event.client_name)} ${escapeHtml(event.client_name)} (${escapeHtml(event.client_ip)})</span>`;
+        }
+
+        const rawLogText = event.raw_log || (event.raw_logs ? event.raw_logs.join("\n") : "");
+        const viewRawLabel = count > 1 ? `📄 View All Raw Logs (${count.toLocaleString()})` : "📄 View Raw Log";
+        const hideRawLabel = count > 1 ? `📄 Hide Raw Logs (${count.toLocaleString()})` : "📄 Hide Raw Log";
 
         card.innerHTML = `
             <div class="failure-card-header">
                 <div class="failure-title-group">
                     <span class="failure-domain">${escapeHtml(event.domain)}</span>
                     <span class="failure-status-badge ${statusClass}">${escapeHtml(event.result || event.status)}</span>
+                    ${countBadge}
                 </div>
                 <div class="failure-meta">
-                    <span class="failure-time">🕒 ${escapeHtml(event.datetime_local)}</span>
-                    <span class="failure-device-badge clickable-filter" title="Filter by ${escapeHtml(event.client_name || event.client_ip)}">${getDeviceIcon(event.client_name)} ${escapeHtml(event.client_name)} (${escapeHtml(event.client_ip)})</span>
+                    <span class="failure-time">${timeHtml}</span>
+                    ${deviceBadgeHtml}
                 </div>
             </div>
             <div class="failure-destination">
@@ -328,9 +424,9 @@
             </div>
             <div class="failure-actions">
                 <button type="button" class="btn btn-sm btn-secondary btn-copy-ai">📋 Copy for AI (Gemini/ChatGPT)</button>
-                <button type="button" class="btn btn-sm btn-text btn-toggle-raw">📄 View Raw Log</button>
+                <button type="button" class="btn btn-sm btn-text btn-toggle-raw">${viewRawLabel}</button>
             </div>
-            <pre class="raw-log-container hidden"><code>${escapeHtml(event.raw_log)}</code></pre>
+            <pre class="raw-log-container hidden"><code>${escapeHtml(rawLogText)}</code></pre>
         `;
 
         const deviceBadge = card.querySelector(".failure-device-badge");
@@ -364,7 +460,7 @@
         if (toggleRawBtn && rawContainer) {
             toggleRawBtn.addEventListener("click", () => {
                 const isHidden = rawContainer.classList.toggle("hidden");
-                toggleRawBtn.textContent = isHidden ? "📄 View Raw Log" : "📄 Hide Raw Log";
+                toggleRawBtn.textContent = isHidden ? viewRawLabel : hideRawLabel;
             });
         }
 

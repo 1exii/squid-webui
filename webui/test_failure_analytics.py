@@ -7,6 +7,7 @@ from failure_analytics import (
     is_policy_block,
     is_failure_event,
     build_copyable_prompt,
+    group_failure_events,
     parse_failure_events,
     load_daily_failure_report,
     save_daily_failure_report,
@@ -389,6 +390,146 @@ class TodayFailureTrackerTests(unittest.TestCase):
         events = self.tracker.get_today_events(self.log_path, devices_by_ip=self.devices, target_date=past_target)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["domain"], "pastday.example.com")
+
+
+class GroupedFailureEventsTests(unittest.TestCase):
+    def setUp(self):
+        self.ev1 = {
+            "timestamp": 1788800000.0,
+            "datetime_local": "2026-09-07 10:00:00",
+            "client_ip": "192.168.2.1",
+            "client_name": "laptop-lexi",
+            "domain": "172.64.153.46",
+            "method": "CONNECT",
+            "url": "172.64.153.46:443",
+            "result": "NONE_NONE/000",
+            "status": "000",
+            "category": "Connection Closed Before Headers",
+            "explanation": "Client closed TCP connection before sending headers",
+            "raw_log": "1788800000.000 1 192.168.2.1 NONE_NONE/000 0 CONNECT 172.64.153.46:443 - HIER_NONE/- -",
+        }
+        self.ev2 = {
+            "timestamp": 1788803600.0,
+            "datetime_local": "2026-09-07 11:00:00",
+            "client_ip": "192.168.2.1",
+            "client_name": "laptop-lexi",
+            "domain": "172.64.153.46",
+            "method": "CONNECT",
+            "url": "172.64.153.46:443",
+            "result": "NONE_NONE/000",
+            "status": "000",
+            "category": "Connection Closed Before Headers",
+            "explanation": "Client closed TCP connection before sending headers",
+            "raw_log": "1788803600.000 2 192.168.2.1 NONE_NONE/000 0 CONNECT 172.64.153.46:443 - HIER_NONE/- -",
+        }
+        self.ev3 = {
+            "timestamp": 1788807200.0,
+            "datetime_local": "2026-09-07 12:00:00",
+            "client_ip": "192.168.2.2",
+            "client_name": "pc-benjamin",
+            "domain": "172.64.153.46",
+            "method": "CONNECT",
+            "url": "172.64.153.46:443",
+            "result": "NONE_NONE/000",
+            "status": "000",
+            "category": "Connection Closed Before Headers",
+            "explanation": "Client closed TCP connection before sending headers",
+            "raw_log": "1788807200.000 3 192.168.2.2 NONE_NONE/000 0 CONNECT 172.64.153.46:443 - HIER_NONE/- -",
+        }
+
+    def test_grouping_identical_domain_and_error(self):
+        grouped = group_failure_events([self.ev1, self.ev2, self.ev3])
+        self.assertEqual(len(grouped), 1)
+        g = grouped[0]
+        self.assertEqual(g["domain"], "172.64.153.46")
+        self.assertEqual(g["category"], "Connection Closed Before Headers")
+        self.assertEqual(g["status"], "000")
+        self.assertEqual(g["count"], 3)
+        self.assertEqual(g["timestamp"], 1788807200.0)
+        self.assertEqual(g["first_seen"], "2026-09-07 10:00:00")
+        self.assertEqual(g["last_seen"], "2026-09-07 12:00:00")
+        self.assertEqual(len(g["raw_logs"]), 3)
+        self.assertIn("1788800000.000", g["raw_log"])
+        self.assertIn("1788803600.000", g["raw_log"])
+        self.assertIn("1788807200.000", g["raw_log"])
+        self.assertEqual(g["client_ip"], "192.168.2.1")
+        self.assertEqual(set(g["client_ips"]), {"192.168.2.1", "192.168.2.2"})
+        self.assertEqual(len(g["clients"]), 2)
+        # laptop-lexi had 2 occurrences, pc-benjamin had 1
+        self.assertEqual(g["clients"][0]["client_ip"], "192.168.2.1")
+        self.assertEqual(g["clients"][0]["count"], 2)
+        self.assertEqual(g["clients"][1]["client_ip"], "192.168.2.2")
+        self.assertEqual(g["clients"][1]["count"], 1)
+
+    def test_distinct_domains_and_errors_remain_separate(self):
+        other_domain = dict(self.ev1, domain="google.com", url="google.com:443")
+        other_error = dict(self.ev1, status="502", category="Bad Gateway", result="TCP_MISS/502")
+        grouped = group_failure_events([self.ev1, other_domain, other_error])
+        self.assertEqual(len(grouped), 3)
+
+    def test_prompt_describes_repetition(self):
+        grouped = group_failure_events([self.ev1, self.ev2, self.ev3])
+        prompt = grouped[0]["copyable_prompt"]
+        self.assertIn("Repeated **3 times** between 2026-09-07 10:00:00 and 2026-09-07 12:00:00", prompt)
+        self.assertIn("- **Affected Client Devices**:", prompt)
+        self.assertIn("laptop-lexi (192.168.2.1, x2)", prompt)
+        self.assertIn("pc-benjamin (192.168.2.2, x1)", prompt)
+        self.assertIn("#### Raw Squid Access Log Line(s) (Repeated 3 times", prompt)
+        self.assertIn("This connection failure occurred repeatedly (3 times)", prompt)
+
+    def test_single_occurrence_prompt(self):
+        prompt = build_copyable_prompt(self.ev1)
+        self.assertIn("- **Timestamp**: 2026-09-07 10:00:00", prompt)
+        self.assertNotIn("Repeated", prompt)
+        self.assertIn("#### Raw Squid Access Log Line:", prompt)
+
+    def test_build_failure_summary_from_events_groups_correctly(self):
+        summary, events = build_failure_summary_from_events([self.ev1, self.ev2, self.ev3])
+        self.assertEqual(summary["total_failures"], 3)
+        self.assertEqual(summary["unique_domains"], 1)
+        self.assertEqual(summary["unique_clients"], 2)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["count"], 3)
+
+    def test_filter_cached_failure_report_by_client_with_grouped_data(self):
+        cached_data = {
+            "mode": "date",
+            "date": "2026-09-07",
+            "start_epoch": 1788800000.0,
+            "end_epoch": 1788810000.0,
+            "summary": {
+                "total_failures": 3,
+                "top_clients": [
+                    {"client_ip": "192.168.2.1", "client_name": "laptop-lexi"},
+                    {"client_ip": "192.168.2.2", "client_name": "pc-benjamin"},
+                ],
+            },
+            "events": [
+                {
+                    "domain": "172.64.153.46",
+                    "category": "Connection Closed Before Headers",
+                    "status": "000",
+                    "count": 3,
+                    "client_ip": "192.168.2.1",
+                    "client_ips": ["192.168.2.1", "192.168.2.2"],
+                    "clients": [
+                        {"client_ip": "192.168.2.1", "client_name": "laptop-lexi", "count": 2},
+                        {"client_ip": "192.168.2.2", "client_name": "pc-benjamin", "count": 1},
+                    ],
+                    "raw_logs": ["line1", "line2", "line3"],
+                    "raw_log": "line1\nline2\nline3",
+                }
+            ],
+        }
+        res_lexi = filter_cached_failure_report(cached_data, client_ip="192.168.2.1")
+        self.assertEqual(res_lexi["summary"]["total_failures"], 2)
+        self.assertEqual(len(res_lexi["events"]), 1)
+        self.assertEqual(res_lexi["events"][0]["count"], 2)
+
+        res_ben = filter_cached_failure_report(cached_data, client_ip="192.168.2.2")
+        self.assertEqual(res_ben["summary"]["total_failures"], 1)
+        self.assertEqual(len(res_ben["events"]), 1)
+        self.assertEqual(res_ben["events"][0]["count"], 1)
 
 
 try:
