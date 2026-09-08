@@ -1881,11 +1881,26 @@ kbd {
     border: 1px solid rgba(239, 68, 68, 0.8);
 }
 
+/* Column layout toggle */
+.col-layout-pill {
+    background: rgba(15, 23, 42, 0.6);
+    padding: 3px;
+    border-radius: 20px;
+    border: 1px solid var(--border-card);
+    display: inline-flex;
+    gap: 4px;
+}
+
 .schedule-table-container {
     max-height: 540px;
     overflow-y: auto;
     border-radius: var(--radius-md);
     border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.schedule-table-container.multi-col-mode {
+    max-height: none;
+    overflow-y: visible;
+    overflow-x: auto;
 }
 .schedule-matrix-table {
     width: 100%;
@@ -1898,7 +1913,7 @@ kbd {
     position: sticky;
     top: 0;
     background: #0f172a;
-    padding: 10px;
+    padding: 8px 10px;
     font-size: 13px;
     font-weight: 700;
     color: var(--text-main);
@@ -1914,13 +1929,41 @@ kbd {
     cursor: default;
     width: 130px;
 }
+.schedule-matrix-table th.period-header-th {
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95)) !important;
+    color: var(--accent) !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 10px !important;
+    border-bottom: 2px solid rgba(6, 182, 212, 0.4) !important;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+}
+.schedule-matrix-table th.period-header-th:hover {
+    background: rgba(6, 182, 212, 0.2) !important;
+    color: #fff !important;
+}
+.schedule-matrix-table th.period-divider-th,
+.schedule-matrix-table td.period-divider-td {
+    width: 12px;
+    min-width: 12px;
+    max-width: 12px;
+    padding: 0 !important;
+    background: rgba(11, 15, 25, 0.85);
+    border-left: 2px dashed rgba(99, 102, 241, 0.35);
+    border-right: 2px dashed rgba(99, 102, 241, 0.35);
+    cursor: default;
+}
 .schedule-matrix-table td.slot-header {
     background: rgba(15, 23, 42, 0.8);
     font-size: 12px;
     font-weight: 600;
     color: var(--text-muted);
     text-align: center;
-    padding: 6px 10px;
+    padding: 5px 8px;
     cursor: pointer;
     border-radius: 4px;
 }
@@ -1929,7 +1972,7 @@ kbd {
     background: rgba(99, 102, 241, 0.15);
 }
 .schedule-matrix-table td.matrix-cell {
-    height: 32px;
+    height: 30px;
     min-width: 70px;
     text-align: center;
     vertical-align: middle;
@@ -1953,6 +1996,57 @@ kbd {
 }
 .schedule-matrix-table td.matrix-cell.blocked:hover {
     background: linear-gradient(135deg, rgba(239, 68, 68, 0.9), rgba(220, 38, 38, 0.7));
+}
+
+/* Multi-column mode specific adjustments */
+.schedule-matrix-table.multi-col td.matrix-cell {
+    height: 25px;
+    min-width: 36px;
+    font-size: 11px;
+}
+.schedule-matrix-table.multi-col td.slot-header {
+    font-size: 11px;
+    padding: 3px 6px;
+    white-space: nowrap;
+    width: 80px;
+}
+.schedule-matrix-table.multi-col th.time-col {
+    width: 80px;
+    font-size: 11px;
+    padding: 6px 4px;
+}
+.schedule-matrix-table.multi-col th.day-col {
+    font-size: 11px;
+    padding: 6px 4px;
+}
+
+.schedule-matrix-table.multi-col.today-table td.matrix-cell {
+    min-width: 75px;
+}
+.schedule-matrix-table.multi-col.today-table td.slot-header {
+    width: 95px;
+}
+.schedule-matrix-table.multi-col.today-table th.time-col {
+    width: 95px;
+}
+
+/* Hide multi-column toggle on smaller screens and fall back to single column */
+@media (max-width: 1023px) {
+    .col-layout-pill {
+        display: none !important;
+    }
+}
+
+/* Current time indicators */
+.schedule-matrix-table td.slot-header.is-current-time {
+    color: #38bdf8 !important;
+    background: rgba(56, 189, 248, 0.25) !important;
+    border: 1px solid rgba(56, 189, 248, 0.6) !important;
+    font-weight: 700 !important;
+}
+.schedule-matrix-table th.period-header-th.is-current-period {
+    border-bottom: 2px solid #38bdf8 !important;
+    color: #38bdf8 !important;
 }
 
 

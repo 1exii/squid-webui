@@ -1,8 +1,8 @@
 # Product Specification & Architecture Document: Squid Proxy Center Web UI
 
-> **Document Version:** 1.4.0
-> **Last Updated:** 2026-08-29
-> **Status:** Active / User Editable Specification  
+> **Document Version:** 1.6.0  
+> **Last Updated:** 2026-09-08  
+> **Status:** Active / Production Specification  
 > **Target Path:** `squid-webui/webui`
 
 ---
@@ -16,34 +16,41 @@
 2. **Access Control Management:** Allow administrators to configure per-device domain blocklists, scheduled access restrictions (e.g., blocking social media during school/work hours), and temporary single-day ("Today Only") rule overrides.
 3. **Seamless Deployment:** Provide one-click compilation of rules into Squid `rules.acl` format and hot-reload the Squid daemon without interrupting general network traffic.
 4. **Secure Administration:** Authenticate admin users directly against QNAP NAS system shadow password hashes or SSH authentication.
+5. **Observability & Diagnostics:** Provide unified Website Activity analytics, Overall Proxy traffic metrics, Non-policy Access Failure diagnostics with AI remediation prompts, and Configuration Audit tracking.
 
 ---
 
 ## 2. Information Architecture & Navigation
 
-The Web UI features a modern, single-page application (SPA) layout with dark glassmorphism styling.
+The Web UI features a modern, single-page application (SPA) layout with dark glassmorphism styling and responsive multi-column data views.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 🦑 Squid Proxy Center                           [📖 Onboarding] [⚙️ Admin]   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  [VIEW 1: Client Onboarding & Certs]       [VIEW 2: Access Control Admin]   │
-│  - Hero CA Download Card                   - System Overview Metrics        │
-│  - Windows Installation Guide              - Device & Host Status           │
-│  - Ubuntu Linux Guide                      - Dual-Mode Schedule (Weekly/Today)│
-│                                            - Active ACL Rules Matrix        │
-│                                            - Add / Edit / Delete Modal      │
-│                                            - One-Click "Apply & Reload"     │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 🦑 Squid Proxy Center          [📖 Onboarding] [⚙️ Admin] [📊 Activity] [⚠️ Failures] [🔒 TLS] │
+├─────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                             │
+│  [VIEW 1: Client Onboarding]    [VIEW 2: Access Control Admin]    [VIEW 3: Website Activity]│
+│  - Hero CA Download Card        - System Overview Metrics         - Categorized Hostnames   │
+│  - Windows Installation Guide   - Device & Host Status            - Estimated Active Time   │
+│  - Ubuntu Linux Guide           - Dual-Mode (Weekly / Today)      - Day/Week/Month History  │
+│                                 - 3-Column 8h Responsive Layout                             │
+│                                 - One-Click Save & Apply                                    │
+│                                                                                             │
+│  [VIEW 4: Access Failures]      [VIEW 5: TLS Exceptions]          [VIEW 6: Config Audit]    │
+│  - Grouped Failure Cards        - Service Bypass Editor           - Append-Only Change Log  │
+│  - Category & Device Filters    - Early Splice Rules              - Actor & Before/After    │
+│  - AI Diagnostic Prompts                                                                    │
+└─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Top Navigation Bar
 - **Brand Identity:** Logo (`🦑`), Title ("Squid Proxy Center").
 - **View Switches:**
   - `📖 Client Onboarding & Certs` (Public Access)
-  - `⚙️ Access Control Admin` (shown automatically only to allowlisted admin client IPs; other clients must explicitly visit `/admin`)
-  - `📊 Website Activity` (admin-only daily per-client website and category analysis)
+  - `⚙️ Access Control Admin` (shown automatically to allowlisted admin client IPs; other clients must authenticate via `/admin`)
+  - `📊 Website Activity` (admin-only daily/weekly/monthly per-client website and category analysis)
+  - `⚠️ Access Failures` (admin-only upstream, network, and TLS handshake diagnostic center with grouped failure events)
+  - `🔒 TLS Exceptions` (admin-only shared early-splice compatibility editor)
 - **User Status Badge:** Displays current authenticated user (e.g., `👤 admin`) and Login/Logout action button.
 
 ---
@@ -73,15 +80,22 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
   - An Always Block category is hidden from Always Allow and Default Block. An Always Allow category is hidden from Default Block but remains visible in Always Block so it can be promoted directly to the higher-priority policy.
   - Moving a category out of either explicit list automatically returns it to Default Block.
   - Blocklist files (`block-lists/*.txt`) are dynamically parsed by `parse_blocklists()` into clean `dstdomain` ACLs (`domains_<bl>.acl`) and URL path regex ACLs (`urlpath_regex`).
-- **Interactive 30-Minute Dual-Mode Schedule Matrix (Weekly & Today Overwrite):**
-  - **Dual Mode Pill Toggle:** Switch seamlessly between `📅 Weekly` (7×48 grid) and `📆 Today Only` (1×48 grid) editing modes.
-  - **Weekly Schedule Grid:** 7 columns (`Sun`, `Mon`, `Tue`, `Wed`, `Thu`, `Fri`, `Sat`) × 48 rows (30-minute intervals from `00:00 - 00:30` to `23:30 - 00:00`) for defining recurring weekly unblock/block time windows.
-  - **Today-Only Overwrite Grid:** 1 column (`Today` / single day header with current day name) × 48 rows for configuring ad-hoc, single-day unblock overrides (`unblock_today`) without altering the permanent weekly schedule.
+- **Interactive 30-Minute Schedule Matrix (Weekly & Today Override):**
+  - **Dual Mode Pill Toggle:** Switch seamlessly between `📅 Weekly` recurring schedule and `📆 Today Only` temporary overrides.
+  - **Column Layout Modes (Desktop & Mobile Responsive):**
+    - **`🔲 3 Columns (8h)` (Default on Desktop):** Divides the 24-hour day into three 8-hour periods (`🌙 00:00 – 08:00`, `☀️ 08:00 – 16:00`, `🌆 16:00 – 24:00`), reducing table height from 48 rows down to **16 rows** so the complete timetable fits without vertical scrolling.
+      - **Weekly Multi-Column:** Each 8-hour period contains a Time header and 7 day columns organized chronologically Monday through Sunday (`Mon`, `Tue`, `Wed`, `Thu`, `Fri`, `Sat`, `Sun`).
+      - **Today Multi-Column:** Each 8-hour period contains the explicit 30-minute time slot header (`td.slot-header` showing e.g. `00:00 – 00:30`, `00:30 – 01:00`) alongside its corresponding status cell (`td.matrix-cell`) side by side.
+    - **`📜 1 Column (24h)` (Continuous):** Classic single continuous 48-row vertical layout with automatic smooth-scrolling to the current time of day.
+    - **Responsive Fallback:** On screens narrower than 1024px (mobile and tablets), the multi-column selector is automatically hidden, and the grid safely defaults to single-column continuous layout to prevent horizontal truncation.
   - **Schedule Merging Logic (`merge_today_into_weekly`):** Today-only unblock slots dynamically overlay onto the device's weekly matrix for the active day during ACL compilation, granting temporary access without modifying regular weekly policies.
   - **Automated Midnight Expiration:** Today-only overrides are stamped with `today_date` (ISO date string). A daemon thread (`daily_expiration_task`) checks hourly and automatically clears stale today slots at midnight, reverting the device to standard weekly policies.
-  - **Mouse Drag Selection:** Click and drag across grid cells in either view to visually set time slots as Blocked (Red gradient `🚫`) or Allowed (Translucent).
-  - **Row & Column Toggles:** Click any day header or time slot header to toggle full columns or rows instantly.
-  - **Quick Presets:** One-click presets for `Block All`, `Allow All`, `Night (10PM-7AM)`, `School (8AM-4PM)`, and `Weekends`.
+  - **Mouse Drag Selection:** Click and drag across grid cells in either view to visually toggle time slots as Allowed (Green `✅`) or Blocked (blank/dark).
+  - **Super-Header, Column & Slot Toggles:**
+    - Clicking an 8-hour period super-header toggles all slots for that 8-hour period.
+    - Clicking a day sub-header within an 8-hour period toggles that specific day's 8-hour block.
+    - Clicking any time slot label toggles that individual 30-minute slot across all days (weekly) or for today.
+  - **Quick Presets & Duration Extenders:** One-click presets for `Block All`, `Allow All`, as well as duration extenders (`+30m`, `+1h`, `+2h`, `+4h`) that instantly mark subsequent time slots as allowed.
 - **One-Click Save & Apply Pipeline:**
   - Prominent "Save & Apply" button saves device policies via `POST /api/policies`, compiles per-device conditional ACL rules into `rules.acl`, compiles per-device dynamic SSL bump rules into `ssl_bump.acl`, and triggers Squid reload via Docker Socket SIGHUP signaling (`POST /api/apply`).
 - **Per-Device SSL Bumping & Auto-Bumping Blocked Sites (`ssl_bump.acl`):**
@@ -92,7 +106,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
   - Global URL path-based SSL Bumping is generated by `configs/generate_bump_domains.py` during container startup to support deep URL path matching across all devices.
 
 ### 3.3 Security & Authentication
-- **Trusted Admin Clients:** Requests from `ADMIN_CLIENT_IPS` can use the Admin UI and protected APIs without a password and land on the Admin view by default.
+- **Trusted Admin Clients:** Requests from `ADMIN_CLIENT_IPS` can use the Admin UI and protected APIs without a password and land on the Admin view by default. On page load, `isAdminClient: true` is embedded synchronously in `window.WEBUI_CONTEXT`, granting immediate access and preventing login modals on tab navigation.
 - **Hidden Admin Entry Point:** Other clients see only onboarding at `/`; visiting `/admin` explicitly reveals the Admin login flow.
 - **NAS Credential Verification:** Checks submitted admin passwords against mounted QNAP shadow password hashes (`md5_crypt`, `sha512_crypt`, `sha256_crypt`) with paramiko SSH fallback.
 - **Session Management:** Secure HTTP-only Flask session cookies.
@@ -125,7 +139,17 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - The API combines two or more changes into one displayed entry when they have the same authenticated identity, source admin-client IP, and single target device and all occur within two minutes of the first change, even if another device was edited between them. Raw JSONL events remain append-only and unmodified; automatic system events and multi-device changes are never combined.
 ### 3.7 Failure Analytics & Diagnostics (Admin Only)
 - **Diagnostic Scope:** Captures and analyzes non-policy proxy failures (e.g., HTTP 5xx server errors, 408 timeouts, 429 rate limits, 000 connection aborts, TCP resets, swap failures, DNS/CONNECT errors) to distinguish upstream and network failures from intentional ACL policy blocks.
-- **Universal Whole-Day Cache:** Always parses and caches the complete failure dataset across all clients and destinations into `configs/failure-reports/daily/{YYYY-MM-DD}.json` (retained for 30 days). Client, device, and domain filters operate purely in-memory on the cached dataset without triggering log recalculation.
+- **Grouped Failure Events & Occurrence Aggregation:**
+  - Repeated failure log events matching the same destination domain (case-insensitive), error category, and HTTP status code are automatically aggregated into a single unified card.
+  - Each card prominently displays an occurrence counter badge (`🔁 X occurrences`), the exact observation time window (`🕒 Last: YYYY-MM-DD HH:MM:SS (First: YYYY-MM-DD HH:MM:SS)`), and a device breakdown badge (`📱 N devices: ...` with per-client counts).
+  - Preserves every underlying raw Squid log line in an expandable, scrollable viewer (`📄 View All Raw Logs (X)`).
+  - Generates specialized AI copyable prompts for Gemini and ChatGPT that describe repetition frequency across the time span and enumerate affected client devices.
+- **Failure Category / Type Interactive Filtering:**
+  - Dedicated dropdown selector (`#failures-type-filter`) located directly adjacent to the client device filter.
+  - Dynamically populated from active failure categories ordered by frequency.
+  - Synchronized with clickable `.category-pill` elements in the summary bar (clicking a category pill toggles filtering by that category).
+  - Supported at the API level via `GET /api/failure-analytics?category=<CategoryName>`.
+- **Universal Whole-Day Cache:** Always parses and caches the complete failure dataset across all clients and destinations into `configs/failure-reports/daily/{YYYY-MM-DD}.json` (retained for 30 days). Client, device, domain, and category filters operate purely in-memory on the cached dataset without triggering log recalculation.
 - **Incremental "Today" Tracking:**
   - `TodayFailureTracker` persists file tracking state (`last_inode`, `last_size`, `last_offset`) to disk alongside today's event log.
   - On WebUI restart or redeploy (`squid-mgmt.sh webui-deploy`), the state is restored from disk, allowing subsequent checks to parse only newly appended log bytes in sub-milliseconds.
@@ -203,6 +227,10 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 | `/api/devices` | `GET` | Admin | Returns list of devices parsed from `devices.list`. |
 | `/api/activity?date=<YYYY-MM-DD>&client_ip=<IPv4>` | `GET` | Admin | Returns daily categorized website activity and estimated active time for one client. |
 | `/api/activity/cache-status?date=<YYYY-MM-DD>` | `GET` | Admin | Returns daily-cache freshness immediately without analyzing Squid logs. |
+| `/api/failure-analytics?date=<YYYY-MM-DD>&window=<mins>&client_ip=<IPv4>&category=<Name>&search=<domain>` | `GET` | Admin | Returns failure summary and grouped failure events with repetition count, time span, affected clients, and raw logs. |
+| `/api/overall-analytics?date=<YYYY-MM-DD>` | `GET` | Admin | Returns global Squid proxy traffic metrics, bandwidth, cache hits, and result codes. |
+| `/api/tls-exceptions` | `GET` | Admin | Returns configured shared early-splice domain and network exceptions. |
+| `/api/tls-exceptions` | `POST` | Admin | Updates shared TLS exceptions and compiles `early_splice.acl`. |
 | `/api/audit-log?limit=<1-500>` | `GET` | Admin | Returns newest-first append-only Squid configuration audit events. |
 | `/api/blocklists` | `GET` | Admin | Lists available blocklist category files. |
 | `/api/policies` | `GET` | Admin | Returns `always_block`, `always_allow`, and the automatically materialized `default_block` schedule entries for each device. |
@@ -222,7 +250,15 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
   - Accent / Primary: Vibrant Cyan `#48CAE4` / `#00B4D8`
   - Secondary: Deep Purple/Indigo `#3A0CA3` / `#7209B7`
   - Glassmorphism: `backdrop-filter: blur(12px)`, `background: rgba(255, 255, 255, 0.05)`, subtle border glowing.
-- **Typography:** `Inter`, system UI font fallback.
+- **Typography Hierarchy:**
+  - Screen Titles: `22px` (`font-weight: 700`, line-height `1.2`)
+  - Subtitles / Descriptions: `14px` (`var(--text-muted)`)
+  - Toolbar Inputs, Dropdowns & Buttons: `13px`
+  - Badges & Status Indicators: `12px`
+- **Interactive Component Standards:**
+  - **Quick Select Device Bar (`⭐ Quick Select:`):** Dynamically contained in a single line across all admin screens (`ResizeObserver` automatically hides overflowing buttons to maintain a strict one-line visual layout).
+  - **Schedule Matrix Multi-Column Grid:** 3 columns × 8-hour blocks with 16 rows, sticky super-headers, 25px compact cell heights, and responsive fallback to single column for viewports `< 1024px`.
+  - **Grouped Failure Cards:** Modular cards with count badges, timestamp badges, device breakdown chips, raw log expandable viewers, and AI prompt copy buttons.
 
 ---
 

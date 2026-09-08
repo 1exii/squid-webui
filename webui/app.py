@@ -1249,10 +1249,13 @@ def index(admin_requested):
     # On the public landing page, do not render any discoverable admin UI for
     # ordinary clients. /admin is the explicit opt-in entry point for them.
     admin_visible = is_admin_client() or admin_requested
+    admin_client = is_admin_client()
+    admin_visible = admin_client or admin_requested
     return render_template(
         "index.html",
         admin_visible=admin_visible,
         admin_requested=admin_requested,
+        is_admin_client=admin_client,
         activity_retention_days=ACTIVITY_RETENTION_DAYS,
         failure_retention_days=FAILURE_REPORT_RETENTION_DAYS,
         pac_url=PAC_URL,

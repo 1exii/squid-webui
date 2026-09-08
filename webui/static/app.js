@@ -34,6 +34,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const loginForm           = document.getElementById('login-form');
     const loginError          = document.getElementById('login-error');
     const adminRequested      = !!window.WEBUI_CONTEXT?.adminRequested;
+    const adminVisible        = !!window.WEBUI_CONTEXT?.adminVisible;
+    const initialIsAdmin      = !!(window.WEBUI_CONTEXT?.isAdminClient || (!adminRequested && adminVisible));
     const activityRetentionDays = Number(window.WEBUI_CONTEXT?.activityRetentionDays || 30);
 
     const top8DevicesButtons  = document.getElementById('top8-devices-buttons');
@@ -160,7 +162,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const matrixTableBody        = document.getElementById('matrix-table-body');
     const matrixTableHead        = document.querySelector('#schedule-matrix-table thead');
     const todayTableBody         = document.getElementById('today-table-body');
+    const todayTableHead         = document.querySelector('#today-matrix-table thead');
     const todayColHeader         = document.getElementById('today-col-header');
+    const scheduleMatrixTable    = document.getElementById('schedule-matrix-table');
+    const todayMatrixTable       = document.getElementById('today-matrix-table');
+    const colsMultiBtn           = document.getElementById('cols-multi-btn');
+    const colsSingleBtn          = document.getElementById('cols-single-btn');
 
     // Presets
     const presetAllowAll  = document.getElementById('preset-allow-all');
@@ -173,10 +180,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // STATE
     // ─────────────────────────────────────────────────────────────
     const DAY_LETTERS = ['S', 'M', 'T', 'W', 'H', 'F', 'A'];
+    const DAY_NAMES   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-    let isAuthenticated  = false;
-    let isAdminClient    = false;
-    let currentUser      = '';
+    let isAdminClient    = initialIsAdmin;
+    let isAuthenticated  = initialIsAdmin;
+    let currentUser      = initialIsAdmin ? 'Trusted admin client' : '';
     let devicesData      = [];
     let blocklistsData   = [];   // raw filenames e.g. ["gaming.txt", ...]
     let devicePolicies   = {};
@@ -196,8 +204,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Schedule UI state
     let scheduleMode     = 'today';   // 'weekly' | 'today'
+    let scheduleColsMode = localStorage.getItem('squid_schedule_cols') || 'multi'; // 'multi' | 'single'
     let schedEditMode    = 'basic';    // 'basic' | 'advanced'
     let activeListNames  = [];         // in advanced mode: which lists are selected for editing
+
+    const SCHEDULE_PERIODS = [
+        { name: '🌙 00:00 – 08:00', sub: 'Night / Early',   startSlot: 0,  endSlot: 16 },
+        { name: '☀️ 08:00 – 16:00', sub: 'Day / Work',      startSlot: 16, endSlot: 32 },
+        { name: '🌆 16:00 – 24:00', sub: 'Evening / Night', startSlot: 32, endSlot: 48 },
+    ];
+
+    const WEEK_DAYS = [
+        { day: 1, name: 'Mon' },
+        { day: 2, name: 'Tue' },
+        { day: 3, name: 'Wed' },
+        { day: 4, name: 'Thu' },
+        { day: 5, name: 'Fri' },
+        { day: 6, name: 'Sat' },
+        { day: 0, name: 'Sun' },
+    ];
 
     // Drag state
     let isDragging       = false;
@@ -332,18 +357,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─────────────────────────────────────────────────────────────
     // AUTH INIT
     // ─────────────────────────────────────────────────────────────
+    updateAuthUI();
     checkAuthStatus();
 
     async function checkAuthStatus() {
         try {
             const res  = await fetch('/api/auth/status');
             const data = await res.json();
-            isAuthenticated = !!data.authenticated;
-            isAdminClient   = !!data.is_admin_client;
-            currentUser     = data.user || '';
+            isAdminClient   = !!data.is_admin_client || initialIsAdmin;
+            isAuthenticated = !!data.authenticated || isAdminClient;
+            currentUser     = data.user || (isAdminClient ? 'Trusted admin client' : '');
         } catch (_) {
-            isAuthenticated = false;
-            isAdminClient = false;
+            isAdminClient   = initialIsAdmin;
+            isAuthenticated = initialIsAdmin;
+            currentUser     = initialIsAdmin ? 'Trusted admin client' : '';
         }
         updateAuthUI();
 
@@ -392,33 +419,33 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     navTabAdmin && navTabAdmin.addEventListener('click', () => {
         requestedProtectedView = 'admin';
-        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        if (!isAuthenticated && !isAdminClient) { authModal.classList.remove('hidden'); }
         else { switchToAdmin(); }
     });
     navTabActivity && navTabActivity.addEventListener('click', () => {
         requestedProtectedView = 'activity';
-        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        if (!isAuthenticated && !isAdminClient) { authModal.classList.remove('hidden'); }
         else { switchToActivity(); }
     });
     navTabOverall && navTabOverall.addEventListener('click', () => {
         requestedProtectedView = 'overall';
-        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        if (!isAuthenticated && !isAdminClient) { authModal.classList.remove('hidden'); }
         else { switchToOverall(); }
     });
     navTabFailures && navTabFailures.addEventListener('click', () => {
         requestedProtectedView = 'failures';
-        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        if (!isAuthenticated && !isAdminClient) { authModal.classList.remove('hidden'); }
         else { switchToFailures(); }
     });
     navTabAudit && navTabAudit.addEventListener('click', () => {
         requestedProtectedView = 'audit';
-        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        if (!isAuthenticated && !isAdminClient) { authModal.classList.remove('hidden'); }
         else { switchToAudit(); }
     });
 
     navTabTls && navTabTls.addEventListener('click', () => {
         requestedProtectedView = 'tls';
-        if (!isAuthenticated) { authModal.classList.remove('hidden'); }
+        if (!isAuthenticated && !isAdminClient) { authModal.classList.remove('hidden'); }
         else { switchToTls(); }
     });
 
@@ -462,7 +489,10 @@ document.addEventListener('DOMContentLoaded', () => {
         overallScreen && overallScreen.classList.add('hidden');
         auditScreen && auditScreen.classList.add('hidden');
         if (!adminDataLoaded) loadAdminData();
-        else fitQuickDeviceButtons(top8DevicesButtons);
+        else {
+            fitQuickDeviceButtons(top8DevicesButtons);
+            highlightCurrentTimeSlot();
+        }
     }
 
     function switchToActivity() {
@@ -1263,6 +1293,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // AUTH MODAL
     // ─────────────────────────────────────────────────────────────
     authActionBtn && authActionBtn.addEventListener('click', () => {
+        if (isAdminClient) return;
         if (isAuthenticated) {
             fetch('/api/logout', { method: 'POST' }).finally(() => {
                 isAuthenticated = false; currentUser = ''; adminDataLoaded = false;
@@ -1330,8 +1361,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             adminDataLoaded = true;
 
-            buildWeeklyGrid();
-            buildTodayGrid();
+            setScheduleColsMode(scheduleColsMode);
             renderTop8Buttons();
             renderDropdown();
             renderAllBlocklistCheckboxes();
@@ -1339,8 +1369,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (devicesData.length > 0) selectDevice(devicesData[0].ip);
             else if (saveStatusText) saveStatusText.textContent = '⚠️ No active devices found.';
 
-            // Auto-scroll the matrix to the current time
-            setTimeout(scrollToCurrentTime, 100);
+            setScheduleMode(scheduleMode);
         } catch (err) {
             console.error('loadAdminData error:', err);
             if (saveStatusText) saveStatusText.textContent = '❌ Failed to load data from server.';
@@ -1578,119 +1607,388 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
         }
-
-        syncMatrixToActiveEntries();
+            syncMatrixToActiveEntries();
     }
 
     // ─────────────────────────────────────────────────────────────
-    // WEEKLY / TODAY MODE TOGGLE
+    // WEEKLY / TODAY & COLUMN LAYOUT MODE TOGGLES
     // ─────────────────────────────────────────────────────────────
-    modeWeeklyBtn && modeWeeklyBtn.addEventListener('click', () => {
-        scheduleMode = 'weekly';
-        modeWeeklyBtn.classList.add('active');
-        modeTodayBtn && modeTodayBtn.classList.remove('active');
-        weeklyTableWrap && weeklyTableWrap.classList.remove('hidden');
-        todayTableWrap && todayTableWrap.classList.add('hidden');
-        todayModeHint && todayModeHint.classList.add('hidden');
-        if (matrixTitle) matrixTitle.textContent = '⏰ Weekly Unblock Schedule';
-        if (matrixSubtitle) matrixSubtitle.innerHTML = 'Drag to mark <strong class="allow-text">green = allowed</strong> windows. Empty = blocked by default.';
+    function getEffectiveColsMode() {
+        if (window.innerWidth < 1024) return 'single';
+        return scheduleColsMode;
+    }
+
+    function setScheduleMode(mode) {
+        scheduleMode = mode;
+        modeWeeklyBtn && modeWeeklyBtn.classList.toggle('active', mode === 'weekly');
+        modeTodayBtn && modeTodayBtn.classList.toggle('active', mode === 'today');
+        weeklyTableWrap && weeklyTableWrap.classList.toggle('hidden', mode !== 'weekly');
+        todayTableWrap && todayTableWrap.classList.toggle('hidden', mode !== 'today');
+        todayModeHint && todayModeHint.classList.toggle('hidden', mode !== 'today');
+        if (matrixTitle) {
+            matrixTitle.textContent = mode === 'weekly'
+                ? '⏰ Weekly Unblock Schedule'
+                : `⏰ Today-Only Override (${todayDisplayName()})`;
+        }
+        if (matrixSubtitle) {
+            matrixSubtitle.innerHTML = mode === 'weekly'
+                ? 'Drag to mark <strong class="allow-text">green = allowed</strong> windows. Empty slots remain blocked by default.'
+                : 'Drag to allow for <strong>today only</strong>. Resets at midnight.';
+        }
         syncMatrixToActiveEntries();
-        scrollToCurrentTime();
-    });
+        highlightCurrentTimeSlot();
+        if (getEffectiveColsMode() === 'single') scrollToCurrentTime();
+    }
 
-    modeTodayBtn && modeTodayBtn.addEventListener('click', () => {
-        scheduleMode = 'today';
-        modeTodayBtn.classList.add('active');
-        modeWeeklyBtn && modeWeeklyBtn.classList.remove('active');
-        weeklyTableWrap && weeklyTableWrap.classList.add('hidden');
-        todayTableWrap && todayTableWrap.classList.remove('hidden');
-        todayModeHint && todayModeHint.classList.remove('hidden');
-        if (matrixTitle) matrixTitle.textContent = `⏰ Today-Only Override (${todayDisplayName()})`;
-        if (matrixSubtitle) matrixSubtitle.innerHTML = 'Drag to allow for <strong>today only</strong>. Resets at midnight.';
-        if (todayColHeader) todayColHeader.textContent = `Today (${todayDisplayName()})`;
-        syncMatrixToActiveEntries();
-        scrollToCurrentTime();
-    });
+    function setScheduleColsMode(mode) {
+        scheduleColsMode = mode;
+        localStorage.setItem('squid_schedule_cols', mode);
+        updateColsButtons();
+        rebuildGrids();
+    }
 
-    // ─────────────────────────────────────────────────────────────
-    // BUILD GRIDS (once at startup)
-    // ─────────────────────────────────────────────────────────────
-    function buildWeeklyGrid() {
-        if (!matrixTableBody) return;
-        matrixTableBody.innerHTML = '';
-        for (let s = 0; s < 48; s++) {
-            const tr = document.createElement('tr');
-            const tdHdr = document.createElement('td');
-            tdHdr.className = 'slot-header';
-            tdHdr.textContent = slotLabel(s);
-            tdHdr.addEventListener('click', () => { toggleWeeklyRow(s); updateRulesPreview(); scheduleAutoSave(); });
-            tr.appendChild(tdHdr);
+    function updateColsButtons() {
+        const isMulti = getEffectiveColsMode() === 'multi';
+        colsMultiBtn && colsMultiBtn.classList.toggle('active', isMulti);
+        colsSingleBtn && colsSingleBtn.classList.toggle('active', !isMulti);
+    }
 
-            for (let d = 0; d < 7; d++) {
-                const td = document.createElement('td');
-                td.className = 'matrix-cell';
-                td.dataset.day = d; td.dataset.slot = s;
-                td.addEventListener('mousedown', (e) => {
-                    if (e.button !== 0 || !currentDeviceIp) return;
-                    e.preventDefault(); isDragging = true;
-                    const lists = editingLists();
-                    if (!lists.length) return;
-                    const pol = ensurePolicy(currentDeviceIp);
-                    const firstEntry = getOrCreateDbEntry(pol, lists[0]);
-                    dragAllowValue = !(firstEntry.unblock_weekly[d] && firstEntry.unblock_weekly[d][s]);
-                    applyWeeklyCell(d, s, dragAllowValue);
-                    updateRulesPreview(); scheduleAutoSave();
-                });
-                td.addEventListener('mouseenter', () => {
-                    if (isDragging && currentDeviceIp) {
-                        applyWeeklyCell(d, s, dragAllowValue);
-                        updateRulesPreview(); scheduleAutoSave();
-                    }
-                });
-                tr.appendChild(td);
-            }
-            matrixTableBody.appendChild(tr);
+    function rebuildGrids() {
+        const isMulti = getEffectiveColsMode() === 'multi';
+        if (weeklyTableWrap) weeklyTableWrap.classList.toggle('multi-col-mode', isMulti);
+        if (todayTableWrap) todayTableWrap.classList.toggle('multi-col-mode', isMulti);
+        if (scheduleMatrixTable) {
+            scheduleMatrixTable.classList.toggle('multi-col', isMulti);
+        }
+        if (todayMatrixTable) {
+            todayMatrixTable.classList.toggle('multi-col', isMulti);
+            todayMatrixTable.classList.toggle('today-table', isMulti);
         }
 
-        matrixTableHead && matrixTableHead.querySelectorAll('th.day-col').forEach(th => {
-            th.addEventListener('click', () => { toggleWeeklyColumn(parseInt(th.dataset.day, 10)); updateRulesPreview(); scheduleAutoSave(); });
+        buildWeeklyGrid();
+        buildTodayGrid();
+        syncMatrixToActiveEntries();
+        highlightCurrentTimeSlot();
+        if (!isMulti) scrollToCurrentTime();
+    }
+
+    modeWeeklyBtn && modeWeeklyBtn.addEventListener('click', () => setScheduleMode('weekly'));
+    modeTodayBtn && modeTodayBtn.addEventListener('click', () => setScheduleMode('today'));
+    colsMultiBtn && colsMultiBtn.addEventListener('click', () => setScheduleColsMode('multi'));
+    colsSingleBtn && colsSingleBtn.addEventListener('click', () => setScheduleColsMode('single'));
+
+    let lastIsDesktop = window.innerWidth >= 1024;
+    window.addEventListener('resize', () => {
+        const isDesktop = window.innerWidth >= 1024;
+        if (isDesktop !== lastIsDesktop) {
+            lastIsDesktop = isDesktop;
+            if (adminDataLoaded) {
+                updateColsButtons();
+                rebuildGrids();
+            }
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // BUILD GRIDS
+    // ─────────────────────────────────────────────────────────────
+    function buildWeeklyGrid() {
+        if (!matrixTableBody || !matrixTableHead) return;
+        matrixTableHead.innerHTML = '';
+        matrixTableBody.innerHTML = '';
+
+        const isMulti = getEffectiveColsMode() === 'multi';
+
+        if (isMulti) {
+            // Super-headers: 3 periods (8 hours each: 00:00–08:00, 08:00–16:00, 16:00–24:00)
+            const trHdr1 = document.createElement('tr');
+            SCHEDULE_PERIODS.forEach((period, pIdx) => {
+                if (pIdx > 0) {
+                    const thDiv = document.createElement('th');
+                    thDiv.className = 'period-divider-th';
+                    trHdr1.appendChild(thDiv);
+                }
+                const thPeriod = document.createElement('th');
+                thPeriod.className = 'period-header-th';
+                thPeriod.colSpan = 8; // 1 time slot col + 7 day cols (Mon..Sun)
+                thPeriod.dataset.period = pIdx;
+                thPeriod.title = `Click to toggle all 7 days for ${period.name}`;
+                thPeriod.innerHTML = `${period.name} <span style="font-weight: normal; opacity: 0.8; font-size: 11px;">(${period.sub})</span>`;
+                thPeriod.addEventListener('click', () => toggleWeeklyPeriod(pIdx));
+                trHdr1.appendChild(thPeriod);
+            });
+            matrixTableHead.appendChild(trHdr1);
+
+            // Sub-headers: Time + 7 days (Mon..Sun) per period
+            const trHdr2 = document.createElement('tr');
+            SCHEDULE_PERIODS.forEach((period, pIdx) => {
+                if (pIdx > 0) {
+                    const thDiv = document.createElement('th');
+                    thDiv.className = 'period-divider-th';
+                    trHdr2.appendChild(thDiv);
+                }
+                const thTime = document.createElement('th');
+                thTime.className = 'time-col';
+                thTime.textContent = 'Time';
+                trHdr2.appendChild(thTime);
+
+                WEEK_DAYS.forEach(wd => {
+                    const thDay = document.createElement('th');
+                    thDay.className = 'day-col';
+                    thDay.dataset.day = wd.day;
+                    thDay.dataset.period = pIdx;
+                    thDay.textContent = wd.name;
+                    thDay.title = `Click to toggle ${wd.name} for ${period.name}`;
+                    thDay.addEventListener('click', () => toggleWeeklyColumnPeriod(wd.day, pIdx));
+                    trHdr2.appendChild(thDay);
+                });
+            });
+            matrixTableHead.appendChild(trHdr2);
+
+            // Exactly 16 rows (48 / 3)
+            for (let r = 0; r < 16; r++) {
+                const tr = document.createElement('tr');
+                SCHEDULE_PERIODS.forEach((period, pIdx) => {
+                    if (pIdx > 0) {
+                        const tdDiv = document.createElement('td');
+                        tdDiv.className = 'period-divider-td';
+                        tr.appendChild(tdDiv);
+                    }
+                    const s = period.startSlot + r;
+                    const tdHdr = document.createElement('td');
+                    tdHdr.className = 'slot-header';
+                    tdHdr.dataset.slot = s;
+                    tdHdr.textContent = slotLabel(s);
+                    tdHdr.addEventListener('click', () => {
+                        toggleWeeklyRow(s);
+                        updateRulesPreview();
+                        scheduleAutoSave();
+                    });
+                    tr.appendChild(tdHdr);
+
+                    WEEK_DAYS.forEach(wd => {
+                        const td = document.createElement('td');
+                        td.className = 'matrix-cell';
+                        td.dataset.day = wd.day;
+                        td.dataset.slot = s;
+                        attachWeeklyCellEvents(td, wd.day, s);
+                        tr.appendChild(td);
+                    });
+                });
+                matrixTableBody.appendChild(tr);
+            }
+        } else {
+            // Single column mode (48 rows)
+            const trHdr = document.createElement('tr');
+            const thTime = document.createElement('th');
+            thTime.className = 'time-col';
+            thTime.textContent = 'Time Slot';
+            trHdr.appendChild(thTime);
+
+            WEEK_DAYS.forEach(wd => {
+                const thDay = document.createElement('th');
+                thDay.className = 'day-col';
+                thDay.dataset.day = wd.day;
+                thDay.textContent = wd.name;
+                thDay.title = `Click to toggle all 48 slots for ${wd.name}`;
+                thDay.addEventListener('click', () => {
+                    toggleWeeklyColumn(wd.day);
+                    updateRulesPreview();
+                    scheduleAutoSave();
+                });
+                trHdr.appendChild(thDay);
+            });
+            matrixTableHead.appendChild(trHdr);
+
+            for (let s = 0; s < 48; s++) {
+                const tr = document.createElement('tr');
+                const tdHdr = document.createElement('td');
+                tdHdr.className = 'slot-header';
+                tdHdr.dataset.slot = s;
+                tdHdr.textContent = slotLabel(s);
+                tdHdr.addEventListener('click', () => {
+                    toggleWeeklyRow(s);
+                    updateRulesPreview();
+                    scheduleAutoSave();
+                });
+                tr.appendChild(tdHdr);
+
+                WEEK_DAYS.forEach(wd => {
+                    const td = document.createElement('td');
+                    td.className = 'matrix-cell';
+                    td.dataset.day = wd.day;
+                    td.dataset.slot = s;
+                    attachWeeklyCellEvents(td, wd.day, s);
+                    tr.appendChild(td);
+                });
+                matrixTableBody.appendChild(tr);
+            }
+        }
+    }
+
+    function attachWeeklyCellEvents(td, d, s) {
+        td.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 || !currentDeviceIp) return;
+            e.preventDefault();
+            isDragging = true;
+            const lists = editingLists();
+            if (!lists.length) return;
+            const pol = ensurePolicy(currentDeviceIp);
+            const firstEntry = getOrCreateDbEntry(pol, lists[0]);
+            dragAllowValue = !(firstEntry.unblock_weekly[d] && firstEntry.unblock_weekly[d][s]);
+            applyWeeklyCell(d, s, dragAllowValue);
+            updateRulesPreview();
+            scheduleAutoSave();
+        });
+        td.addEventListener('mouseenter', () => {
+            if (isDragging && currentDeviceIp) {
+                applyWeeklyCell(d, s, dragAllowValue);
+                updateRulesPreview();
+                scheduleAutoSave();
+            }
         });
     }
 
     function buildTodayGrid() {
-        if (!todayTableBody) return;
+        if (!todayTableBody || !todayTableHead) return;
+        todayTableHead.innerHTML = '';
         todayTableBody.innerHTML = '';
-        for (let s = 0; s < 48; s++) {
-            const tr = document.createElement('tr');
-            const tdHdr = document.createElement('td');
-            tdHdr.className = 'slot-header';
-            tdHdr.textContent = slotLabel(s);
-            tdHdr.addEventListener('click', () => { toggleTodaySlot(s); updateRulesPreview(); scheduleAutoSave(); });
-            tr.appendChild(tdHdr);
 
-            const td = document.createElement('td');
-            td.className = 'matrix-cell';
-            td.dataset.slot = s;
-            td.addEventListener('mousedown', (e) => {
-                if (e.button !== 0 || !currentDeviceIp) return;
-                e.preventDefault(); isDragging = true;
-                const lists = editingLists();
-                if (!lists.length) return;
-                const pol = ensurePolicy(currentDeviceIp);
-                const firstEntry = getOrCreateDbEntry(pol, lists[0]);
-                dragAllowValue = !firstEntry.unblock_today[s];
-                applyTodayCell(s, dragAllowValue);
-                updateRulesPreview(); scheduleAutoSave();
-            });
-            td.addEventListener('mouseenter', () => {
-                if (isDragging && currentDeviceIp) {
-                    applyTodayCell(s, dragAllowValue);
-                    updateRulesPreview(); scheduleAutoSave();
+        const isMulti = getEffectiveColsMode() === 'multi';
+
+        if (isMulti) {
+            // Super-headers: 3 periods (8 hours each: 00:00–08:00, 08:00–16:00, 16:00–24:00)
+            const trHdr1 = document.createElement('tr');
+            SCHEDULE_PERIODS.forEach((period, pIdx) => {
+                if (pIdx > 0) {
+                    const thDiv = document.createElement('th');
+                    thDiv.className = 'period-divider-th';
+                    trHdr1.appendChild(thDiv);
                 }
+                const thPeriod = document.createElement('th');
+                thPeriod.className = 'period-header-th';
+                thPeriod.colSpan = 2; // 1 time slot col + 1 today cell col
+                thPeriod.dataset.period = pIdx;
+                thPeriod.title = `Click to toggle entire period for Today (${period.name})`;
+                thPeriod.innerHTML = `${period.name} <span style="font-weight: normal; opacity: 0.8; font-size: 11px;">(${period.sub})</span>`;
+                thPeriod.addEventListener('click', () => toggleTodayPeriod(pIdx));
+                trHdr1.appendChild(thPeriod);
             });
-            tr.appendChild(td);
-            todayTableBody.appendChild(tr);
+            todayTableHead.appendChild(trHdr1);
+
+            // Sub-headers: Time + Today per period
+            const trHdr2 = document.createElement('tr');
+            SCHEDULE_PERIODS.forEach((period, pIdx) => {
+                if (pIdx > 0) {
+                    const thDiv = document.createElement('th');
+                    thDiv.className = 'period-divider-th';
+                    trHdr2.appendChild(thDiv);
+                }
+                const thTime = document.createElement('th');
+                thTime.className = 'time-col';
+                thTime.textContent = 'Time';
+                trHdr2.appendChild(thTime);
+
+                const thDay = document.createElement('th');
+                thDay.className = 'day-col today-col';
+                thDay.dataset.period = pIdx;
+                thDay.textContent = `Today (${todayDisplayName().slice(0, 3)})`;
+                thDay.title = `Click to toggle entire period for Today`;
+                thDay.addEventListener('click', () => toggleTodayPeriod(pIdx));
+                trHdr2.appendChild(thDay);
+            });
+            todayTableHead.appendChild(trHdr2);
+
+            // Exactly 16 rows (48 / 3)
+            for (let r = 0; r < 16; r++) {
+                const tr = document.createElement('tr');
+                SCHEDULE_PERIODS.forEach((period, pIdx) => {
+                    if (pIdx > 0) {
+                        const tdDiv = document.createElement('td');
+                        tdDiv.className = 'period-divider-td';
+                        tr.appendChild(tdDiv);
+                    }
+                    const s = period.startSlot + r;
+                    const tdHdr = document.createElement('td');
+                    tdHdr.className = 'slot-header';
+                    tdHdr.dataset.slot = s;
+                    tdHdr.textContent = slotLabel(s);
+                    tdHdr.addEventListener('click', () => {
+                        toggleTodaySlot(s);
+                        updateRulesPreview();
+                        scheduleAutoSave();
+                    });
+                    tr.appendChild(tdHdr);
+
+                    const td = document.createElement('td');
+                    td.className = 'matrix-cell';
+                    td.dataset.slot = s;
+                    attachTodayCellEvents(td, s);
+                    tr.appendChild(td);
+                });
+                todayTableBody.appendChild(tr);
+            }
+        } else {
+            // Single column mode (48 rows)
+            const trHdr = document.createElement('tr');
+            const thTime = document.createElement('th');
+            thTime.className = 'time-col';
+            thTime.textContent = 'Time Slot';
+            trHdr.appendChild(thTime);
+
+            const thToday = document.createElement('th');
+            thToday.className = 'day-col today-col';
+            thToday.textContent = `Today (${todayDisplayName()})`;
+            thToday.title = 'Click to toggle all 48 slots for today';
+            thToday.addEventListener('click', () => toggleTodayAll());
+            trHdr.appendChild(thToday);
+            todayTableHead.appendChild(trHdr);
+
+            for (let s = 0; s < 48; s++) {
+                const tr = document.createElement('tr');
+                const tdHdr = document.createElement('td');
+                tdHdr.className = 'slot-header';
+                tdHdr.dataset.slot = s;
+                tdHdr.textContent = slotLabel(s);
+                tdHdr.addEventListener('click', () => {
+                    toggleTodaySlot(s);
+                    updateRulesPreview();
+                    scheduleAutoSave();
+                });
+                tr.appendChild(tdHdr);
+
+                const td = document.createElement('td');
+                td.className = 'matrix-cell';
+                td.dataset.slot = s;
+                attachTodayCellEvents(td, s);
+                tr.appendChild(td);
+
+                todayTableBody.appendChild(tr);
+            }
         }
+    }
+
+    function attachTodayCellEvents(td, s) {
+        td.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 || !currentDeviceIp) return;
+            e.preventDefault();
+            isDragging = true;
+            const lists = editingLists();
+            if (!lists.length) return;
+            const pol = ensurePolicy(currentDeviceIp);
+            const firstEntry = getOrCreateDbEntry(pol, lists[0]);
+            dragAllowValue = !firstEntry.unblock_today[s];
+            applyTodayCell(s, dragAllowValue);
+            updateRulesPreview();
+            scheduleAutoSave();
+        });
+        td.addEventListener('mouseenter', () => {
+            if (isDragging && currentDeviceIp) {
+                applyTodayCell(s, dragAllowValue);
+                updateRulesPreview();
+                scheduleAutoSave();
+            }
+        });
     }
 
     document.addEventListener('mouseup', () => { isDragging = false; });
@@ -1708,7 +2006,7 @@ document.addEventListener('DOMContentLoaded', () => {
             entry.unblock_weekly[day][slot] = allowed;
         });
         // Visual: show union (any list allowed → green)
-        const cell = matrixTableBody && matrixTableBody.querySelector(`td[data-day="${day}"][data-slot="${slot}"]`);
+        const cell = matrixTableBody && matrixTableBody.querySelector(`td.matrix-cell[data-day="${day}"][data-slot="${slot}"]`);
         setCellVisual(cell, allowed);
     }
 
@@ -1720,12 +2018,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const entry = getOrCreateDbEntry(pol, bl);
             entry.unblock_today[slot] = allowed;
         });
-        const cell = todayTableBody && todayTableBody.querySelector(`td[data-slot="${slot}"]`);
+        const cell = todayTableBody && todayTableBody.querySelector(`td.matrix-cell[data-slot="${slot}"]`);
         setCellVisual(cell, allowed);
     }
 
     function setCellVisual(cell, allowed) {
-        if (!cell) return;
+        if (!cell || cell.classList.contains('slot-header')) return;
         if (allowed) { cell.classList.add('allowed'); cell.textContent = '✅'; }
         else         { cell.classList.remove('allowed'); cell.textContent = ''; }
     }
@@ -1747,7 +2045,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const entry = pol.default_block.find(e => e.list === bl);
                         return entry && entry.unblock_weekly[d] && entry.unblock_weekly[d][s];
                     });
-                    const cell = matrixTableBody.querySelector(`td[data-day="${d}"][data-slot="${s}"]`);
+                    const cell = matrixTableBody.querySelector(`td.matrix-cell[data-day="${d}"][data-slot="${s}"]`);
                     setCellVisual(cell, allowed);
                 }
             }
@@ -1758,14 +2056,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     const entry = pol.default_block.find(e => e.list === bl);
                     return entry && entry.unblock_today && entry.unblock_today[s];
                 });
-                const cell = todayTableBody.querySelector(`td[data-slot="${s}"]`);
+                const cell = todayTableBody.querySelector(`td.matrix-cell[data-slot="${s}"]`);
                 setCellVisual(cell, allowed);
             }
         }
+        highlightCurrentTimeSlot();
     }
 
     // ─────────────────────────────────────────────────────────────
-    // ROW / COLUMN TOGGLES
+    // ROW / COLUMN / PERIOD TOGGLES
     // ─────────────────────────────────────────────────────────────
     function toggleWeeklyRow(slot) {
         const targets = editingLists();
@@ -1790,21 +2089,121 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let s = 0; s < 48; s++) applyWeeklyCell(day, s, !allOn);
     }
 
+    function toggleWeeklyPeriod(p) {
+        const targets = editingLists();
+        if (!targets.length || !currentDeviceIp) return;
+        const pol = ensurePolicy(currentDeviceIp);
+        const pDef = SCHEDULE_PERIODS[p];
+        const allOn = targets.every(bl => {
+            const entry = pol.default_block.find(e => e.list === bl);
+            if (!entry || !entry.unblock_weekly) return false;
+            for (let d = 0; d < 7; d++) {
+                for (let s = pDef.startSlot; s < pDef.endSlot; s++) {
+                    if (!entry.unblock_weekly[d] || !entry.unblock_weekly[d][s]) return false;
+                }
+            }
+            return true;
+        });
+        for (let d = 0; d < 7; d++) {
+            for (let s = pDef.startSlot; s < pDef.endSlot; s++) {
+                applyWeeklyCell(d, s, !allOn);
+            }
+        }
+        updateRulesPreview();
+        scheduleAutoSave();
+    }
+
+    function toggleWeeklyColumnPeriod(day, p) {
+        const targets = editingLists();
+        if (!targets.length || !currentDeviceIp) return;
+        const pol = ensurePolicy(currentDeviceIp);
+        const pDef = SCHEDULE_PERIODS[p];
+        const allOn = targets.every(bl => {
+            const entry = pol.default_block.find(e => e.list === bl);
+            if (!entry || !entry.unblock_weekly || !entry.unblock_weekly[day]) return false;
+            for (let s = pDef.startSlot; s < pDef.endSlot; s++) {
+                if (!entry.unblock_weekly[day][s]) return false;
+            }
+            return true;
+        });
+        for (let s = pDef.startSlot; s < pDef.endSlot; s++) {
+            applyWeeklyCell(day, s, !allOn);
+        }
+        updateRulesPreview();
+        scheduleAutoSave();
+    }
+
     function toggleTodaySlot(slot) {
         const targets = editingLists();
         if (!targets.length || !currentDeviceIp) return;
         const pol = ensurePolicy(currentDeviceIp);
         const allOn = targets.every(bl => {
             const entry = pol.default_block.find(e => e.list === bl);
-            return entry && entry.unblock_today[slot];
+            return entry && entry.unblock_today && entry.unblock_today[slot];
         });
         applyTodayCell(slot, !allOn);
     }
 
+    function toggleTodayPeriod(p) {
+        const targets = editingLists();
+        if (!targets.length || !currentDeviceIp) return;
+        const pol = ensurePolicy(currentDeviceIp);
+        const pDef = SCHEDULE_PERIODS[p];
+        const allOn = targets.every(bl => {
+            const entry = pol.default_block.find(e => e.list === bl);
+            if (!entry || !entry.unblock_today) return false;
+            for (let s = pDef.startSlot; s < pDef.endSlot; s++) {
+                if (!entry.unblock_today[s]) return false;
+            }
+            return true;
+        });
+        for (let s = pDef.startSlot; s < pDef.endSlot; s++) {
+            applyTodayCell(s, !allOn);
+        }
+        updateRulesPreview();
+        scheduleAutoSave();
+    }
+
+    function toggleTodayAll() {
+        const targets = editingLists();
+        if (!targets.length || !currentDeviceIp) return;
+        const pol = ensurePolicy(currentDeviceIp);
+        const allOn = targets.every(bl => {
+            const entry = pol.default_block.find(e => e.list === bl);
+            return entry && entry.unblock_today && entry.unblock_today.every(Boolean);
+        });
+        for (let s = 0; s < 48; s++) {
+            applyTodayCell(s, !allOn);
+        }
+        updateRulesPreview();
+        scheduleAutoSave();
+    }
+
     // ─────────────────────────────────────────────────────────────
-    // AUTO-SCROLL
+    // CURRENT TIME HIGHLIGHT & AUTO-SCROLL
     // ─────────────────────────────────────────────────────────────
+    function highlightCurrentTimeSlot() {
+        const now = new Date();
+        const curSlot = Math.floor((now.getHours() * 60 + now.getMinutes()) / 30);
+        const curPeriod = Math.floor(curSlot / 16);
+
+        document.querySelectorAll('.schedule-matrix-table .is-current-time').forEach(el => el.classList.remove('is-current-time'));
+        document.querySelectorAll('.schedule-matrix-table .is-current-period').forEach(el => el.classList.remove('is-current-period'));
+
+        document.querySelectorAll(`.schedule-matrix-table td.slot-header[data-slot="${curSlot}"]`).forEach(td => {
+            td.classList.add('is-current-time');
+            td.title = `Current time (${pad(now.getHours())}:${pad(now.getMinutes())})`;
+        });
+
+        document.querySelectorAll(`.schedule-matrix-table th.period-header-th[data-period="${curPeriod}"]`).forEach(th => {
+            th.classList.add('is-current-period');
+        });
+    }
+
     function scrollToCurrentTime() {
+        highlightCurrentTimeSlot();
+        if (getEffectiveColsMode() === 'multi') return;
+
         const now = new Date();
         const startSlot = Math.floor((now.getHours() * 60 + now.getMinutes()) / 30);
         const containerId = scheduleMode === 'weekly' ? 'weekly-table-wrap' : 'today-table-wrap';
@@ -2011,7 +2410,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // APPLY
     // ─────────────────────────────────────────────────────────────
     applyPolicyBtn && applyPolicyBtn.addEventListener('click', async () => {
-        if (!isAuthenticated) { authModal.classList.remove('hidden'); return; }
+        if (!isAuthenticated && !isAdminClient) { authModal.classList.remove('hidden'); return; }
         applyPolicyBtn.disabled = true;
         saveStatusText.textContent = '⏳ Saving & compiling Squid ACLs…';
         try {
