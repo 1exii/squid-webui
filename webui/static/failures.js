@@ -6,6 +6,7 @@
     let nextDayBtn = null;
     let datePicker = null;
     let clientFilter = null;
+    let typeFilter = null;
     let quickDevicesContainer = null;
     let domainFilter = null;
     let refreshBtn = null;
@@ -26,6 +27,7 @@
     let currentWindow = "day";
     let currentDate = localToday();
     let currentClientIp = "";
+    let currentFailureType = "";
     let loadedEvents = [];
     let clientsLoaded = false;
     let currentFetchController = null;
@@ -128,16 +130,16 @@
 
     function renderCurrentView() {
         if (!currentFullDataset) return;
-        if (!currentClientIp) {
-            renderData(currentFullDataset);
-        } else {
-            const allEvents = currentFullDataset.events || [];
-            const filteredEvents = [];
-            allEvents.forEach(e => {
+        const allEvents = currentFullDataset.events || [];
+        let filteredEvents = allEvents;
+
+        if (currentClientIp) {
+            const clientFiltered = [];
+            filteredEvents.forEach(e => {
                 if (e.clients && Array.isArray(e.clients)) {
                     const match = e.clients.find(c => c.client_ip === currentClientIp);
                     if (match) {
-                        filteredEvents.push({
+                        clientFiltered.push({
                             ...e,
                             count: match.count || 1,
                             client_ip: currentClientIp,
@@ -147,16 +149,78 @@
                         });
                     }
                 } else if (e.client_ip === currentClientIp || (e.client_ips && e.client_ips.includes(currentClientIp))) {
-                    filteredEvents.push(e);
+                    clientFiltered.push(e);
                 }
             });
-            const filteredSummary = computeFilteredSummary(filteredEvents);
-            renderData({
-                ...currentFullDataset,
-                summary: filteredSummary,
-                events: filteredEvents,
-            });
+            filteredEvents = clientFiltered;
         }
+
+        if (currentFailureType) {
+            filteredEvents = filteredEvents.filter(e => (e.category || "Unknown") === currentFailureType);
+        }
+
+        const isFiltered = Boolean(currentClientIp || currentFailureType);
+        const filteredSummary = isFiltered ? computeFilteredSummary(filteredEvents) : currentFullDataset.summary;
+
+        renderData({
+            ...currentFullDataset,
+            summary: filteredSummary,
+            events: filteredEvents,
+        }, false);
+    }
+
+    function selectFailureType(type) {
+        currentFailureType = type || "";
+        if (typeFilter) {
+            typeFilter.value = currentFailureType;
+        }
+        syncCategoryPills();
+        renderCurrentView();
+    }
+
+    function syncCategoryPills() {
+        if (!categoryPills) return;
+        const pills = categoryPills.querySelectorAll(".category-pill");
+        pills.forEach(pill => {
+            pill.classList.toggle("active", (pill.dataset.category || "") === currentFailureType);
+        });
+    }
+
+    function populateFailureTypeFilter(categories) {
+        if (!typeFilter) return;
+        typeFilter.replaceChildren();
+
+        const allOpt = document.createElement("option");
+        allOpt.value = "";
+        allOpt.textContent = "All Failure Types";
+        typeFilter.appendChild(allOpt);
+
+        if (!categories || Object.keys(categories).length === 0) {
+            currentFailureType = "";
+            return;
+        }
+
+        let foundCurrent = false;
+        Object.entries(categories)
+            .sort((a, b) => b[1] - a[1])
+            .forEach(([cat, count]) => {
+                const opt = document.createElement("option");
+                opt.value = cat;
+                opt.textContent = `${cat} (${count.toLocaleString()})`;
+                if (cat === currentFailureType) {
+                    opt.selected = true;
+                    foundCurrent = true;
+                }
+                typeFilter.appendChild(opt);
+            });
+
+        if (!foundCurrent && currentFailureType) {
+            currentFailureType = "";
+            typeFilter.value = "";
+        } else {
+            typeFilter.value = currentFailureType;
+        }
+        syncCategoryPills();
     }
 
     function selectClient(ip) {
@@ -254,12 +318,23 @@
         categoryPills.replaceChildren();
         if (!categories || Object.keys(categories).length === 0) return;
 
-        Object.entries(categories).forEach(([cat, count]) => {
-            const pill = document.createElement("span");
-            pill.className = "category-pill";
-            pill.textContent = `${cat}: ${count}`;
-            categoryPills.appendChild(pill);
-        });
+        Object.entries(categories)
+            .sort((a, b) => b[1] - a[1])
+            .forEach(([cat, count]) => {
+                const pill = document.createElement("span");
+                pill.className = `category-pill ${cat === currentFailureType ? "active" : ""}`;
+                pill.dataset.category = cat;
+                pill.textContent = `${cat}: ${count.toLocaleString()}`;
+                pill.title = `Click to filter by ${cat}`;
+                pill.addEventListener("click", () => {
+                    if (currentFailureType === cat) {
+                        selectFailureType("");
+                    } else {
+                        selectFailureType(cat);
+                    }
+                });
+                categoryPills.appendChild(pill);
+            });
     }
 
     async function copyTextToClipboard(text) {
@@ -566,6 +641,13 @@
         if (emptyState) emptyState.classList.add("hidden");
         if (categoryPills) categoryPills.replaceChildren();
         if (cacheBadge) cacheBadge.classList.add("hidden");
+        if (typeFilter && !currentFailureType) {
+            typeFilter.replaceChildren();
+            const defaultOpt = document.createElement("option");
+            defaultOpt.value = "";
+            defaultOpt.textContent = "All Failure Types";
+            typeFilter.appendChild(defaultOpt);
+        }
 
         // Clear KPI stats immediately so previous day data is never displayed while loading
         if (kpiTotal) kpiTotal.textContent = "—";
@@ -574,17 +656,17 @@
         if (kpiCategory) kpiCategory.textContent = "—";
     }
 
-    function renderData(data) {
+    function renderData(data, updateTypeFilter = true) {
         const summary = data.summary || {};
         loadedEvents = data.events || [];
 
         // Update KPI cards
-        if (kpiTotal) kpiTotal.textContent = summary.total_failures || 0;
-        if (kpiDomains) kpiDomains.textContent = summary.unique_domains || 0;
-        if (kpiClients) kpiClients.textContent = summary.unique_clients || 0;
+        if (kpiTotal) kpiTotal.textContent = (summary.total_failures || 0).toLocaleString();
+        if (kpiDomains) kpiDomains.textContent = (summary.unique_domains || 0).toLocaleString();
+        if (kpiClients) kpiClients.textContent = (summary.unique_clients || 0).toLocaleString();
 
         const topDomain = summary.top_domains && summary.top_domains[0];
-        const topCategory = topDomain ? topDomain.primary_category : (summary.category_counts && Object.keys(summary.category_counts)[0]) || "-";
+        const topCategory = currentFailureType || (topDomain ? topDomain.primary_category : (summary.category_counts && Object.keys(summary.category_counts)[0]) || "-");
         if (kpiCategory) kpiCategory.textContent = topCategory;
 
         // Cache badge
@@ -592,6 +674,10 @@
 
         // Category breakdown
         renderCategoryPills(summary.category_counts);
+
+        if (updateTypeFilter && currentFullDataset && currentFullDataset.summary) {
+            populateFailureTypeFilter(currentFullDataset.summary.category_counts);
+        }
 
         currentRenderBatch = 50;
         renderEventList(loadedEvents);
@@ -610,6 +696,7 @@
             if (loadingIndicator) loadingIndicator.classList.add("hidden");
             currentFullDataset = sessionDatasetCache.get(cacheKey);
             currentFullDatasetKey = cacheKey;
+            populateFailureTypeFilter(currentFullDataset.summary && currentFullDataset.summary.category_counts);
             renderCurrentView();
             return;
         }
@@ -652,8 +739,8 @@
             const data = await res.json();
             sessionDatasetCache.set(cacheKey, data);
             currentFullDataset = data;
-            currentFullDatasetKey = `${currentMode}:${currentMode === "window" ? currentWindow : currentDate}`;
             currentFullDatasetKey = cacheKey;
+            populateFailureTypeFilter(data.summary && data.summary.category_counts);
             renderCurrentView();
         } catch (err) {
             if (err.name === "AbortError") return;
@@ -718,6 +805,7 @@
         nextDayBtn = document.getElementById("failures-next-day");
         datePicker = document.getElementById("failures-date-picker");
         clientFilter = document.getElementById("failures-client-filter");
+        typeFilter = document.getElementById("failures-type-filter");
         quickDevicesContainer = document.getElementById("failures-quick-devices-buttons");
         domainFilter = document.getElementById("failures-domain-filter");
         refreshBtn = document.getElementById("failures-refresh-btn");
@@ -832,6 +920,12 @@
         if (clientFilter) {
             clientFilter.addEventListener("change", () => {
                 selectClient(clientFilter.value);
+            });
+        }
+
+        if (typeFilter) {
+            typeFilter.addEventListener("change", () => {
+                selectFailureType(typeFilter.value);
             });
         }
 

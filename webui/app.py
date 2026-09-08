@@ -1754,6 +1754,7 @@ def get_failure_analytics():
     window = request.args.get("window", "").strip().lower()
     date_val = request.args.get("date", "").strip()
     client_ip = request.args.get("client_ip", "").strip()
+    category = request.args.get("category", "").strip() or request.args.get("type", "").strip()
     limit_arg = request.args.get("limit")
     if limit_arg:
         try:
@@ -1798,7 +1799,9 @@ def get_failure_analytics():
                 )
                 matching_events = [
                     e for e in all_today
-                    if e.get("timestamp", 0) >= start_epoch and (not client_ip or e.get("client_ip") == client_ip)
+                    if e.get("timestamp", 0) >= start_epoch
+                    and (not client_ip or e.get("client_ip") == client_ip or client_ip in e.get("client_ips", []))
+                    and (not category or e.get("category") == category)
                 ]
                 summary, events = build_failure_summary_from_events(
                     matching_events,
@@ -1846,7 +1849,7 @@ def get_failure_analytics():
                 )
                 if cached_found and cached_data:
                     filtered_report = filter_cached_failure_report(
-                        cached_data, client_ip=client_ip, limit=limit
+                        cached_data, client_ip=client_ip, category=category, limit=limit
                     )
                     return jsonify(filtered_report)
 
@@ -1879,7 +1882,7 @@ def get_failure_analytics():
             )
 
             filtered_report = filter_cached_failure_report(
-                full_payload, client_ip=client_ip, limit=limit
+                full_payload, client_ip=client_ip, category=category, limit=limit
             )
             return jsonify(filtered_report)
 
@@ -1894,10 +1897,11 @@ def get_failure_analytics():
             cache_dir=SQUID_FAILURE_REPORT_DIR,
             target_date=target_date,
         )
-        if client_ip:
+        if client_ip or category:
             matching_events = [
                 e for e in all_today
-                if e.get("client_ip") == client_ip or client_ip in e.get("client_ips", [])
+                if (not client_ip or e.get("client_ip") == client_ip or client_ip in e.get("client_ips", []))
+                and (not category or e.get("category") == category)
             ]
             summary, events = build_failure_summary_from_events(
                 matching_events,

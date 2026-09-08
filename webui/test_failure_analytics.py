@@ -531,6 +531,52 @@ class GroupedFailureEventsTests(unittest.TestCase):
         self.assertEqual(len(res_ben["events"]), 1)
         self.assertEqual(res_ben["events"][0]["count"], 1)
 
+    def test_filter_cached_failure_report_by_category(self):
+        cached_data = {
+            "mode": "date",
+            "date": "2026-09-07",
+            "start_epoch": 1788800000.0,
+            "end_epoch": 1788810000.0,
+            "summary": {
+                "total_failures": 4,
+                "category_counts": {
+                    "Connection Closed Before Headers": 3,
+                    "Bad Gateway": 1,
+                },
+            },
+            "events": [
+                {
+                    "domain": "siteA.com",
+                    "category": "Connection Closed Before Headers",
+                    "status": "000",
+                    "count": 3,
+                    "client_ip": "192.168.2.1",
+                    "client_ips": ["192.168.2.1"],
+                },
+                {
+                    "domain": "siteB.com",
+                    "category": "Bad Gateway",
+                    "status": "502",
+                    "count": 1,
+                    "client_ip": "192.168.2.1",
+                    "client_ips": ["192.168.2.1"],
+                },
+            ],
+        }
+        res_cat1 = filter_cached_failure_report(cached_data, category="Connection Closed Before Headers")
+        self.assertEqual(res_cat1["summary"]["total_failures"], 3)
+        self.assertEqual(len(res_cat1["events"]), 1)
+        self.assertEqual(res_cat1["events"][0]["domain"], "siteA.com")
+
+        res_cat2 = filter_cached_failure_report(cached_data, category="Bad Gateway")
+        self.assertEqual(res_cat2["summary"]["total_failures"], 1)
+        self.assertEqual(len(res_cat2["events"]), 1)
+        self.assertEqual(res_cat2["events"][0]["domain"], "siteB.com")
+
+        res_empty = filter_cached_failure_report(cached_data, category="Nonexistent Category")
+        self.assertEqual(res_empty["summary"]["total_failures"], 0)
+        self.assertEqual(len(res_empty["events"]), 0)
+
 
 try:
     from app import app
@@ -586,6 +632,16 @@ class FailureApiEndpointTests(unittest.TestCase):
         self.assertIn("events", data)
         for ev in data.get("events", []):
             self.assertEqual(ev.get("client_ip"), "192.168.1.99")
+
+    def test_api_failure_analytics_category_filter(self):
+        today_str = date.today().isoformat()
+        resp = self.client.get(f"/api/failure-analytics?date={today_str}&category=Bad%20Gateway")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertIn("summary", data)
+        self.assertIn("events", data)
+        for ev in data.get("events", []):
+            self.assertEqual(ev.get("category"), "Bad Gateway")
 
 
 if __name__ == "__main__":

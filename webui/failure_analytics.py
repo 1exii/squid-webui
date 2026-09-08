@@ -849,16 +849,16 @@ def build_failure_summary_from_events(events, start_epoch=None, end_epoch=None, 
     return summary, result_events
 
 
-def filter_cached_failure_report(cached_data, client_ip=None, limit=None):
+def filter_cached_failure_report(cached_data, client_ip=None, category=None, limit=None):
     """
-    Filter a full daily cached failure report in-memory by client_ip.
+    Filter a full daily cached failure report in-memory by client_ip and/or category.
     Recalculates summary statistics in < 1ms without touching disk logs.
     """
     if not cached_data:
         return cached_data
 
     all_events = cached_data.get("events", [])
-    if not client_ip:
+    if not client_ip and not category:
         grouped_events = group_failure_events(all_events)
         result_events = grouped_events[:limit] if (limit and len(grouped_events) > limit) else grouped_events
         return {
@@ -869,6 +869,11 @@ def filter_cached_failure_report(cached_data, client_ip=None, limit=None):
 
     filtered_events = []
     for e in all_events:
+        if category and e.get("category") != category:
+            continue
+        if not client_ip:
+            filtered_events.append(e)
+            continue
         if e.get("clients") and isinstance(e["clients"], list):
             client_match = next((c for c in e["clients"] if c.get("client_ip") == client_ip), None)
             if client_match:
