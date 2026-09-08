@@ -99,6 +99,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    window.fitQuickDeviceButtons = fitQuickDeviceButtons;
+    window.observeQuickDeviceButtons = observeQuickDeviceButtons;
+
     // Overall analytics
     const overallDateInput      = document.getElementById('overall-date-input');
     const overallDateLabel      = document.getElementById('overall-date-label');
@@ -427,6 +430,10 @@ document.addEventListener('DOMContentLoaded', () => {
         navTabFailures && navTabFailures.classList.add('active');
         failuresScreen && failuresScreen.classList.remove('hidden');
         document.dispatchEvent(new Event('failures-open'));
+        requestAnimationFrame(() => {
+            const container = document.getElementById('failures-quick-devices-buttons');
+            if (container) fitQuickDeviceButtons(container);
+        });
     }
 
     function switchToTls() {

@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=20260907-4">
+    <link rel="stylesheet" href="/static/style.css?v=20260907-5">
 </head>
 <body>
     <div id="app-container">
@@ -266,12 +266,16 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
         {% if admin_visible %}
         <main id="tls-screen" class="main-content hidden">
             <section class="glass-panel tls-exceptions-panel" id="tls-exceptions-panel">
-                <h2>TLS Exceptions</h2>
-                <p>Compatibility exceptions for all devices, at all times. Matching connections skip TLS inspection and can override category blocking. Domains include subdomains. Public destination networks are needed for transparent connections; DNS cannot discover every service address.</p>
+                <div class="toolbar-title">
+                    <h2>TLS Exceptions</h2>
+                    <p>Compatibility exceptions for all devices, at all times. Matching connections skip TLS inspection and can override category blocking. Domains include subdomains. Public destination networks are needed for transparent connections; DNS cannot discover every service address.</p>
+                </div>
                 <div id="tls-exception-rows"></div>
-                <button type="button" class="btn btn-secondary" id="tls-exception-add">Add service</button>
-                <button type="button" class="btn btn-primary" id="tls-exception-save">Save and apply exceptions</button>
-                <button type="button" class="btn btn-secondary" id="tls-exception-reload">Reload saved entries</button>
+                <div class="tls-exception-actions">
+                    <button type="button" class="btn btn-secondary btn-sm" id="tls-exception-add">Add service</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="tls-exception-save">Save and apply exceptions</button>
+                    <button type="button" class="btn btn-secondary btn-sm" id="tls-exception-reload">Reload saved entries</button>
+                </div>
                 <p id="tls-exception-status" role="status" aria-live="polite"></p>
             </section>
         </main>
@@ -279,9 +283,9 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
         <main id="failures-screen" class="main-content hidden">
             <section class="glass-panel failure-analytics-panel">
                 <div class="panel-header-with-actions">
-                    <div>
+                    <div class="toolbar-title">
                         <h2>⚠️ Connection Failures (Non-Policy)</h2>
-                        <p class="panel-subtitle">Websites and domains that clients could not access where no parental or access control policy blocked the request. Includes quick live windows (5m to 5h), {{ failure_retention_days }}-day cached daily history, root-cause explanations, and pre-formatted logs ready to copy for Gemini / ChatGPT.</p>
+                        <p>Websites and domains that clients could not access where no parental or access control policy blocked the request. Includes quick live windows (5m to 5h), {{ failure_retention_days }}-day cached daily history, root-cause explanations, and pre-formatted logs ready to copy for Gemini / ChatGPT.</p>
                     </div>
                 </div>
 
@@ -332,7 +336,7 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
 
                 <!-- Quick Select Device Bar -->
                 <div class="top8-devices-card glass-panel" id="failures-quick-devices-card">
-                    <span class="top8-label">⭐ Quick Select Device:</span>
+                    <span class="top8-label">⭐ Quick Select:</span>
                     <div id="failures-quick-devices-buttons" class="top8-buttons-group"></div>
                 </div>
 

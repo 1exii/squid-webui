@@ -247,6 +247,43 @@
         });
     }
 
+    function fitQuickDeviceButtons() {
+        if (!quickDevicesContainer) return;
+        if (typeof window.fitQuickDeviceButtons === "function") {
+            window.fitQuickDeviceButtons(quickDevicesContainer);
+            return;
+        }
+        const buttons = Array.from(quickDevicesContainer.querySelectorAll(".top8-btn"));
+        buttons.forEach(button => { button.hidden = false; });
+        if (!buttons.length || quickDevicesContainer.getBoundingClientRect().width === 0) return;
+
+        const firstRowTop = buttons[0].offsetTop;
+        const firstWrappedIndex = buttons.findIndex(button => button.offsetTop > firstRowTop + 1);
+        const visibleCount = firstWrappedIndex === -1 ? buttons.length : firstWrappedIndex;
+        buttons.forEach((button, index) => { button.hidden = index >= visibleCount; });
+        quickDevicesContainer.dataset.visibleCount = String(visibleCount);
+    }
+
+    function observeQuickDeviceButtons() {
+        if (!quickDevicesContainer) return;
+        if (typeof window.observeQuickDeviceButtons === "function") {
+            window.observeQuickDeviceButtons(quickDevicesContainer);
+            return;
+        }
+        let previousWidth = -1;
+        if ("ResizeObserver" in window) {
+            const observer = new ResizeObserver(entries => {
+                const width = entries[0]?.contentRect.width ?? quickDevicesContainer.getBoundingClientRect().width;
+                if (Math.abs(width - previousWidth) < 1) return;
+                previousWidth = width;
+                fitQuickDeviceButtons();
+            });
+            observer.observe(quickDevicesContainer);
+        } else {
+            window.addEventListener("resize", () => fitQuickDeviceButtons());
+        }
+    }
+
     function renderQuickDeviceButtons(devices) {
         if (!quickDevicesContainer) return;
         quickDevicesContainer.replaceChildren();
@@ -255,7 +292,7 @@
         allBtn.type = "button";
         allBtn.className = `top8-btn ${currentClientIp === "" ? "active" : ""}`;
         allBtn.dataset.ip = "";
-        allBtn.textContent = "🌐 All Clients";
+        allBtn.textContent = "🌐 All";
         allBtn.addEventListener("click", () => {
             selectClient("");
         });
@@ -269,10 +306,15 @@
             btn.textContent = `${getDeviceIcon(dev.name)} ${dev.name || dev.hostname}`;
             btn.title = `${dev.ip} — ${dev.hostname}`;
             btn.addEventListener("click", () => {
-                selectClient(dev.ip);
+                if (currentClientIp === dev.ip) {
+                    selectClient("");
+                } else {
+                    selectClient(dev.ip);
+                }
             });
             quickDevicesContainer.appendChild(btn);
         });
+        requestAnimationFrame(() => fitQuickDeviceButtons());
     }
 
     async function loadClients() {
@@ -820,9 +862,15 @@
         loadingIndicator = document.getElementById("failures-loading");
         emptyState = document.getElementById("failures-empty");
         failuresList = document.getElementById("failures-list");
+
+        if (!quickDevicesObserved && quickDevicesContainer) {
+            observeQuickDeviceButtons();
+            quickDevicesObserved = true;
+        }
     }
 
     let listenersBound = false;
+    let quickDevicesObserved = false;
 
     function bindEventListeners() {
         // Quick window button listeners
@@ -968,5 +1016,6 @@
 
     document.addEventListener("failures-open", () => {
         initFailures(true);
+        requestAnimationFrame(() => fitQuickDeviceButtons());
     });
 })();
