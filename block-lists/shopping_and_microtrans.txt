@@ -11,8 +11,3 @@
 .etsy.com
 .wish.com
 
-# In-Game Stores & Trading Markets
-steamcommunity.com/market
-store.steampowered.com
-roblox.com/upgrades/robux
-store.epicgames.com
