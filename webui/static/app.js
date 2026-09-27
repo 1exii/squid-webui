@@ -7,6 +7,20 @@
  */
 document.addEventListener('DOMContentLoaded', () => {
 
+    // Keep device quick selection below the navigation, including when it wraps.
+    const topNav = document.querySelector('.top-nav');
+    function updateQuickSelectOffset() {
+        document.documentElement.style.setProperty(
+            '--quick-select-top', `${topNav ? topNav.getBoundingClientRect().height : 0}px`
+        );
+    }
+    updateQuickSelectOffset();
+    if (topNav && typeof ResizeObserver !== 'undefined') {
+        const navSizeObserver = new ResizeObserver(updateQuickSelectOffset);
+        navSizeObserver.observe(topNav);
+    }
+    window.addEventListener('resize', updateQuickSelectOffset);
+
     // ─────────────────────────────────────────────────────────────
     // DOM REFERENCES
     // ─────────────────────────────────────────────────────────────

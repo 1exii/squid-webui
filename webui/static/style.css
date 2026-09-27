@@ -1310,13 +1310,16 @@ input:focus, select:focus {
 
 /* Responsive Device Quick Selection Bar */
 .top8-devices-card {
+    position: sticky;
+    top: var(--quick-select-top, 0px);
+    z-index: 40;
     display: flex;
     align-items: center;
     gap: 16px;
     border-radius: var(--radius-lg);
     padding: 14px 24px;
     margin-bottom: 16px;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(6, 182, 212, 0.08));
+    background: linear-gradient(135deg, #1b2238, #102532);
     border: 1px solid rgba(99, 102, 241, 0.25);
     flex-wrap: wrap;
 }
