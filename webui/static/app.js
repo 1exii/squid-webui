@@ -201,6 +201,12 @@ document.addEventListener('DOMContentLoaded', () => {
         { name: '🌆 16:00 – 24:00', sub: 'Evening / Night', startSlot: 32, endSlot: 48 },
     ];
 
+    const TODAY_PERIODS = Array.from({ length: 6 }, (_, index) => ({
+        name: `${String(index * 4).padStart(2, '0')}:00 – ${String((index + 1) * 4).padStart(2, '0')}:00`,
+        startSlot: index * 8,
+        endSlot: (index + 1) * 8,
+    }));
+
     const WEEK_DAYS = [
         { day: 1, name: 'Mon' },
         { day: 2, name: 'Tue' },
@@ -1820,9 +1826,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const isMulti = getEffectiveColsMode() === 'multi';
 
         if (isMulti) {
-            // Super-headers: 3 periods (8 hours each: 00:00–08:00, 08:00–16:00, 16:00–24:00)
+            // Six four-hour periods spanning the full day.
             const trHdr1 = document.createElement('tr');
-            SCHEDULE_PERIODS.forEach((period, pIdx) => {
+            TODAY_PERIODS.forEach((period, pIdx) => {
                 if (pIdx > 0) {
                     const thDiv = document.createElement('th');
                     thDiv.className = 'period-divider-th';
@@ -1833,7 +1839,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 thPeriod.colSpan = 2; // 1 time slot col + 1 today cell col
                 thPeriod.dataset.period = pIdx;
                 thPeriod.title = `Click to toggle entire period for Today (${period.name})`;
-                thPeriod.innerHTML = `${period.name} <span style="font-weight: normal; opacity: 0.8; font-size: 11px;">(${period.sub})</span>`;
+                thPeriod.textContent = period.name;
                 thPeriod.addEventListener('click', () => toggleTodayPeriod(pIdx));
                 trHdr1.appendChild(thPeriod);
             });
@@ -1841,7 +1847,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Sub-headers: Time + Today per period
             const trHdr2 = document.createElement('tr');
-            SCHEDULE_PERIODS.forEach((period, pIdx) => {
+            TODAY_PERIODS.forEach((period, pIdx) => {
                 if (pIdx > 0) {
                     const thDiv = document.createElement('th');
                     thDiv.className = 'period-divider-th';
@@ -1862,10 +1868,10 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             todayTableHead.appendChild(trHdr2);
 
-            // Exactly 16 rows (48 / 3)
-            for (let r = 0; r < 16; r++) {
+            // Eight half-hour rows in each of six periods.
+            for (let r = 0; r < 8; r++) {
                 const tr = document.createElement('tr');
-                SCHEDULE_PERIODS.forEach((period, pIdx) => {
+                TODAY_PERIODS.forEach((period, pIdx) => {
                     if (pIdx > 0) {
                         const tdDiv = document.createElement('td');
                         tdDiv.className = 'period-divider-td';
@@ -2110,7 +2116,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const targets = editingLists();
         if (!targets.length || !currentDeviceIp) return;
         const pol = ensurePolicy(currentDeviceIp);
-        const pDef = SCHEDULE_PERIODS[p];
+        const pDef = TODAY_PERIODS[p];
         const allOn = targets.every(bl => {
             const entry = pol.default_block.find(e => e.list === bl);
             if (!entry || !entry.unblock_today) return false;
@@ -2147,7 +2153,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function highlightCurrentTimeSlot() {
         const now = new Date();
         const curSlot = Math.floor((now.getHours() * 60 + now.getMinutes()) / 30);
-        const curPeriod = Math.floor(curSlot / 16);
 
         document.querySelectorAll('.schedule-matrix-table .is-current-time').forEach(el => el.classList.remove('is-current-time'));
         document.querySelectorAll('.schedule-matrix-table .is-current-period').forEach(el => el.classList.remove('is-current-period'));
@@ -2157,9 +2162,11 @@ document.addEventListener('DOMContentLoaded', () => {
             td.title = `Current time (${pad(now.getHours())}:${pad(now.getMinutes())})`;
         });
 
-        document.querySelectorAll(`.schedule-matrix-table th.period-header-th[data-period="${curPeriod}"]`).forEach(th => {
-            th.classList.add('is-current-period');
-        });
+        for (const [table, periods] of [[todayMatrixTable, TODAY_PERIODS], [scheduleMatrixTable, SCHEDULE_PERIODS]]) {
+            const periodIndex = periods.findIndex(period => curSlot >= period.startSlot && curSlot < period.endSlot);
+            const header = table && table.querySelector(`th.period-header-th[data-period="${periodIndex}"]`);
+            if (header) header.classList.add('is-current-period');
+        }
     }
 
     function scrollToCurrentTime() {

@@ -2024,6 +2024,12 @@ kbd {
     padding: 6px 4px;
 }
 
+/* Equal four-hour sections, independent of header text and allowed slots. */
+.schedule-matrix-table.multi-col.today-table {
+    table-layout: fixed;
+    min-width: 1080px;
+}
+
 .schedule-matrix-table.multi-col.today-table td.matrix-cell {
     min-width: 75px;
 }
