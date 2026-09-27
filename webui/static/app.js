@@ -235,7 +235,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const slotEnd   = s => s >= 47 ? '23:59' : slotStart(s + 1);
 
     /** Strip .txt from display names */
-    const displayName = bl => bl.replace(/\.txt$/i, '');
+    const displayName = bl => bl.replace(/\.txt$/i, '').replace(/_+/g, ' ');
 
     const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
@@ -1440,92 +1440,127 @@ document.addEventListener('DOMContentLoaded', () => {
     // ─────────────────────────────────────────────────────────────
     // RENDER BLOCKLIST CHECKBOXES
     // ─────────────────────────────────────────────────────────────
+    const categorySections = {
+        always_block: { container: alwaysBlockCheckboxes, label: 'Always Block' },
+        always_allow: { container: alwaysAllowCheckboxes, label: 'Always Allow' },
+        default_block: { container: defaultBlockLists, label: 'Default Block' }
+    };
+    let draggedCategory = null;
+    // Keep schedules when a category is moved out and back during this session.
+    const categorySchedules = new WeakMap();
+
     function renderAllBlocklistCheckboxes() {
-        buildSectionCheckboxes(alwaysBlockCheckboxes, 'ab-', onAlwaysBlockChange);
-        buildSectionCheckboxes(alwaysAllowCheckboxes, 'aa-', onAlwaysAllowChange);
-        if (currentDeviceIp) renderDefaultBlockLists(ensurePolicy(currentDeviceIp));
+        if (currentDeviceIp) syncCategoryControls(ensurePolicy(currentDeviceIp));
     }
 
-    function buildSectionCheckboxes(container, idPrefix, onChange) {
-        if (!container) return;
-        container.innerHTML = '';
-        blocklistsData.forEach(bl => {
-            const label = document.createElement('label');
-            label.className = 'blocklist-chip';
-            label.dataset.list = bl;
-            label.innerHTML = `
-                <input type="checkbox" id="${idPrefix}${bl}" value="${bl}">
-                <span class="bl-name">🛡️ ${displayName(bl)}</span>
-                <a href="/api/blocklists/${bl}" target="_blank" class="bl-view-btn" title="View content of ${bl}" onclick="event.stopPropagation();">↗</a>
-            `;
-            label.querySelector('input').addEventListener('change', (e) => onChange(bl, e.target.checked));
-            container.appendChild(label);
+    function moveCategory(bl, destination) {
+        if (!currentDeviceIp || !blocklistsData.includes(bl) || !categorySections[destination]) return;
+        const pol = ensurePolicy(currentDeviceIp);
+        const source = pol.always_block.includes(bl) ? 'always_block'
+            : pol.always_allow.includes(bl) ? 'always_allow' : 'default_block';
+        if (source === destination) return;
+        if (!categorySchedules.has(pol)) categorySchedules.set(pol, new Map());
+        const schedules = categorySchedules.get(pol);
+        const entry = pol.default_block.find(item => item.list === bl);
+        if (entry) schedules.set(bl, entry);
+        pol.always_block = pol.always_block.filter(name => name !== bl);
+        pol.always_allow = pol.always_allow.filter(name => name !== bl);
+        if (destination !== 'default_block') pol[destination].push(bl);
+        else if (schedules.has(bl)) pol.default_block.push(schedules.get(bl));
+        reconcileDefaultBlock(pol);
+        syncCategoryControls(pol);
+        refreshDbTabsUI();
+        updateRulesPreview();
+        scheduleAutoSave();
+        const moved = Array.from(categorySections[destination].container.children)
+            .find(chip => chip.dataset.list === bl);
+        moved?.querySelector('select')?.focus({ preventScroll: true });
+        const status = document.getElementById('category-move-status');
+        if (status) status.textContent = `${displayName(bl)} moved to ${categorySections[destination].label}.`;
+    }
+
+    function clearCategoryDrag() {
+        draggedCategory = null;
+        Object.values(categorySections).forEach(({ container }) => {
+            container?.closest('.policy-section').classList.remove('category-drop-active');
         });
+        document.querySelectorAll('.category-dragging').forEach(chip => chip.classList.remove('category-dragging'));
     }
 
-    function onAlwaysBlockChange(bl, checked) {
-        if (!currentDeviceIp) return;
-        const pol = ensurePolicy(currentDeviceIp);
-        if (checked) {
-            if (!pol.always_block.includes(bl)) pol.always_block.push(bl);
-            pol.always_allow = pol.always_allow.filter(x => x !== bl);
-        } else {
-            pol.always_block = pol.always_block.filter(x => x !== bl);
-        }
-        reconcileDefaultBlock(pol);
-        syncCategoryControls(pol);
-        refreshDbTabsUI();
-        updateRulesPreview();
-        scheduleAutoSave();
-    }
-
-    function onAlwaysAllowChange(bl, checked) {
-        if (!currentDeviceIp) return;
-        const pol = ensurePolicy(currentDeviceIp);
-        if (checked) {
-            if (!pol.always_allow.includes(bl)) pol.always_allow.push(bl);
-            pol.always_block = pol.always_block.filter(x => x !== bl);
-        } else {
-            pol.always_allow = pol.always_allow.filter(x => x !== bl);
-        }
-        reconcileDefaultBlock(pol);
-        syncCategoryControls(pol);
-        refreshDbTabsUI();
-        updateRulesPreview();
-        scheduleAutoSave();
-    }
+    Object.entries(categorySections).forEach(([section, { container, label }]) => {
+        if (!container) return;
+        container.setAttribute('aria-label', `${label} categories`);
+        const zone = container.closest('.policy-section');
+        zone.addEventListener('dragover', event => {
+            if (!draggedCategory || draggedCategory.ip !== currentDeviceIp) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            zone.classList.add('category-drop-active');
+        });
+        zone.addEventListener('dragleave', event => {
+            if (!zone.contains(event.relatedTarget)) zone.classList.remove('category-drop-active');
+        });
+        zone.addEventListener('drop', event => {
+            if (!draggedCategory) return;
+            event.preventDefault();
+            const { list, ip } = draggedCategory;
+            clearCategoryDrag();
+            if (ip === currentDeviceIp) moveCategory(list, section);
+        });
+    });
 
     function syncCategoryControls(pol) {
-        alwaysBlockCheckboxes && alwaysBlockCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(chk => {
-            chk.checked = pol.always_block.includes(chk.value);
-            // Always Allow categories stay visible here because selecting them
-            // promotes them to the higher-priority Always Block policy.
-            chk.closest('.blocklist-chip').classList.remove('hidden');
-        });
-        alwaysAllowCheckboxes && alwaysAllowCheckboxes.querySelectorAll('input[type="checkbox"]').forEach(chk => {
-            chk.checked = pol.always_allow.includes(chk.value);
-            // Use the app's !important display utility. The blocklist chip's
-            // author-level display rule can otherwise override HTML [hidden].
-            chk.closest('.blocklist-chip').classList.toggle(
-                'hidden', pol.always_block.includes(chk.value)
-            );
-        });
-        renderDefaultBlockLists(pol);
-    }
-
-    function renderDefaultBlockLists(pol) {
-        if (!defaultBlockLists) return;
-        defaultBlockLists.innerHTML = '';
-        pol.default_block.forEach(entry => {
-            const bl = entry.list;
-            const chip = document.createElement('div');
-            chip.className = 'blocklist-chip';
-            chip.dataset.list = bl;
-            chip.innerHTML = `
-                <span class="bl-name">🛡️ ${displayName(bl)}</span>
-                <a href="/api/blocklists/${bl}" target="_blank" class="bl-view-btn" title="View content of ${bl}">↗</a>
-            `;
-            defaultBlockLists.appendChild(chip);
+        clearCategoryDrag();
+        Object.entries(categorySections).forEach(([section, { container }]) => {
+            if (!container) return;
+            container.replaceChildren();
+            const lists = section === 'default_block' ? pol.default_block.map(entry => entry.list) : pol[section];
+            lists.forEach(bl => {
+                const chip = document.createElement('div');
+                chip.className = 'blocklist-chip category-chip';
+                chip.dataset.list = bl;
+                chip.draggable = true;
+                const name = document.createElement('span');
+                name.className = 'bl-name';
+                name.textContent = `⠿ ${displayName(bl)}`;
+                const move = document.createElement('select');
+                move.className = 'category-move-select';
+                move.setAttribute('aria-label', `Move ${displayName(bl)} to`);
+                Object.entries(categorySections).forEach(([value, { label }]) => {
+                    const option = document.createElement('option');
+                    option.value = value;
+                    option.textContent = value === section ? 'Move to…' : label;
+                    option.selected = value === section;
+                    option.disabled = value === section;
+                    move.appendChild(option);
+                });
+                move.addEventListener('change', () => moveCategory(bl, move.value));
+                const view = document.createElement('a');
+                view.href = `/api/blocklists/${encodeURIComponent(bl)}`;
+                view.target = '_blank';
+                view.rel = 'noopener';
+                view.className = 'bl-view-btn';
+                view.title = `View content of ${bl}`;
+                view.setAttribute('aria-label', view.title);
+                view.textContent = '↗';
+                view.draggable = false;
+                chip.append(name, move, view);
+                chip.addEventListener('dragstart', event => {
+                    if (event.target.closest('select, a')) { event.preventDefault(); return; }
+                    draggedCategory = { list: bl, ip: currentDeviceIp };
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', bl);
+                    chip.classList.add('category-dragging');
+                });
+                chip.addEventListener('dragend', clearCategoryDrag);
+                container.appendChild(chip);
+            });
+            if (!lists.length) {
+                const empty = document.createElement('p');
+                empty.className = 'category-empty';
+                empty.textContent = 'Drop lists here, or use a list’s Move to menu.';
+                container.appendChild(empty);
+            }
         });
     }
 

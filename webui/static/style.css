@@ -2191,3 +2191,25 @@ kbd {
 .raw-log-container { background: #0f172a; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 6px; padding: 10px; margin-top: 8px; overflow-x: auto; max-height: 380px; overflow-y: auto; font-size: 12px; color: #94a3b8; white-space: pre-wrap; word-break: break-all; }
 
 
+
+/* Compact, mutually exclusive policy categories. */
+.config-workspace .policy-section { padding: 16px; margin-bottom: 14px; }
+.config-workspace .policy-section .section-header { margin-bottom: 12px; padding-bottom: 10px; }
+.category-move-hint, .category-empty { color: var(--text-muted); font-size: 13px; }
+.category-move-hint { margin-bottom: 12px; }
+.category-move-status:empty { display: none; }
+.category-move-status { font-size: 13px; margin-bottom: 10px; }
+.policy-section.category-drop-active { outline: 2px dashed var(--accent); outline-offset: 3px; }
+.policy-section .blocklist-checkbox-grid { min-height: 44px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 8px; margin-top: 10px; }
+.policy-section .category-chip { cursor: grab; max-width: 100%; min-width: 0; }
+.category-chip .bl-name { overflow-wrap: anywhere; min-width: 0; white-space: normal; }
+.category-chip.category-dragging { opacity: 0.45; }
+.category-move-select { font: inherit; font-size: 12px; color: var(--text-muted); background: var(--bg-card, #171d2b); border: 1px solid var(--border-card); border-radius: 6px; padding: 4px; width: 88px; flex: 0 0 88px; cursor: pointer; }
+.category-move-select:focus-visible { outline: 2px solid var(--accent); }
+.category-empty { margin: 0; padding: 10px 0; }
+.always-block-grid .category-chip { background: rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.5); color: #fca5a5; }
+.always-allow-grid .category-chip { background: rgba(16,185,129,0.18); border-color: rgba(16,185,129,0.5); color: #6ee7b7; }
+@media (max-width: 480px) {
+    .policy-section .category-chip { flex-wrap: wrap; }
+    .category-chip .bl-name { flex: 1 1 100%; }
+}

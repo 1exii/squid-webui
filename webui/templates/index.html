@@ -418,6 +418,9 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                     </div>
                 </div>
 
+                <p class="category-move-hint">Drag lists between sections, or use their <strong>Move to</strong> menus.</p>
+                <p id="category-move-status" class="category-move-status" role="status" aria-live="polite"></p>
+
                 <!-- ══════════════════════════════════════════════
                      SECTION 1: ALWAYS BLOCK
                 ══════════════════════════════════════════════ -->
@@ -463,7 +466,7 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                             <span class="section-icon section-icon-amber">🟠</span>
                             <div>
                                 <h3 class="section-title">Default Block <span class="section-title-sub">— with Unblock Windows</span></h3>
-                                <p class="section-desc">Every list not selected in Always Block or Always Allow is included automatically. Use the schedule to mark <strong class="allow-text">✅ green allow windows</strong>.</p>
+                                <p class="section-desc">Lists in this section are blocked by default. Use the schedule to mark <strong class="allow-text">✅ green allow windows</strong>.</p>
                             </div>
                         </div>
                     </div>
@@ -583,7 +586,7 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                     <!-- Empty state when every list is explicitly classified -->
                     <div id="db-empty-state" class="db-empty-state">
                         <span class="db-empty-icon">📋</span>
-                        <p>No Default Block lists remain. Uncheck a category in Always Block or Always Allow to schedule it here.</p>
+                        <p>No Default Block lists remain. Move a list here to schedule unblock windows.</p>
                     </div>
                 </div>
 

@@ -74,11 +74,11 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
   - Renders horizontal device tabs (with category icons `📱` Phone, `💻` Laptop, `🖥️` PC, `📱` Tablet) and a real-time search box.
   - Automatically updates tabs whenever `devices.list` is edited and the Web UI is redeployed.
 - **Three-State Category Policy (Before Schedule Matrix):**
-  - **Always Block** checkboxes deny selected categories at all times and take highest precedence.
-  - **Always Allow** checkboxes permit selected categories at all times, unless overlapping content is also matched by an Always Block category.
+  - **Always Block** lists deny their categories at all times and take highest precedence.
+  - **Always Allow** lists permit their categories at all times, unless overlapping content is also matched by an Always Block category.
   - **Default Block** has no selection checkbox. It is automatically the complement of Always Block and Always Allow, so every remaining category is blocked unless its timetable grants an unblock window.
-  - An Always Block category is hidden from Always Allow and Default Block. An Always Allow category is hidden from Default Block but remains visible in Always Block so it can be promoted directly to the higher-priority policy.
-  - Moving a category out of either explicit list automatically returns it to Default Block.
+  - Each category appears only in its assigned section. Drag its chip to another section, or use its Move to menu with touch or keyboard. Empty sections remain drop targets.
+  - Moves use the existing autosave and Apply flow. Moving a category out of Default Block and back retains its schedule during the editing session; retained schedules are not persisted while outside Default Block.
   - Blocklist files (`block-lists/*.txt`) are dynamically parsed by `parse_blocklists()` into clean `dstdomain` ACLs (`domains_<bl>.acl`) and URL path regex ACLs (`urlpath_regex`).
 - **Interactive 30-Minute Schedule Matrix (Weekly & Today Override):**
   - **Dual Mode Pill Toggle:** Switch seamlessly between `📅 Weekly` recurring schedule and `📆 Today Only` temporary overrides.
@@ -168,7 +168,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 - **User Goal:** Unconditionally block specific high-risk category lists (e.g. `adult.txt`, `gambling.txt`) on a target device 24/7, bypassing any time-based schedule matrices.
 - **User Experience & Admin Action:**
   1. Admin opens Web UI and selects the target device tab (e.g. `Child Phone - 192.0.2.50`).
-  2. Under the **Always Block** category list, admin checks `adult.txt` and `gambling.txt`.
+  2. Under the **Always Block** category list, admin moves `adult.txt` and `gambling.txt` into the section.
   3. Admin clicks **Save & Apply**.
 - **System & ACL Behavior:**
   - `webui/app.py` writes `always_block: ["adult.txt", "gambling.txt"]` into `device_policies.json`.
@@ -200,7 +200,7 @@ The Web UI features a modern, single-page application (SPA) layout with dark gla
 
 #### ✅ CUJ 3: Permanent Access (`Always Allow` Subset)
 - **User Goal:** Keep selected categories available regardless of the Default Block timetable.
-- **User Experience & Admin Action:** Admin checks categories under **Always Allow**, then saves and applies the policy.
+- **User Experience & Admin Action:** Admin moves categories into **Always Allow**, then saves and applies the policy.
 - **System & ACL Behavior:** The category is removed from Default Block and receives an unconditional `http_access allow` rule after Always Block rules but before scheduled Default Block rules.
 
 #### 🎁 CUJ 4: Ad-Hoc Temporary Access Bonus ("Give Kids 30 Min Extra Gaming Time Today")
