@@ -1868,13 +1868,17 @@ kbd {
     gap: 6px;
 }
 .legend-box {
-    width: 14px;
-    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
     border-radius: 3px;
-}
-.legend-box.allowed {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #d1fae5;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
 }
 .legend-box.blocked {
     background: linear-gradient(135deg, #ef4444, #dc2626);

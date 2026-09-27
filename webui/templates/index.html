@@ -495,12 +495,8 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                             </div>
                         </div>
 
-                        <!-- Weekly / Today mode toggle & Column layout toggle -->
+                        <!-- Shared column layout toggle -->
                         <div class="timetable-mode-row">
-                            <div class="mode-pill" id="mode-pill">
-                                <button type="button" id="mode-weekly-btn" class="mode-btn">📅 Weekly</button>
-                                <button type="button" id="mode-today-btn" class="mode-btn active">📆 Today Only</button>
-                            </div>
                             <div class="mode-pill col-layout-pill" id="col-layout-pill">
                                 <button type="button" id="cols-multi-btn" class="mode-btn active" title="3 columns (8 hours each) — fits without scrolling">🔲 3 Columns (8h)</button>
                                 <button type="button" id="cols-single-btn" class="mode-btn" title="Single continuous column (48 rows)">📜 1 Column (24h)</button>
@@ -511,38 +507,27 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                         </div>
 
                         <!-- Schedule Matrix -->
-                        <div class="card glass-panel matrix-card">
+                        <div class="card glass-panel matrix-card" data-schedule="today">
                             <div class="preset-actions-bar">
                                 <span class="preset-label">Quick Actions:</span>
-                                <button type="button" class="btn btn-secondary btn-sm" id="preset-allow-all">✅ Allow All</button>
-                                <button type="button" class="btn btn-secondary btn-sm" id="preset-block-all">🚫 Block All</button>
-                                <button type="button" class="btn btn-secondary btn-sm" id="preset-next-30m">⏱️ Next 30 min</button>
-                                <button type="button" class="btn btn-secondary btn-sm" id="preset-next-1h">⏱️ Next 1 hour</button>
-                                <button type="button" class="btn btn-secondary btn-sm" id="preset-next-2h">⏱️ Next 2 hours</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="allow-all">✅ Allow All</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="block-all">🚫 Block All</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="next-30m">⏱️ Next 30 min</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="next-1h">⏱️ Next 1 hour</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="next-2h">⏱️ Next 2 hours</button>
                             </div>
-                            
+
                             <div class="matrix-header">
                                 <div>
-                                    <h4 id="matrix-title">⏰ Today-Only Override</h4>
-                                    <p class="subtext" id="matrix-subtitle">
+                                    <h4 id="today-matrix-title">⏰ Today-Only Override</h4>
+                                    <p class="subtext">
                                         Drag to allow for <strong>today only</strong>. Resets at midnight.
                                     </p>
                                 </div>
                                 <div class="matrix-legend">
-                                    <span class="legend-item"><span class="legend-box allowed"></span> Allowed (unblocked)</span>
+                                    <span class="legend-item"><span class="legend-box allowed" aria-hidden="true">✓</span> Allowed (unblocked)</span>
                                     <span class="legend-item"><span class="legend-box default-blocked"></span> Blocked (default)</span>
                                 </div>
-                            </div>
-
-                            <!-- Weekly 7-day grid -->
-                            <div id="weekly-table-wrap" class="table-responsive schedule-table-container hidden">
-                                <table class="schedule-matrix-table" id="schedule-matrix-table">
-                                    <thead>
-                                    </thead>
-                                    <tbody id="matrix-table-body">
-                                        <!-- rows generated dynamically by JS -->
-                                    </tbody>
-                                </table>
                             </div>
 
                             <!-- Today-only single-day grid -->
@@ -555,6 +540,43 @@ gsettings set org.gnome.system.proxy mode 'auto'</code></pre>
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+
+                        <!-- Schedule Matrix -->
+                        <div class="card glass-panel matrix-card" data-schedule="weekly">
+                            <div class="preset-actions-bar">
+                                <span class="preset-label">Quick Actions:</span>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="allow-all">✅ Allow All</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="block-all">🚫 Block All</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="next-30m">⏱️ Next 30 min</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="next-1h">⏱️ Next 1 hour</button>
+                                <button type="button" class="btn btn-secondary btn-sm" data-preset="next-2h">⏱️ Next 2 hours</button>
+                            </div>
+
+                            <div class="matrix-header">
+                                <div>
+                                    <h4 id="weekly-matrix-title">⏰ Weekly Unblock Schedule</h4>
+                                    <p class="subtext">
+                                        Drag to mark <strong class="allow-text">green = allowed</strong> windows. Empty slots remain blocked by default.
+                                    </p>
+                                </div>
+                                <div class="matrix-legend">
+                                    <span class="legend-item"><span class="legend-box allowed" aria-hidden="true">✓</span> Allowed (unblocked)</span>
+                                    <span class="legend-item"><span class="legend-box default-blocked"></span> Blocked (default)</span>
+                                </div>
+                            </div>
+
+                            <!-- Weekly 7-day grid -->
+                            <div id="weekly-table-wrap" class="table-responsive schedule-table-container">
+                                <table class="schedule-matrix-table" id="schedule-matrix-table">
+                                    <thead>
+                                    </thead>
+                                    <tbody id="matrix-table-body">
+                                        <!-- rows generated dynamically by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+
                         </div>
                     </div>
 

@@ -3,7 +3,7 @@
  * 3-category model: always_block + always_allow + automatic default_block.
  * Schedule mode: Basic (all default_block lists share one matrix) / Advanced (per-list).
  * Timetable: drag = ALLOW (green). Empty = blocked by default.
- * Dual mode: Weekly (7×48) and Today (1×48).
+ * Stacked schedules: Today (1×48) above Weekly (7×48).
  */
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -151,12 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const modeAdvancedBtn        = document.getElementById('sched-mode-advanced-btn');
     const advancedMultiNote      = document.getElementById('advanced-multi-note');
 
-    // Weekly / Today mode
-    const modeWeeklyBtn          = document.getElementById('mode-weekly-btn');
-    const modeTodayBtn           = document.getElementById('mode-today-btn');
-    const todayModeHint          = document.getElementById('today-mode-hint');
-    const matrixTitle            = document.getElementById('matrix-title');
-    const matrixSubtitle         = document.getElementById('matrix-subtitle');
+    // Both schedule sections remain visible.
     const weeklyTableWrap        = document.getElementById('weekly-table-wrap');
     const todayTableWrap         = document.getElementById('today-table-wrap');
     const matrixTableBody        = document.getElementById('matrix-table-body');
@@ -168,13 +163,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const todayMatrixTable       = document.getElementById('today-matrix-table');
     const colsMultiBtn           = document.getElementById('cols-multi-btn');
     const colsSingleBtn          = document.getElementById('cols-single-btn');
-
-    // Presets
-    const presetAllowAll  = document.getElementById('preset-allow-all');
-    const presetBlockAll  = document.getElementById('preset-block-all');
-    const presetNext30m   = document.getElementById('preset-next-30m');
-    const presetNext1h    = document.getElementById('preset-next-1h');
-    const presetNext2h    = document.getElementById('preset-next-2h');
 
     // ─────────────────────────────────────────────────────────────
     // STATE
@@ -203,7 +191,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const expandedActivitySites = new Set();
 
     // Schedule UI state
-    let scheduleMode     = 'today';   // 'weekly' | 'today'
     let scheduleColsMode = localStorage.getItem('squid_schedule_cols') || 'multi'; // 'multi' | 'single'
     let schedEditMode    = 'basic';    // 'basic' | 'advanced'
     let activeListNames  = [];         // in advanced mode: which lists are selected for editing
@@ -1369,7 +1356,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (devicesData.length > 0) selectDevice(devicesData[0].ip);
             else if (saveStatusText) saveStatusText.textContent = '⚠️ No active devices found.';
 
-            setScheduleMode(scheduleMode);
+            syncMatrixToActiveEntries();
         } catch (err) {
             console.error('loadAdminData error:', err);
             if (saveStatusText) saveStatusText.textContent = '❌ Failed to load data from server.';
@@ -1618,28 +1605,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return scheduleColsMode;
     }
 
-    function setScheduleMode(mode) {
-        scheduleMode = mode;
-        modeWeeklyBtn && modeWeeklyBtn.classList.toggle('active', mode === 'weekly');
-        modeTodayBtn && modeTodayBtn.classList.toggle('active', mode === 'today');
-        weeklyTableWrap && weeklyTableWrap.classList.toggle('hidden', mode !== 'weekly');
-        todayTableWrap && todayTableWrap.classList.toggle('hidden', mode !== 'today');
-        todayModeHint && todayModeHint.classList.toggle('hidden', mode !== 'today');
-        if (matrixTitle) {
-            matrixTitle.textContent = mode === 'weekly'
-                ? '⏰ Weekly Unblock Schedule'
-                : `⏰ Today-Only Override (${todayDisplayName()})`;
-        }
-        if (matrixSubtitle) {
-            matrixSubtitle.innerHTML = mode === 'weekly'
-                ? 'Drag to mark <strong class="allow-text">green = allowed</strong> windows. Empty slots remain blocked by default.'
-                : 'Drag to allow for <strong>today only</strong>. Resets at midnight.';
-        }
-        syncMatrixToActiveEntries();
-        highlightCurrentTimeSlot();
-        if (getEffectiveColsMode() === 'single') scrollToCurrentTime();
-    }
-
     function setScheduleColsMode(mode) {
         scheduleColsMode = mode;
         localStorage.setItem('squid_schedule_cols', mode);
@@ -1672,8 +1637,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isMulti) scrollToCurrentTime();
     }
 
-    modeWeeklyBtn && modeWeeklyBtn.addEventListener('click', () => setScheduleMode('weekly'));
-    modeTodayBtn && modeTodayBtn.addEventListener('click', () => setScheduleMode('today'));
     colsMultiBtn && colsMultiBtn.addEventListener('click', () => setScheduleColsMode('multi'));
     colsSingleBtn && colsSingleBtn.addEventListener('click', () => setScheduleColsMode('single'));
 
@@ -2029,7 +1992,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * Sync the visible matrix to the UNION of all currently editing lists.
+     * Sync both matrices to the UNION of all currently editing lists.
      * A slot appears green if ANY of the selected lists has it allowed.
      */
     function syncMatrixToActiveEntries() {
@@ -2037,8 +2000,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const pol     = ensurePolicy(currentDeviceIp);
         const targets = editingLists();
 
-        if (scheduleMode === 'weekly') {
-            if (!matrixTableBody) return;
+        if (matrixTableBody) {
             for (let d = 0; d < 7; d++) {
                 for (let s = 0; s < 48; s++) {
                     const allowed = targets.some(bl => {
@@ -2049,8 +2011,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     setCellVisual(cell, allowed);
                 }
             }
-        } else {
-            if (!todayTableBody) return;
+        }
+        if (todayTableBody) {
             for (let s = 0; s < 48; s++) {
                 const allowed = targets.some(bl => {
                     const entry = pol.default_block.find(e => e.list === bl);
@@ -2206,37 +2168,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const now = new Date();
         const startSlot = Math.floor((now.getHours() * 60 + now.getMinutes()) / 30);
-        const containerId = scheduleMode === 'weekly' ? 'weekly-table-wrap' : 'today-table-wrap';
-        const container = document.getElementById(containerId);
-        if (!container) return;
-        
-        const firstCell = container.querySelector(`td[data-slot="${startSlot}"]`);
-        if (firstCell) {
-            const tr = firstCell.parentElement;
-            container.scrollTo({
-                top: tr.offsetTop - 40,
-                behavior: 'smooth'
-            });
+        for (const container of [todayTableWrap, weeklyTableWrap]) {
+            if (!container) continue;
+
+            const firstCell = container.querySelector(`td[data-slot="${startSlot}"]`);
+            if (firstCell) {
+                const tr = firstCell.parentElement;
+                container.scrollTo({
+                    top: tr.offsetTop - 40,
+                    behavior: 'smooth'
+                });
+            }
         }
     }
 
     // ─────────────────────────────────────────────────────────────
     // PRESETS
     // ─────────────────────────────────────────────────────────────
-    presetAllowAll && presetAllowAll.addEventListener('click', () => {
-        if (!currentDeviceIp || !editingLists().length) return;
-        if (scheduleMode === 'weekly') { for (let d=0;d<7;d++) for (let s=0;s<48;s++) applyWeeklyCell(d,s,true); }
-        else { for (let s=0;s<48;s++) applyTodayCell(s,true); }
-        updateRulesPreview(); scheduleAutoSave();
+    document.querySelectorAll('[data-schedule] [data-preset]').forEach(button => {
+        button.addEventListener('click', () => {
+            if (!currentDeviceIp || !editingLists().length) return;
+            const mode = button.closest('[data-schedule]').dataset.schedule;
+            const action = button.dataset.preset;
+            const durations = { 'next-30m': 30, 'next-1h': 60, 'next-2h': 120 };
+            if (durations[action]) {
+                applyNextDuration(durations[action], mode);
+                return;
+            }
+            const allowed = action === 'allow-all';
+            if (mode === 'weekly') {
+                for (let d = 0; d < 7; d++) for (let s = 0; s < 48; s++) applyWeeklyCell(d, s, allowed);
+            } else {
+                for (let s = 0; s < 48; s++) applyTodayCell(s, allowed);
+            }
+            updateRulesPreview(); scheduleAutoSave();
+        });
     });
-    presetBlockAll && presetBlockAll.addEventListener('click', () => {
-        if (!currentDeviceIp || !editingLists().length) return;
-        if (scheduleMode === 'weekly') { for (let d=0;d<7;d++) for (let s=0;s<48;s++) applyWeeklyCell(d,s,false); }
-        else { for (let s=0;s<48;s++) applyTodayCell(s,false); }
-        updateRulesPreview(); scheduleAutoSave();
-    });
-    
-    function applyNextDuration(durationMins) {
+
+    function applyNextDuration(durationMins, mode) {
         if (!currentDeviceIp || !editingLists().length) return;
         const now = new Date();
         const currentMins = now.getHours() * 60 + now.getMinutes();
@@ -2247,7 +2216,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const sStart = Math.max(0, Math.min(47, startSlot));
         const sEnd = Math.max(0, Math.min(47, endSlot));
         
-        if (scheduleMode === 'weekly') {
+        if (mode === 'weekly') {
             const todayDay = now.getDay();
             for (let s = sStart; s <= sEnd; s++) applyWeeklyCell(todayDay, s, true);
         } else {
@@ -2255,10 +2224,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         updateRulesPreview(); scheduleAutoSave();
     }
-
-    presetNext30m && presetNext30m.addEventListener('click', () => applyNextDuration(30));
-    presetNext1h && presetNext1h.addEventListener('click', () => applyNextDuration(60));
-    presetNext2h && presetNext2h.addEventListener('click', () => applyNextDuration(120));
 
     // ─────────────────────────────────────────────────────────────
     // AUTO-SAVE
@@ -2435,10 +2400,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Initialize visual state based on default scheduleMode
-    if (scheduleMode === 'today') {
-        modeTodayBtn && modeTodayBtn.click();
-    } else {
-        modeWeeklyBtn && modeWeeklyBtn.click();
-    }
+    const todayTitle = document.getElementById('today-matrix-title');
+    if (todayTitle) todayTitle.textContent = `⏰ Today-Only Override (${todayDisplayName()})`;
 });
